@@ -1,0 +1,6 @@
+{
+  "name": "MM12TW",
+  "description": "Controle sua área de lazer Master Lazer, incluindo controle de motores, timers e automação de LED.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
