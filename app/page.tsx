@@ -218,6 +218,23 @@ export default function PoolControllerPage() {
     }, 0);
   }, []);
 
+  // Clock state to show current local time
+  const [currentTime, setCurrentTime] = useState('19:13');
+
+  // Update current time every second
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateTime = () => {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      setCurrentTime(`${hours}:${minutes}`);
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // 1b. Auto-connection on startup / auth resolve-reconnect loop
   useEffect(() => {
     // If we've loaded Paho and have a currentUser logged in, and user wants Mqtt
@@ -457,7 +474,10 @@ export default function PoolControllerPage() {
 
   // 5. Authenticator handler
   const handleAuthSubmit = async (mode: 'login' | 'register') => {
-    if (!emailInput || passwordInput.length < 8) {
+    const cleanEmail = (emailInput || '').trim().toLowerCase();
+    const cleanPassword = passwordInput || '';
+
+    if (!cleanEmail || cleanPassword.length < 8) {
       setAuthErrorMessage('Insira um e-mail válido e senha de no mínimo 8 caracteres.');
       return;
     }
@@ -468,9 +488,9 @@ export default function PoolControllerPage() {
     if (firebaseInitialized && authRef.current) {
       try {
         if (mode === 'login') {
-          await authRef.current.signInWithEmailAndPassword(emailInput, passwordInput);
+          await authRef.current.signInWithEmailAndPassword(cleanEmail, cleanPassword);
         } else {
-          await authRef.current.createUserWithEmailAndPassword(emailInput, passwordInput);
+          await authRef.current.createUserWithEmailAndPassword(cleanEmail, cleanPassword);
           alert('Conta cadastrada com sucesso!');
           setActiveScreen('home');
         }
@@ -487,10 +507,13 @@ export default function PoolControllerPage() {
       setIsLoadingAuth(false);
       if (mode === 'login') {
         const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        const matched = storedUsers.find((u: any) => u.email === emailInput && u.password === passwordInput);
+        const matched = storedUsers.find((u: any) => {
+          const uEmail = (u.email || '').trim().toLowerCase();
+          return uEmail === cleanEmail && u.password === cleanPassword;
+        });
         
-        if (matched || emailInput === 'admin@admin.com') { // default dev shortcut
-          const loggedUser = { email: emailInput, uid: matched?.uid || 'sim-admin-id' };
+        if (matched || cleanEmail === 'admin@admin.com') { // default dev shortcut
+          const loggedUser = { email: cleanEmail, uid: matched?.uid || 'sim-admin-id' };
           localStorage.setItem('sim_user', JSON.stringify(loggedUser));
           setCurrentUser(loggedUser);
           setActiveScreen('home');
@@ -499,16 +522,16 @@ export default function PoolControllerPage() {
         }
       } else {
         const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        if (storedUsers.some((u: any) => u.email === emailInput)) {
+        if (storedUsers.some((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail)) {
           setAuthErrorMessage('E-mail já cadastrado.');
           return;
         }
-        const newUser = { email: emailInput, password: passwordInput, uid: 'sim-' + Math.random().toString(36).substr(2, 9) };
+        const newUser = { email: cleanEmail, password: cleanPassword, uid: 'sim-' + Math.random().toString(36).substr(2, 9) };
         storedUsers.push(newUser);
         localStorage.setItem('sim_users', JSON.stringify(storedUsers));
         
-        localStorage.setItem('sim_user', JSON.stringify({ email: emailInput, uid: newUser.uid }));
-        setCurrentUser({ email: emailInput, uid: newUser.uid });
+        localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, uid: newUser.uid }));
+        setCurrentUser({ email: cleanEmail, uid: newUser.uid });
         alert('Conta criada com sucesso no sistema local!');
         setActiveScreen('home');
       }
@@ -1176,7 +1199,7 @@ export default function PoolControllerPage() {
         
         {/* Notch & Status Indicators */}
         <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
-          <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">19:13</span>
+          <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">{currentTime}</span>
           {/* Virtual Notch - Hidden on mobile, shown on desktop */}
           <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
           <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-sans text-slate-300">
@@ -1250,57 +1273,57 @@ export default function PoolControllerPage() {
               </div>
 
               {/* Row 2: Navigation Icons HOME, AUX, LED, TIMERS */}
-              <div className="px-3 pb-2.5 pt-0.5">
-                <div className="grid grid-cols-4 gap-1 p-0.5 bg-black/20 rounded-xl border border-white/5">
+              <div className="px-3.5 pb-3 pt-1">
+                <div className="grid grid-cols-4 gap-1.5 p-1 bg-black/20 rounded-xl border-2 border-white/10">
                   <button 
                     id="tab-home"
                     onClick={() => setActiveScreen('home')}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold tracking-tight transition-all ${
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'home' 
-                        ? 'text-orange-400 bg-white/10 shadow-inner border border-white/5' 
+                        ? 'text-orange-400 bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Tv className="w-3.5 h-3.5" />
+                    <Tv className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                     <span>HOME</span>
                   </button>
 
                   <button 
                     id="tab-aux"
                     onClick={() => setActiveScreen('aux')}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold tracking-tight transition-all ${
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'aux' 
-                        ? 'text-orange-400 bg-white/10 shadow-inner border border-white/5' 
+                        ? 'text-orange-400 bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Sliders className="w-3.5 h-3.5" />
+                    <Sliders className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                     <span>AUX</span>
                   </button>
 
                   <button 
                     id="tab-led"
                     onClick={() => setActiveScreen('led')}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold tracking-tight transition-all ${
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'led' 
-                        ? 'text-orange-400 bg-white/10 shadow-inner border border-white/5' 
+                        ? 'text-orange-400 bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Flame className="w-3.5 h-3.5" />
+                    <Flame className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                     <span>LED</span>
                   </button>
 
                   <button 
                     id="tab-piscina"
                     onClick={() => setActiveScreen('timers')}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold tracking-tight transition-all ${
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'timers' 
-                        ? 'text-orange-400 bg-white/10 shadow-inner border border-white/5' 
+                        ? 'text-orange-400 bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Clock className="w-3.5 h-3.5" />
+                    <Clock className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                     <span>TIMERS</span>
                   </button>
                 </div>
