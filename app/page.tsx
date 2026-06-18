@@ -1132,7 +1132,7 @@ export default function PoolControllerPage() {
   };
 
   return (
-    <div className="relative w-full max-w-full md:max-w-md mx-auto p-0 md:p-6 select-none" id="pool-controller-app">
+    <div className="relative w-full max-w-[440px] mx-auto p-0 sm:p-4 select-none" id="pool-controller-app">
       {/* Dynamic script injections */}
       <Script 
         src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" 
@@ -1172,13 +1172,13 @@ export default function PoolControllerPage() {
       />
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
-      <div className="w-full bg-white/5 backdrop-blur-xl border-0 md:border border-white/10 rounded-none md:rounded-[38px] overflow-hidden shadow-2xl flex flex-col min-h-[100dvh] md:min-h-[820px] md:h-[820px] relative z-20">
+      <div className="w-full bg-white/5 backdrop-blur-xl border-0 sm:border border-white/10 rounded-none sm:rounded-[32px] overflow-hidden shadow-2xl flex flex-col h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh] relative z-20">
         
         {/* Notch & Status Indicators */}
         <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
           <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">19:13</span>
           {/* Virtual Notch - Hidden on mobile, shown on desktop */}
-          <div className="hidden md:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
+          <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
           <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-sans text-slate-300">
             {mqttConnected ? (
               <span className="flex items-center gap-1 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25 text-emerald-400 font-extrabold text-[9px] scale-90">
@@ -2114,7 +2114,7 @@ export default function PoolControllerPage() {
         </div>
 
         {/* Simulative iPhone Bottom Home Bar Accent */}
-        <div className="hidden md:flex h-4 bg-black/10 w-full justify-center items-start">
+        <div className="hidden sm:flex h-4 bg-black/10 w-full justify-center items-start">
           <div className="w-32 h-1 bg-white/15 rounded-full" />
         </div>
 
