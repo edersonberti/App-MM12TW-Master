@@ -1231,7 +1231,12 @@ export default function PoolControllerPage() {
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 bg-orange-500 rounded flex items-center justify-center font-bold text-xs shadow-md shadow-orange-500/20 text-white">M</div>
+                  <img 
+                    src="https://masterlazer.com.br/images/logoazul.png" 
+                    alt="Master Lazer Logo" 
+                    className="w-7 h-7 object-contain" 
+                    referrerPolicy="no-referrer"
+                  />
                   <div>
                     <h1 className="text-xs font-bold tracking-tight text-white m-0 leading-none">MASTER LAZER</h1>
                     <p className="text-[8px] text-orange-400 font-mono tracking-widest uppercase mt-0.5 leading-none">AUTO • MM12TW</p>
@@ -1272,7 +1277,7 @@ export default function PoolControllerPage() {
                 </button>
               </div>
 
-              {/* Row 2: Navigation Icons HOME, AUX, LED, TIMERS */}
+              {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS */}
               <div className="px-3.5 pb-3 pt-1">
                 <div className="grid grid-cols-4 gap-1.5 p-1 bg-black/20 rounded-xl border-2 border-white/10">
                   <button 
@@ -1298,7 +1303,7 @@ export default function PoolControllerPage() {
                     }`}
                   >
                     <Sliders className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
-                    <span>AUX</span>
+                    <span>BOMBAS</span>
                   </button>
 
                   <button 
