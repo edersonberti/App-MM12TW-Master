@@ -91,6 +91,8 @@ export default function PoolControllerPage() {
   const [localWifiConnected, setLocalWifiConnected] = useState(false);
   const [localWifiSsid, setLocalWifiSsid] = useState('');
   const [localWifiPassword, setLocalWifiPassword] = useState('');
+  const [wifiInputSsid, setWifiInputSsid] = useState('');
+  const [wifiInputPassword, setWifiInputPassword] = useState('');
   const [localWifiScanning, setLocalWifiScanning] = useState(false);
   const [localWifiListVisible, setLocalWifiListVisible] = useState(false);
   const [localWifiList, setLocalWifiList] = useState<string[]>([]);
@@ -191,6 +193,7 @@ export default function PoolControllerPage() {
       const storedControllerIp = localStorage.getItem('local_controller_ip') || '192.168.4.1';
       setLocalWifiConnected(storedWifiConnected);
       setLocalWifiSsid(storedWifiSsid);
+      setWifiInputSsid(storedWifiSsid);
       setLocalControllerIp(storedControllerIp);
 
       const conf = {
@@ -2121,31 +2124,66 @@ export default function PoolControllerPage() {
                     {isConnectingLocalWifi ? (
                       <div className="py-4 text-center space-y-3">
                         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p className="text-xs text-orange-400 font-bold animate-pulse">Conectando a {selectedWifi}...</p>
+                        <p className="text-xs text-orange-400 font-bold animate-pulse">Conectando a {wifiInputSsid}...</p>
                       </div>
                     ) : (
                       <>
-                        <div className="flex items-center justify-between gap-4">
+                        {/* Two Manual Credential Inputs */}
+                        <div className="grid grid-cols-2 gap-3 bg-black/15 p-3.5 rounded-xl border border-white/5">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">
+                              SSID (Nome do Wi-Fi)
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Clique na lista ou digite"
+                              value={wifiInputSsid}
+                              onChange={(e) => setWifiInputSsid(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-orange-500 focus:bg-white/10 transition-all placeholder:text-slate-600 font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">
+                              Senha do Wi-Fi
+                            </label>
+                            <input
+                              type="password"
+                              placeholder="Senha física"
+                              value={wifiInputPassword}
+                              onChange={(e) => setWifiInputPassword(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-orange-500 focus:bg-white/10 transition-all placeholder:text-slate-600 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 mt-1">
                           <div className="flex gap-2">
+                            <button
+                              onClick={() => handleWifiConnect(wifiInputSsid, wifiInputPassword)}
+                              disabled={!wifiInputSsid || isConnectingLocalWifi}
+                              className={`px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed`}
+                            >
+                              Sincronizar no IP
+                            </button>
+
                             {!localWifiConnected ? (
                               <button
                                 onClick={handleWifiScan}
                                 disabled={localWifiScanning}
-                                className={`px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5 ${localWifiScanning ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                className={`px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold rounded-xl border border-white/10 transition-all ${localWifiScanning ? 'opacity-70 cursor-not-allowed' : ''}`}
                               >
-                                {localWifiScanning ? 'Buscando Redes...' : 'Buscar Redes do Equipamento'}
+                                {localWifiScanning ? 'Buscando...' : 'Escanear Redes'}
                               </button>
                             ) : (
                               <button
                                 onClick={handleWifiDisconnect}
-                                className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
+                                className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
                               >
                                 Desconectar
                               </button>
                             )}
                           </div>
 
-                          {/* WiFi indicator */}
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-orange-500/10 border-orange-500/30 text-orange-400 animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'}`}>
                             <Wifi className="w-5 h-5" />
                           </div>
@@ -2175,7 +2213,7 @@ export default function PoolControllerPage() {
                             className="pt-2 border-t border-white/5 space-y-3"
                           >
                             <label className="text-[10px] text-orange-400 font-extrabold uppercase tracking-wide block">
-                              Selecione uma rede de 2.4Ghz identificada
+                              Selecione uma rede de 2.4Ghz identificada para preencher:
                             </label>
 
                             {localWifiScanning ? (
@@ -2190,58 +2228,18 @@ export default function PoolControllerPage() {
                                     key={ssid}
                                     type="button"
                                     onClick={() => {
-                                      setSelectedWifi(ssid);
-                                      setLocalWifiPassword('');
+                                      setWifiInputSsid(ssid);
                                     }}
-                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all border text-left ${selectedWifi === ssid ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'}`}
+                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all border text-left ${wifiInputSsid === ssid ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'}`}
                                   >
                                     <div className="flex items-center gap-2">
                                       <Wifi className="w-3.5 h-3.5 text-orange-400" />
                                       <span>{ssid}</span>
                                     </div>
-                                    <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${selectedWifi === ssid ? 'rotate-90' : ''}`} />
+                                    <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${wifiInputSsid === ssid ? 'rotate-90' : ''}`} />
                                   </button>
                                 ))}
                               </div>
-                            )}
-
-                            {/* Password Prompt */}
-                            {selectedWifi && !localWifiScanning && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: -5 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="p-3.5 rounded-xl bg-black/10 border border-white/10 space-y-3"
-                              >
-                                <div className="space-y-1">
-                                  <label className="text-[10px] text-slate-300 font-bold block">
-                                    Senha para &quot;{selectedWifi}&quot;
-                                  </label>
-                                  <input
-                                    type="password"
-                                    placeholder="Digite a senha do Wi-Fi"
-                                    value={localWifiPassword}
-                                    onChange={(e) => setLocalWifiPassword(e.target.value)}
-                                    className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-orange-500 focus:bg-white/10 transition-all placeholder:text-slate-500"
-                                  />
-                                </div>
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleWifiConnect(selectedWifi, localWifiPassword)}
-                                    disabled={!localWifiPassword}
-                                    className="flex-1 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:hover:bg-orange-500 text-white text-xs font-extrabold rounded-lg transition-colors text-center"
-                                  >
-                                    Confirmar e Conectar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedWifi('')}
-                                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold rounded-lg transition-colors text-center"
-                                  >
-                                    Cancelar
-                                  </button>
-                                </div>
-                              </motion.div>
                             )}
                           </motion.div>
                         )}
