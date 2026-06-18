@@ -1132,7 +1132,7 @@ export default function PoolControllerPage() {
   };
 
   return (
-    <div className="relative w-full max-w-[440px] mx-auto p-0 sm:p-4 select-none" id="pool-controller-app">
+    <div className="relative w-full max-w-[440px] h-[100dvh] sm:h-auto mx-auto p-0 sm:p-4 select-none overflow-hidden" id="pool-controller-app">
       {/* Dynamic script injections */}
       <Script 
         src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" 
