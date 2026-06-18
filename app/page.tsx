@@ -1725,24 +1725,12 @@ export default function PoolControllerPage() {
                     </div>
 
                     {/* Led Buttons control action rail - side by side */}
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-2 gap-1.5">
                       <button
                         onClick={handleProgramDec}
                         className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-lg text-[11px] font-bold transition-all active:bg-emerald-500 active:scale-95 text-center"
                       >
                          Voltar
-                      </button>
-                      <button
-                        onClick={handleProgramInc}
-                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-lg text-[11px] font-bold transition-all active:bg-emerald-500 active:scale-95 text-center"
-                      >
-                        Avançar
-                      </button>
-                      <button
-                        onClick={handleProgramSave}
-                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-lg text-[11px] font-bold transition-all active:bg-emerald-500 active:scale-95 text-center"
-                      >
-                        Salvar
                       </button>
                       <button
                         onClick={handleProgramOff}
@@ -1906,11 +1894,8 @@ export default function PoolControllerPage() {
                   exit={{ opacity: 0, scale: 0.95 }}
                   className="space-y-4 py-2"
                 >
-                  <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-center py-5">
-                    <div className="w-12 h-12 mx-auto mb-3 bg-orange-500/10 rounded-full flex items-center justify-center border border-orange-500/20">
-                      <Wifi className={`w-6 h-6 ${mqttConnected ? 'text-orange-400 animate-pulse' : 'text-slate-400'}`} />
-                    </div>
-                    <h3 className="text-sm font-bold text-white mb-3">Conectar ao Sistema Remoto</h3>
+                  <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl py-5 text-left">
+                    <h3 className="text-sm font-bold text-white mb-3">Sistema Remoto</h3>
 
                     {mqttErrorMsg && (
                       <div className="mb-3 px-3 py-2 bg-rose-500/10 rounded-lg text-[10px] text-rose-400 font-mono text-left max-h-16 overflow-y-auto border border-rose-500/20">
@@ -1918,22 +1903,29 @@ export default function PoolControllerPage() {
                       </div>
                     )}
 
-                    <div className="flex gap-2 justify-center">
-                      {!mqttConnected ? (
-                        <button
-                          onClick={connectMQTT}
-                          className="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5"
-                        >
-                          Conectar Sistema
-                        </button>
-                      ) : (
-                        <button
-                          onClick={disconnectMQTT}
-                          className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
-                        >
-                          Desconectar
-                        </button>
-                      )}
+                    <div className="flex items-center justify-between gap-4 mt-2">
+                      <div className="flex gap-2">
+                        {!mqttConnected ? (
+                          <button
+                            onClick={connectMQTT}
+                            className="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5"
+                          >
+                            Conectar Sistema
+                          </button>
+                        ) : (
+                          <button
+                            onClick={disconnectMQTT}
+                            className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
+                          >
+                            Desconectar
+                          </button>
+                        )}
+                      </div>
+
+                      {/* WiFi indicator aligned to the right of the button */}
+                      <div className="w-10 h-10 bg-orange-500/10 rounded-full flex items-center justify-center border border-orange-500/20 shrink-0">
+                        <Wifi className={`w-5 h-5 ${mqttConnected ? 'text-orange-400 animate-pulse' : 'text-slate-400'}`} />
+                      </div>
                     </div>
                   </div>
 
@@ -1963,43 +1955,7 @@ export default function PoolControllerPage() {
 
                     <div className="space-y-3">
                       {/* Presets Row */}
-                      <div className="space-y-1">
-                        <label className="text-[9px] text-orange-400 font-extrabold uppercase block">Atalhos para Servidores Públicos Grátis</label>
-                        <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMqttBroker('test.mosquitto.org');
-                              setMqttPort('8081');
-                            }}
-                            className="py-1.5 px-1 bg-white/5 hover:bg-orange-500/20 text-slate-200 border border-white/10 rounded text-[10px] font-semibold active:scale-95 transition-all text-center"
-                          >
-                            Mosquitto (8081)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMqttBroker('broker.hivemq.com');
-                              setMqttPort('8884');
-                            }}
-                            className="py-1.5 px-1 bg-white/5 hover:bg-orange-500/20 text-slate-200 border border-white/10 rounded text-[10px] font-semibold active:scale-95 transition-all text-center"
-                          >
-                            HiveMQ (8884)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMqttBroker('broker.emqx.io');
-                              setMqttPort('8084');
-                            }}
-                            className="py-1.5 px-1 bg-white/5 hover:bg-orange-500/20 text-slate-200 border border-white/10 rounded text-[10px] font-semibold active:scale-95 transition-all text-center"
-                          >
-                            EMQX (8084)
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
+                                     <div className="space-y-1">
                         <label className="text-[10px] text-slate-300 font-bold block">Broker Host (Endereço)</label>
                         <input
                           type="text"
