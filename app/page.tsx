@@ -140,6 +140,9 @@ export default function PoolControllerPage() {
   const [ledDuration, setLedDuration] = useState('4');
   const [ledProgram, setLedProgram] = useState('0');
 
+  const [hidroTimerEnabled, setHidroTimerEnabled] = useState(false);
+  const [hidroTimerHours, setHidroTimerHours] = useState('off');
+
   // MQTT instance reference
   const mqttClientRef = useRef<any>(null);
   const reconnectTimeoutRef = useRef<any>(null);
@@ -191,6 +194,27 @@ export default function PoolControllerPage() {
           // ignore
         }
       }
+
+      const storedHidroEnabled = localStorage.getItem('hidro_timer_enabled') === 'true';
+      const storedHidroHours = localStorage.getItem('hidro_timer_hours') || '1';
+      setHidroTimerEnabled(storedHidroEnabled);
+      setHidroTimerHours(storedHidroEnabled ? storedHidroHours : 'off');
+
+      // Load Filtration states
+      const storedFilterInit = localStorage.getItem('filter_init') || '12:00';
+      const storedFilterHours = localStorage.getItem('filter_hours') || '4';
+      setFilterInit(storedFilterInit);
+      setFilterHours(storedFilterHours);
+
+      // Load LED timer states
+      const storedLedStartHour = localStorage.getItem('led_start_hour') || '20';
+      const storedLedStartMinute = localStorage.getItem('led_start_minute') || '00';
+      const storedLedDuration = localStorage.getItem('led_duration') || '4';
+      const storedLedProgram = localStorage.getItem('led_program') || '0';
+      setLedStartHour(storedLedStartHour);
+      setLedStartMinute(storedLedStartMinute);
+      setLedDuration(storedLedDuration);
+      setLedProgram(storedLedProgram);
     }, 0);
   }, []);
 
@@ -382,6 +406,34 @@ export default function PoolControllerPage() {
     };
   }
 
+  // 4b. Color RGB to HSV Converter Math helper helper (for hardware feedback loop)
+  function rgbToHsv(r: number, g: number, b: number) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+
+    if (max !== min) {
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h /= 6;
+    }
+
+    return {
+      h: Math.round(h * 360),
+      s: Math.round(s * 100),
+      v: Math.round(v * 100)
+    };
+  }
+
   function publishColor(h: number, s: number, v: number, satMult: number, brightMult: number) {
     const effectiveSat = (s * satMult) / 100;
     const effectiveVal = (v * brightMult) / 100;
@@ -549,12 +601,155 @@ export default function PoolControllerPage() {
 
       client.onMessageArrived = (message: any) => {
         const dest = message.destinationName;
-        const payload = message.payloadString;
-        console.log('Received Message:', dest, payload);
+        const payload = (message.payloadString || '').trim();
+        console.log('Received Message From Hardware:', dest, payload);
 
         // Listening to Alarms
         if (dest === `${deviceId}/solar/erro`) {
           setSolarErrorBanner(payload);
+          return;
+        }
+
+        // Try to parse payload as JSON since some status updates are nested/grouped
+        if (payload.startsWith('{') && payload.endsWith('}')) {
+          try {
+            const data = JSON.parse(payload);
+            console.log('Successfully parsed JSON hardware status update:', data);
+
+            // Motor 1 (Hidromassagem) - AUX Screen Check
+            if (data.mt1 !== undefined) {
+              setMotorHidro(data.mt1 === 'ON' || data.mt1 === 'LIG' || data.mt1 === 1 || data.mt1 === true || String(data.mt1).toUpperCase() === 'ON');
+            } else if (data.motorHidro !== undefined) {
+              setMotorHidro(data.motorHidro === true || data.motorHidro === 'ON' || data.motorHidro === 1);
+            } else if (data.hidro !== undefined) {
+              setMotorHidro(data.hidro === true || data.hidro === 'ON' || data.hidro === 1);
+            }
+
+            // Motor 2 (Filtração) - AUX Screen Check
+            if (data.mt2 !== undefined) {
+              setMotorFiltro(data.mt2 === 'ON' || data.mt2 === 'LIG' || data.mt2 === 1 || data.mt2 === true || String(data.mt2).toUpperCase() === 'ON');
+            } else if (data.motorFiltro !== undefined) {
+              setMotorFiltro(data.motorFiltro === true || data.motorFiltro === 'ON' || data.motorFiltro === 1);
+            } else if (data.filtro !== undefined) {
+              setMotorFiltro(data.filtro === true || data.filtro === 'ON' || data.filtro === 1);
+            }
+
+            // LED program - LED Screen Check
+            if (data.led_pg !== undefined) {
+              const p = parseInt(data.led_pg);
+              setCurrentProgram(isNaN(p) ? '---' : p);
+            } else if (data.ledProgram !== undefined) {
+              const p = parseInt(data.ledProgram);
+              setCurrentProgram(isNaN(p) ? '---' : p);
+            } else if (data.pg !== undefined) {
+              const p = parseInt(data.pg);
+              setCurrentProgram(isNaN(p) ? '---' : p);
+            } else if (data.prog !== undefined) {
+              const p = parseInt(data.prog);
+              setCurrentProgram(isNaN(p) ? '---' : p);
+            }
+
+            if (data.led_ctrl !== undefined) {
+              if (data.led_ctrl === 'DESL' || data.led_ctrl === 'OFF' || data.led_ctrl === false || data.led_ctrl === 0) {
+                setCurrentProgram('---');
+              }
+            } else if (data.led_state !== undefined) {
+              if (data.led_state === 'DESL' || data.led_state === 'OFF' || data.led_state === false || data.led_state === 0) {
+                setCurrentProgram('---');
+              }
+            }
+
+            // LED colors (RGB feedback)
+            const rVal = data.r !== undefined ? data.r : (data.red !== undefined ? data.red : (data.pwm_r !== undefined ? data.pwm_r : null));
+            const gVal = data.g !== undefined ? data.g : (data.green !== undefined ? data.green : (data.pwm_g !== undefined ? data.pwm_g : null));
+            const bVal = data.b !== undefined ? data.b : (data.blue !== undefined ? data.blue : (data.pwm_b !== undefined ? data.pwm_b : null));
+
+            if (rVal !== null && gVal !== null && bVal !== null) {
+              const hsv = rgbToHsv(Number(rVal), Number(gVal), Number(bVal));
+              setLedHue(hsv.h);
+              setLedSat(hsv.s);
+              setLedVal(hsv.v);
+              if (iroPickerRef.current) {
+                iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+              }
+            }
+
+            if (data.satMultiplier !== undefined) setSatMultiplier(Number(data.satMultiplier));
+            if (data.brightMultiplier !== undefined) setBrightMultiplier(Number(data.brightMultiplier));
+
+            return; // processed successfully as JSON
+          } catch (e) {
+            console.warn('Payload starts/ends with curly braces but is not valid JSON status:', e);
+          }
+        }
+
+        // Individual topic parsed fallback
+        const lowerDest = dest.toLowerCase();
+        
+        // Motor 1 / Hidro
+        if (lowerDest.endsWith('/mt1') || lowerDest.endsWith('/mt1/state') || lowerDest.endsWith('/mt1/status')) {
+          setMotorHidro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
+        }
+        // Motor 2 / Filtro
+        else if (lowerDest.endsWith('/mt2') || lowerDest.endsWith('/mt2/state') || lowerDest.endsWith('/mt2/status')) {
+          setMotorFiltro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
+        }
+        // LED program
+        else if (lowerDest.endsWith('/led/pg') || lowerDest.endsWith('/led/pg/state')) {
+          const pgVal = parseInt(payload);
+          if (!isNaN(pgVal)) {
+            setCurrentProgram(pgVal);
+          } else if (payload === '---' || payload.toUpperCase() === 'DESL' || payload.toUpperCase() === 'OFF' || payload === '0') {
+            setCurrentProgram('---');
+          }
+        }
+        // LED Control
+        else if (lowerDest.endsWith('/led/ctrl') || lowerDest.endsWith('/led/state')) {
+          if (payload.toUpperCase() === 'DESL' || payload.toUpperCase() === 'OFF' || payload === '0') {
+            setCurrentProgram('---');
+          } else if (payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'ON' || payload === '1') {
+            if (currentProgram === '---') {
+              setCurrentProgram(0);
+            }
+          }
+        }
+        // LED RGB colors feedback
+        else if (lowerDest.endsWith('/pwm/r') || lowerDest.endsWith('/led/r')) {
+          const num = parseInt(payload);
+          if (!isNaN(num)) {
+            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
+            const hsv = rgbToHsv(num, rgb.g, rgb.b);
+            setLedHue(hsv.h);
+            setLedSat(hsv.s);
+            setLedVal(hsv.v);
+            if (iroPickerRef.current) {
+              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+            }
+          }
+        } else if (lowerDest.endsWith('/pwm/g') || lowerDest.endsWith('/led/g')) {
+          const num = parseInt(payload);
+          if (!isNaN(num)) {
+            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
+            const hsv = rgbToHsv(rgb.r, num, rgb.b);
+            setLedHue(hsv.h);
+            setLedSat(hsv.s);
+            setLedVal(hsv.v);
+            if (iroPickerRef.current) {
+              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+            }
+          }
+        } else if (lowerDest.endsWith('/pwm/b') || lowerDest.endsWith('/led/b')) {
+          const num = parseInt(payload);
+          if (!isNaN(num)) {
+            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
+            const hsv = rgbToHsv(rgb.r, rgb.g, num);
+            setLedHue(hsv.h);
+            setLedSat(hsv.s);
+            setLedVal(hsv.v);
+            if (iroPickerRef.current) {
+              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+            }
+          }
         }
       };
 
@@ -572,12 +767,77 @@ export default function PoolControllerPage() {
             reconnectTimeoutRef.current = null;
           }
           
-          // Subscribe to target solar error topic
-          try {
-            client.subscribe(`${deviceId}/solar/erro`);
-          } catch (e: any) {
-            console.error('MQTT Subscription failed:', e);
-          }
+          // Subscribe to target topics to monitor LED and AUX hardware status
+          const topicsToSubscribe = [
+            `${deviceId}/solar/erro`,
+            `${deviceId}/ID/mt1`,
+            `${deviceId}/ID/mt2`,
+            `${deviceId}/mt1`,
+            `${deviceId}/mt2`,
+            `${deviceId}/ID/mt1/state`,
+            `${deviceId}/ID/mt2/state`,
+            `${deviceId}/ID/mt1/status`,
+            `${deviceId}/ID/mt2/status`,
+            `${deviceId}/ID/led/pg`,
+            `${deviceId}/ID/led/ctrl`,
+            `${deviceId}/led/pg`,
+            `${deviceId}/led/ctrl`,
+            `${deviceId}/ID/led/state`,
+            `${deviceId}/led/state`,
+            `${deviceId}/ID/led/r`,
+            `${deviceId}/ID/led/g`,
+            `${deviceId}/ID/led/b`,
+            `${deviceId}/ID/pwm/r`,
+            `${deviceId}/ID/pwm/g`,
+            `${deviceId}/ID/pwm/b`,
+            `${deviceId}/pwm/r`,
+            `${deviceId}/pwm/g`,
+            `${deviceId}/pwm/b`,
+            `${deviceId}/status`,
+            `${deviceId}/state`,
+            `${deviceId}/ID/status`,
+            `${deviceId}/ID/state`
+          ];
+
+          topicsToSubscribe.forEach((t) => {
+            try {
+              client.subscribe(t);
+              console.log(`Subscribed to status channel: ${t}`);
+            } catch (err) {
+              console.error(`Subscription failed for ${t}:`, err);
+            }
+          });
+
+          // Send query commands to request immediate status update from hardware
+          const queryTopics = [
+            `${deviceId}/ID/get`,
+            `${deviceId}/get`,
+            `${deviceId}/ID/cmd`,
+            `${deviceId}/cmd`,
+            `${deviceId}/ID/ctrl`,
+            `${deviceId}/ctrl`,
+            `${deviceId}/ID/status/get`,
+            `${deviceId}/status/get`
+          ];
+
+          queryTopics.forEach((qt) => {
+            try {
+              // Send various common MQTT request patterns to ensure compatibility
+              const msgStatus = new window.Paho.MQTT.Message("STATUS");
+              msgStatus.destinationName = qt;
+              client.send(msgStatus);
+
+              const msgGet = new window.Paho.MQTT.Message("GET");
+              msgGet.destinationName = qt;
+              client.send(msgGet);
+
+              const msgRead = new window.Paho.MQTT.Message("read");
+              msgRead.destinationName = qt;
+              client.send(msgRead);
+            } catch (err) {
+              console.warn(`Initial query failed on ${qt}:`, err);
+            }
+          });
         },
         onFailure: (err: any) => {
           console.error('MQTT Connection Failure:', err);
@@ -717,6 +977,9 @@ export default function PoolControllerPage() {
 
   // Save Timers
   const handleSaveFilter = () => {
+    localStorage.setItem('filter_init', filterInit);
+    localStorage.setItem('filter_hours', filterHours);
+
     const data = {
       start: filterInit,
       hours: filterHours,
@@ -751,6 +1014,11 @@ export default function PoolControllerPage() {
   };
 
   const handleSaveLedTimer = () => {
+    localStorage.setItem('led_start_hour', ledStartHour);
+    localStorage.setItem('led_start_minute', ledStartMinute);
+    localStorage.setItem('led_duration', ledDuration);
+    localStorage.setItem('led_program', ledProgram);
+
     const formattedHour = ledStartHour.padStart(2, '0');
     const formattedMinute = ledStartMinute.padStart(2, '0');
     const startingTime = `${formattedHour}:${formattedMinute}`;
@@ -802,10 +1070,46 @@ export default function PoolControllerPage() {
     publishTopic(`${deviceId}/led/tmr/prog`, String(ledProgram));
     publishTopic(`${deviceId}/ID/led/tmr/programacao`, String(ledProgram));
     publishTopic(`${deviceId}/led/tmr/programacao`, String(ledProgram));
-    publishTopic(`${deviceId}/ID/led/pg`, String(ledProgram));
-    publishTopic(`${deviceId}/led/pg`, String(ledProgram));
 
     alert(`Programação do Timer LED enviada!\nInício: ${startingTime}\nDuração: ${ledDuration} horas\nPrograma: ${ledProgram}.`);
+  };
+
+  const handleSaveHidroTimer = () => {
+    const isEnabled = hidroTimerHours !== 'off';
+    const hoursVal = isEnabled ? hidroTimerHours : '1';
+
+    setHidroTimerEnabled(isEnabled);
+
+    localStorage.setItem('hidro_timer_enabled', String(isEnabled));
+    localStorage.setItem('hidro_timer_hours', hoursVal);
+
+    const data = {
+      enabled: isEnabled,
+      active: isEnabled,
+      ativo: isEnabled,
+      hours: hoursVal,
+      horas: hoursVal,
+      duracao: hoursVal,
+      duration: hoursVal
+    };
+
+    // Publish JSON formats
+    publishTopic(`${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
+    publishTopic(`${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
+    publishTopic(`${deviceId}/ID/hidro/tmr`, JSON.stringify(data));
+    publishTopic(`${deviceId}/hidro/tmr`, JSON.stringify(data));
+
+    // Publish individual parameters
+    publishTopic(`${deviceId}/ID/hidro/tmr/active`, isEnabled ? '1' : '0');
+    publishTopic(`${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
+    publishTopic(`${deviceId}/ID/hidro/tmr/ativo`, isEnabled ? 'LIG' : 'DESL');
+    publishTopic(`${deviceId}/hidro/tmr/ativo`, isEnabled ? 'LIG' : 'DESL');
+    publishTopic(`${deviceId}/ID/hidro/tmr/hours`, String(hoursVal));
+    publishTopic(`${deviceId}/hidro/tmr/hours`, String(hoursVal));
+    publishTopic(`${deviceId}/ID/hidro/tmr/horas`, String(hoursVal));
+    publishTopic(`${deviceId}/hidro/tmr/horas`, String(hoursVal));
+
+    alert(`Programação do Timer Hidro enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
   };
 
   // Save Advanced Developer Config
@@ -1341,22 +1645,6 @@ export default function PoolControllerPage() {
                   {/* Dynamic Color Wheel element Target */}
                   <div className="p-2 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl flex flex-col items-center">
                     <div id={pickerContainerId} className="flex justify-center my-0.5" />
-                    
-                    {/* Visual Color Status Bar Preview & RGB text */}
-                    <div className="flex flex-col items-center gap-1.5 mt-2 w-full">
-                      <div 
-                        className="w-24 h-3 rounded-full border border-white/20 shadow-md transition-all"
-                        style={{
-                          backgroundColor: (() => {
-                            const effectiveSat = (ledSat * satMultiplier) / 100;
-                            const effectiveVal = (ledVal * brightMultiplier) / 100;
-                            const rgb = hsvToRgb(ledHue, effectiveSat, effectiveVal);
-                            return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
-                          })()
-                        }}
-                      />
-                      {/* Removed RGB text indicators */}
-                    </div>
                   </div>
 
                   <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-sm space-y-1.5">
@@ -1469,16 +1757,11 @@ export default function PoolControllerPage() {
                       <select
                         value={filterHours}
                         onChange={(e) => setFilterHours(e.target.value)}
-                        className="bg-white/5 px-2 py-1 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none focus:border-orange-500 focus:bg-white/10"
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none focus:border-orange-500 focus:bg-white/10"
                       >
-                        <option value="0">0</option>
-                        <option value="2">2</option>
-                        <option value="4">4</option>
-                        <option value="6">6</option>
-                        <option value="8">8</option>
-                        <option value="10">10</option>
-                        <option value="12">12</option>
-                        <option value="14">14</option>
+                        {Array.from({ length: 25 }, (_, i) => String(i)).map(h => (
+                          <option key={h} value={h} className="bg-slate-950 text-orange-400 font-bold">{h}h</option>
+                        ))}
                       </select>
                     </div>
 
@@ -1498,27 +1781,15 @@ export default function PoolControllerPage() {
 
                     <div className="flex items-center justify-between py-1">
                       <label className="text-xs font-medium text-slate-300">Hora Inicial</label>
-                      <div className="flex items-center gap-1">
-                        <select
-                          value={ledStartHour}
-                          onChange={(e) => setLedStartHour(e.target.value)}
-                          className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none"
-                        >
-                          {['18','19','20','21','22','23'].map(h => (
-                            <option key={h} value={h}>{h}</option>
-                          ))}
-                        </select>
-                        <span className="text-slate-500 font-bold">:</span>
-                        <select
-                          value={ledStartMinute}
-                          onChange={(e) => setLedStartMinute(e.target.value)}
-                          className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none"
-                        >
-                          {['00','05','10','15','20','25','30','35','40','45','50','55'].map(m => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                      </div>
+                      <select
+                        value={ledStartHour}
+                        onChange={(e) => setLedStartHour(e.target.value)}
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none"
+                      >
+                        {['18','19','20','21','22','23'].map(h => (
+                          <option key={h} value={h} className="bg-slate-950 text-orange-400 font-bold">{h}h</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="flex items-center justify-between py-1">
@@ -1558,6 +1829,42 @@ export default function PoolControllerPage() {
                     >
                       Salvar Timer LED
                     </button>
+                  </div>
+
+                  {/* TIMER HIDRO Card */}
+                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
+                    <h3 className="text-xs font-bold text-orange-400 tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" /> TIMER HIDRO
+                    </h3>
+
+                    <form 
+                      onSubmit={(e) => { 
+                        e.preventDefault(); 
+                        handleSaveHidroTimer(); 
+                      }} 
+                      className="space-y-3"
+                    >
+                      <div className="flex items-center justify-between py-1">
+                        <label className="text-xs font-medium text-slate-300">Tempo de Duração</label>
+                        <select
+                          value={hidroTimerHours || 'off'}
+                          onChange={(e) => setHidroTimerHours(e.target.value)}
+                          className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none"
+                        >
+                          <option value="off" className="bg-slate-950 text-slate-300 font-bold">Desligado</option>
+                          {Array.from({ length: 23 }, (_, i) => i + 1).map(h => (
+                            <option key={h} value={String(h)} className="bg-slate-950 text-orange-400 font-bold">{h} {h === 1 ? 'Hora' : 'Horas'}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full py-2 bg-[#007AFF] hover:bg-[#0066DD] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
+                      >
+                        Salvar Timer Hidro
+                      </button>
+                    </form>
                   </div>
                 </motion.div>
               )}
