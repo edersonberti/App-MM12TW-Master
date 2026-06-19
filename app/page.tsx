@@ -160,6 +160,7 @@ export default function PoolControllerPage() {
   // Timers States
   const [filterInit, setFilterInit] = useState('12:00');
   const [filterHours, setFilterHours] = useState('4');
+  const [filterDays, setFilterDays] = useState<boolean[]>([true, true, true, true, true, true, true]);
   
   const [ledStartHour, setLedStartHour] = useState('20');
   const [ledStartMinute, setLedStartMinute] = useState('00');
@@ -255,6 +256,14 @@ export default function PoolControllerPage() {
       const storedFilterHours = localStorage.getItem('filter_hours') || '4';
       setFilterInit(storedFilterInit);
       setFilterHours(storedFilterHours);
+      const storedFilterDays = localStorage.getItem('filter_days');
+      if (storedFilterDays) {
+        try {
+          setFilterDays(JSON.parse(storedFilterDays));
+        } catch (e) {
+          // ignore
+        }
+      }
 
       // Load LED timer states
       const storedLedStartHour = localStorage.getItem('led_start_hour') || '20';
@@ -1257,6 +1266,14 @@ export default function PoolControllerPage() {
   const handleSaveFilter = () => {
     localStorage.setItem('filter_init', filterInit);
     localStorage.setItem('filter_hours', filterHours);
+    localStorage.setItem('filter_days', JSON.stringify(filterDays));
+
+    const dayLabels = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+    const selectedDaysList = filterDays
+      .map((active, index) => (active ? dayLabels[index] : ''))
+      .filter(Boolean)
+      .join(',');
+    const daysBinary = filterDays.map(d => d ? '1' : '0').join('');
 
     const data = {
       start: filterInit,
@@ -1265,7 +1282,12 @@ export default function PoolControllerPage() {
       horas: filterHours,
       duration: filterHours,
       duracao: filterHours,
-      tempo: filterHours
+      tempo: filterHours,
+      days: filterDays,
+      dias: filterDays,
+      days_binary: daysBinary,
+      dias_binario: daysBinary,
+      active_days_str: selectedDaysList
     };
     
     // Publish JSON formats to normal and alternate topics
@@ -1288,7 +1310,14 @@ export default function PoolControllerPage() {
     publishTopic(`${deviceId}/ID/ft/duracao`, String(filterHours));
     publishTopic(`${deviceId}/ID/ft/duracao`, String(filterHours));
 
-    alert(`Programação de filtragem enviada!\nInício: ${filterInit}\nDuração: ${filterHours} horas.`);
+    // Publish days variables
+    publishTopic(`${deviceId}/ID/ft/days`, daysBinary);
+    publishTopic(`${deviceId}/ft/days`, daysBinary);
+    publishTopic(`${deviceId}/ID/ft/dias`, daysBinary);
+    publishTopic(`${deviceId}/ft/dias`, daysBinary);
+
+    const activeText = selectedDaysList ? `\nDias: [ ${selectedDaysList} ]` : `\nDias: Nenhum selecionado`;
+    alert(`Programação de filtragem enviada!\nInício: ${filterInit}\nDuração: ${filterHours} horas.${activeText}`);
   };
 
   const handleSaveLedTimer = () => {
@@ -2025,28 +2054,28 @@ export default function PoolControllerPage() {
                       <button
                         id="led-btn-voltar"
                         onClick={handleProgramDec}
-                        className="py-2.5 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-[11px] font-bold transition-all active:scale-95 text-center px-1"
+                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Voltar
                       </button>
                       <button
                         id="led-btn-avancar"
                         onClick={handleProgramInc}
-                        className="py-2.5 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-[11px] font-bold transition-all active:scale-95 text-center px-1"
+                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Avançar
                       </button>
                       <button
                         id="led-btn-salvar"
                         onClick={handleProgramSave}
-                        className="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[11px] font-bold transition-all active:scale-95 text-center px-1"
+                        className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Salvar
                       </button>
                       <button
                         id="led-btn-desligar"
                         onClick={handleProgramOff}
-                        className="py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[11px] font-bold transition-all active:scale-95 text-center px-1"
+                        className="py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Desligar
                       </button>
@@ -2091,6 +2120,65 @@ export default function PoolControllerPage() {
                           <option key={h} value={h} className="bg-slate-950 text-orange-400 font-bold">{h}h</option>
                         ))}
                       </select>
+                    </div>
+
+                    {/* Seleção de Dias da Semana (DSTQQSS) */}
+                    <div className="py-2.5 space-y-2 border-t border-white/5 select-none">
+                      <div className="flex justify-between items-center px-0.5">
+                        <label className="text-xs font-semibold text-slate-300">Dias de Funcionamento</label>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setFilterDays([true, true, true, true, true, true, true])}
+                            className="text-[9px] font-bold text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 px-1.5 py-0.5 rounded transition-all"
+                          >
+                            Todos
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFilterDays([false, false, false, false, false, false, false])}
+                            className="text-[9px] font-bold text-slate-400 bg-white/5 hover:bg-white/10 px-1.5 py-0.5 rounded transition-all"
+                          >
+                            Nenhum
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-7 gap-1 bg-white/5 p-2 rounded-xl border border-white/5">
+                        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((day, idx) => {
+                          const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                const copy = [...filterDays];
+                                copy[idx] = !copy[idx];
+                                setFilterDays(copy);
+                              }}
+                              className="flex flex-col items-center gap-1.5 py-1 focus:outline-none focus:ring-0 group"
+                              title={dayNames[idx]}
+                            >
+                              <span className={`text-[11px] font-extrabold transition-colors ${filterDays[idx] ? 'text-orange-400' : 'text-slate-400 group-hover:text-slate-300'}`}>
+                                {day}
+                              </span>
+                              
+                              {/* Custom Radio Button-Style Indicator */}
+                              <div 
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                                  filterDays[idx]
+                                    ? 'border-orange-500 bg-orange-500/20 shadow-[0_0_6px_rgba(249,115,22,0.4)]'
+                                    : 'border-white/20 bg-transparent group-hover:border-slate-500'
+                                }`}
+                              >
+                                {filterDays[idx] && (
+                                  <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     <button
