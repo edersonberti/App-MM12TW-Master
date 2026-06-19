@@ -1937,22 +1937,61 @@ export default function PoolControllerPage() {
                   className="space-y-4 flex flex-col flex-1 justify-between"
                 >
                   <div className="space-y-3">
-                    {/* LED Status Indicator */}
-                    <div className="p-3 bg-white/5 border border-white/10 rounded-xl backdrop-blur-sm flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className={`p-2 rounded-lg ${currentProgram !== '---' ? 'bg-orange-500/10 border border-orange-500/20' : 'bg-white/5 border border-white/5'}`}>
-                          <Flame className={`w-4 h-4 ${currentProgram !== '---' ? 'text-orange-400' : 'text-slate-500'}`} />
+                    {/* LED & TIMERS Status Indicators */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* Left: LED Status Indicator */}
+                      <button
+                        id="home-status-led"
+                        onClick={() => setActiveScreen('led')}
+                        className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
+                        title="Ver controle do LED / Iluminação"
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-1.5">
+                            <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-orange-400' : 'text-slate-500'}`} />
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LED</span>
+                          </div>
+                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-orange-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
-                        <div className="text-left">
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LED</p>
-                          <p className="text-[11px] text-slate-300 font-semibold">
-                            {currentProgram !== '---' ? `Programa: ${currentProgram}` : 'Sem Programa'}
+                        
+                        <div className="mt-1">
+                          <p className="text-[11px] text-white font-bold truncate">
+                            {currentProgram !== '---' ? `Prog: ${currentProgram}` : 'Sem Programa'}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-medium">
+                            Status: <span className={currentProgram !== '---' ? 'text-orange-400 font-bold' : 'text-slate-500 font-bold'}>
+                              {currentProgram !== '---' ? 'LIGADO' : 'DESLIGADO'}
+                            </span>
                           </p>
                         </div>
-                      </div>
-                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${currentProgram !== '---' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 animate-pulse' : 'bg-white/5 text-slate-500 border border-white/5'}`}>
-                        {currentProgram !== '---' ? 'LIGADO' : 'DESLIGADO'}
-                      </span>
+                      </button>
+
+                      {/* Right: Timers Status Indicator */}
+                      <button
+                        id="home-status-timers"
+                        onClick={() => setActiveScreen('timers')}
+                        className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                        title="Ver Programação de Timers / Automação"
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TIMERS</span>
+                          </div>
+                          <span className={`w-1.5 h-1.5 rounded-full ${filterHours !== '0' || ledDuration !== '0' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                        </div>
+                        
+                        <div className="mt-1">
+                          <p className="text-[11px] text-white font-bold truncate">
+                            {filterHours !== '0' ? `Filtro: ${filterInit} (${filterHours}h)` : 'Filtro: Inativo'}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-medium truncate">
+                            LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>
+                              {ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}
+                            </span>
+                          </p>
+                        </div>
+                      </button>
                     </div>
 
                     {/* Quick Status Block */}
