@@ -23,6 +23,12 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'masterlazer.com.br',
+        port: '',
+        pathname: '/**',
+      },
     ],
   },
   output: 'standalone',
