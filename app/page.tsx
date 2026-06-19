@@ -649,37 +649,16 @@ export default function PoolControllerPage() {
     disconnectMQTT();
   };
 
-  // Local Wi-Fi Connection Logic (Simulated for Local Controller UI integration)
-  const handleWifiScan = () => {
-    setLocalWifiScanning(true);
-    setLocalWifiListVisible(true);
-    // Simulate finding local access points after 1.5 seconds
-    setTimeout(() => {
-      setLocalWifiList([
-        'Master_Lazer_Pool_2.4G',
-        'Master_Lazer_Alt_5G',
-        'Casa_Principal_2.4G',
-        'Suporte_Tecnico_Net',
-        'Smart_Pool_Access_Point'
-      ]);
-      setLocalWifiScanning(false);
-    }, 1500);
-  };
-
-  const handleWifiConnect = (ssid: string, pass: string) => {
-    if (!ssid) return;
+  // Local Wi-Fi Connection Logic (Direct Connect/Disconnect)
+  const handleSimpleWifiConnect = () => {
     setIsConnectingLocalWifi(true);
-    
-    // Simulate connection flow with a delay
     setTimeout(() => {
       setIsConnectingLocalWifi(false);
       setLocalWifiConnected(true);
-      setLocalWifiSsid(ssid);
-      setLocalWifiPassword(pass);
-      setLocalWifiListVisible(false);
+      setLocalWifiSsid('LazerPool_WiFi_Local');
       localStorage.setItem('local_wifi_connected', 'true');
-      localStorage.setItem('local_wifi_ssid', ssid);
-    }, 2000);
+      localStorage.setItem('local_wifi_ssid', 'LazerPool_WiFi_Local');
+    }, 1500);
   };
 
   const handleWifiDisconnect = () => {
@@ -830,6 +809,121 @@ export default function PoolControllerPage() {
       console.error(err);
       const msg = err.message || String(err);
       log(`Erro de Provisionamento: ${msg}`);
+      setBleError(msg);
+      setBleStatus('error');
+    }
+  };
+
+  const handleBleScanCommand = async () => {
+    setBleStatus('scanning');
+    setBleError('');
+    const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando requisição de escaneamento de rede...`]);
+    
+    const nav = typeof window !== 'undefined' ? (navigator as any) : null;
+    const isBluetoothAvailable = !!(nav && nav.bluetooth);
+
+    if (bleSimulationMode || !isBluetoothAvailable) {
+      log(`[SIMULAÇÃO] Operando em Modo Simulado de Escaneamento BLE.`);
+      if (!isBluetoothAvailable) {
+        log(`[SIMULAÇÃO] Nota: O Web Bluetooth não está disponível neste navegador/iframe.`);
+      }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        log(`[SIMULAÇÃO] Parâmetros de Filtro - Prefixo: "${bleNamePrefix}", UUID de Serviço: "${bleServiceUuid}"`);
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        log(`[SIMULAÇÃO] Dispositivo BLE respondendo: "${bleDeviceId}"`);
+        
+        setBleStatus('connecting');
+        log(`[SIMULAÇÃO] Conectando ao GATT Server...`);
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        log(`[SIMULAÇÃO] GATT Conectado.`);
+        setBleStatus('connected');
+        
+        await new Promise(resolve => setTimeout(resolve, 800));
+        log(`[SIMULAÇÃO] Localizando Serviço Primário: ${bleServiceUuid}`);
+        
+        await new Promise(resolve => setTimeout(resolve, 800));
+        setBleStatus('sending');
+        log(`[SIMULAÇÃO] Mapeando característica de escrita...`);
+        
+        const scanPayload = JSON.stringify({ cmd: "scan" });
+        log(`[SIMULAÇÃO] JSON Gravado: ${scanPayload}`);
+        
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        log(`[SIMULAÇÃO] Escrevendo característica de forma assíncrona...`);
+        log(`[SIMULAÇÃO] Característica escrita com sucesso!`);
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        log(`[SIMULAÇÃO] Equipamento retornou redes sem fio disponíveis na região:`);
+        log(`[REDE] "LazerPool_WiFi_Local" - Sinal: 98% (-38dBm)`);
+        log(`[REDE] "Berti_WiFi" - Sinal: 84% (-48dBm)`);
+        log(`[REDE] "Sistemas_D" - Sinal: 60% (-65dBm)`);
+        
+        setBleStatus('success');
+        log(`[SIMULAÇÃO] Escaneamento BLE concluído.`);
+      } catch (err: any) {
+        const errorMsg = err.message || String(err);
+        log(`[SIMULAÇÃO-ERRO] Falha no fluxo: ${errorMsg}`);
+        setBleError(errorMsg);
+        setBleStatus('error');
+      }
+      return;
+    }
+
+    try {
+      log(`Filtro: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
+      const device = await nav.bluetooth.requestDevice({
+        filters: [{ namePrefix: bleNamePrefix }],
+        optionalServices: [bleServiceUuid]
+      });
+      
+      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (${device.id})`);
+      setBleStatus('connecting');
+      log(`Conectando ao GATT server...`);
+      
+      const server = await device.gatt.connect();
+      log(`Conexão GATT estabelecida.`);
+      setBleStatus('connected');
+      
+      log(`Obtendo serviço primário: ${bleServiceUuid}`);
+      const service = await server.getPrimaryService(bleServiceUuid);
+      log(`Serviço obtido com sucesso.`);
+      
+      setBleStatus('sending');
+      log(`Consultando características...`);
+      const characteristics = await service.getCharacteristics();
+      log(`Localizadas ${characteristics.length} características.`);
+      
+      const writableChar = characteristics.find((c: any) => 
+        c.properties.write || 
+        c.properties.writeWithoutResponse
+      );
+      
+      if (!writableChar) {
+        throw new Error("Nenhuma característica com permissão de escrita foi encontrada neste serviço.");
+      }
+      
+      log(`Encontrada característica de escrita: ${writableChar.uuid}`);
+      const scanPayload = JSON.stringify({ cmd: "scan" });
+      log(`Gravando comando de varredura: ${scanPayload}`);
+      
+      const encoder = new TextEncoder();
+      await writableChar.writeValue(encoder.encode(scanPayload));
+      log(`Comando {"cmd":"scan"} gravado com sucesso!`);
+      
+      setBleStatus('success');
+      
+      if (device.gatt && device.gatt.connected) {
+        device.gatt.disconnect();
+        log(`Bluetooth GATT desconectado para liberar recursos.`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      const msg = err.message || String(err);
+      log(`Erro de Varredura BLE: ${msg}`);
       setBleError(msg);
       setBleStatus('error');
     }
@@ -1863,18 +1957,28 @@ export default function PoolControllerPage() {
 
                     {/* Quick Status Block */}
                     <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="p-3 bg-white/5 border border-white/10 rounded-xl backdrop-blur-sm">
+                      <button
+                        id="home-status-hidro"
+                        onClick={() => setActiveScreen('aux')}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-orange-500/50"
+                        title="Ver controle do Motor Hidromassagem"
+                      >
                         <p className="text-[10px] text-slate-400 font-medium font-bold">MOTOR HIDRO</p>
                         <p className={`text-xs font-bold mt-1 ${motorHidro ? 'text-orange-400' : 'text-slate-500'}`}>
                           {motorHidro ? 'LIGADO' : 'DESLIGADO'}
                         </p>
-                      </div>
-                      <div className="p-3 bg-white/5 border border-white/10 rounded-xl backdrop-blur-sm">
+                      </button>
+                      <button
+                        id="home-status-filtro"
+                        onClick={() => setActiveScreen('aux')}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                        title="Ver controle do Motor Filtro"
+                      >
                         <p className="text-[10px] text-slate-400 font-medium font-bold">MOTOR FILTRO</p>
                         <p className={`text-xs font-bold mt-1 ${motorFiltro ? 'text-cyan-400' : 'text-slate-500'}`}>
                           {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
                         </p>
-                      </div>
+                      </button>
                     </div>
                   </div>
 
@@ -2299,7 +2403,7 @@ export default function PoolControllerPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="text-sm font-bold text-white">Internet Local</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Configure a rede sem fio direta do equipamento</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Conexão sem fio direta com o equipamento</p>
                       </div>
                       {localWifiConnected && (
                         <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-mono rounded-full border border-emerald-500/30">
@@ -2311,115 +2415,35 @@ export default function PoolControllerPage() {
                     {isConnectingLocalWifi ? (
                       <div className="py-4 text-center space-y-3">
                         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p className="text-xs text-orange-400 font-bold animate-pulse">Conectando a {selectedWifi}...</p>
+                        <p className="text-xs text-orange-400 font-bold animate-pulse">Estabelecendo conexão sem fio...</p>
                       </div>
                     ) : (
-                      <>
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex gap-2">
-                            {!localWifiConnected ? (
-                              <button
-                                onClick={handleWifiScan}
-                                disabled={localWifiScanning}
-                                className={`px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5 ${localWifiScanning ? 'opacity-70 cursor-not-allowed' : ''}`}
-                              >
-                                {localWifiScanning ? 'Buscando Redes...' : 'Conectar'}
-                              </button>
-                            ) : (
-                              <button
-                                onClick={handleWifiDisconnect}
-                                className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
-                              >
-                                Desconectar
-                              </button>
-                            )}
-                          </div>
-
-                          {/* WiFi indicator aligned to the right of the button */}
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-orange-500/10 border-orange-500/30 text-orange-400 animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'}`}>
-                            <Wifi className="w-5 h-5" />
-                          </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex gap-2">
+                          {!localWifiConnected ? (
+                            <button
+                              id="wifi-btn-simple-connect"
+                              onClick={handleSimpleWifiConnect}
+                              className="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-orange-400 hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-orange-500/20 transition-all flex items-center gap-1.5"
+                            >
+                              Conectar Equipamento
+                            </button>
+                          ) : (
+                            <button
+                              id="wifi-btn-simple-disconnect"
+                              onClick={handleWifiDisconnect}
+                              className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
+                            >
+                              Desconectar
+                            </button>
+                          )}
                         </div>
 
-                        {/* Available wifi network list */}
-                        {localWifiListVisible && !localWifiConnected && (
-                          <motion.div 
-                            initial={{ opacity: 0, height: 0 }} 
-                            animate={{ opacity: 1, height: 'auto' }}
-                            className="pt-2 border-t border-white/5 space-y-3"
-                          >
-                            <label className="text-[10px] text-orange-400 font-extrabold uppercase tracking-wide block">
-                              Selecione uma rede disponível
-                            </label>
-
-                            {localWifiScanning ? (
-                              <div className="py-3 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                                <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
-                                Escaneando redes wifi...
-                              </div>
-                            ) : (
-                              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                                {localWifiList.map((ssid) => (
-                                  <button
-                                    key={ssid}
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedWifi(ssid);
-                                      setLocalWifiPassword('');
-                                    }}
-                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all border text-left ${selectedWifi === ssid ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'}`}
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <Wifi className="w-3.5 h-3.5 text-orange-400" />
-                                      <span>{ssid}</span>
-                                    </div>
-                                    <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${selectedWifi === ssid ? 'rotate-90' : ''}`} />
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Password Prompt */}
-                            {selectedWifi && !localWifiScanning && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: -5 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="p-3.5 rounded-xl bg-black/10 border border-white/10 space-y-3"
-                              >
-                                <div className="space-y-1">
-                                  <label className="text-[10px] text-slate-300 font-bold block">
-                                    Senha para &quot;{selectedWifi}&quot;
-                                  </label>
-                                  <input
-                                    type="password"
-                                    placeholder="Digite a senha do Wi-Fi"
-                                    value={localWifiPassword}
-                                    onChange={(e) => setLocalWifiPassword(e.target.value)}
-                                    className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-orange-500 focus:bg-white/10 transition-all placeholder:text-slate-500"
-                                  />
-                                </div>
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleWifiConnect(selectedWifi, localWifiPassword)}
-                                    disabled={!localWifiPassword}
-                                    className="flex-1 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:hover:bg-orange-500 text-white text-xs font-extrabold rounded-lg transition-colors text-center"
-                                  >
-                                    Confirmar e Conectar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedWifi('')}
-                                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold rounded-lg transition-colors text-center"
-                                  >
-                                    Cancelar
-                                  </button>
-                                </div>
-                              </motion.div>
-                            )}
-                          </motion.div>
-                        )}
-                      </>
+                        {/* WiFi indicator showing connect/disconnect state */}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-orange-500/10 border-orange-500/30 text-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.3)] animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-500'}`}>
+                          <Wifi className="w-5 h-5" />
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -2573,41 +2597,55 @@ export default function PoolControllerPage() {
                         </div>
                       </div>
 
-                      {/* Main BLE Trigger Button */}
-                      <button
-                        type="button"
-                        onClick={handleBleProvision}
-                        disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
-                        className={`w-full py-3 rounded-xl font-bold text-xs text-white transition-all transform active:scale-98 flex items-center justify-center gap-2 shadow-lg ${
-                          bleStatus === 'idle' ? 'bg-gradient-to-r from-blue-600 to-indigo-500 hover:brightness-110 shadow-blue-500/20 shadow-md' :
-                          bleStatus === 'success' ? 'bg-gradient-to-r from-emerald-600 to-teal-500 shadow-emerald-500/20' :
-                          bleStatus === 'error' ? 'bg-gradient-to-r from-rose-600 to-pink-500 shadow-rose-500/20 hover:brightness-110' :
-                          'bg-slate-700 cursor-not-allowed animate-pulse'
-                        }`}
-                      >
-                        {bleStatus === 'idle' && (
-                          <>
-                            <Bluetooth className="w-4 h-4 text-white" />
-                            <span>Procurar Equipamento e Provisionar (BLE)</span>
-                          </>
-                        )}
-                        {bleStatus === 'scanning' && 'Procurando Dispositivo MM12T...'}
-                        {bleStatus === 'connecting' && 'Conectando ao Serviço BLE...'}
-                        {bleStatus === 'connected' && 'GATT Conectado! Mapeando Características...'}
-                        {bleStatus === 'sending' && 'Enviando Wi-Fi JSON via Bluetooth...'}
-                        {bleStatus === 'success' && (
-                          <>
-                            <Check className="w-4 h-4" />
-                            <span>Provisionado com Sucesso!</span>
-                          </>
-                        )}
-                        {bleStatus === 'error' && (
-                          <>
-                            <AlertTriangle className="w-4 h-4 animate-bounce" />
-                            <span>Falha no Envio. Toque para Tentar Novamente</span>
-                          </>
-                        )}
-                      </button>
+                      {/* Dual BLE Trigger Buttons */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <button
+                          id="ble-btn-provision"
+                          type="button"
+                          onClick={handleBleProvision}
+                          disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
+                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg ${
+                            bleStatus === 'idle' ? 'bg-gradient-to-r from-blue-600 to-indigo-500 hover:brightness-110 shadow-blue-500/20' :
+                            bleStatus === 'success' ? 'bg-gradient-to-r from-emerald-600 to-teal-500 shadow-emerald-500/20' :
+                            bleStatus === 'error' ? 'bg-gradient-to-r from-rose-600 to-pink-500 shadow-rose-500/20 hover:brightness-110' :
+                            'bg-slate-700 cursor-not-allowed animate-pulse'
+                          }`}
+                        >
+                          {bleStatus === 'idle' && (
+                            <>
+                              <Bluetooth className="w-3.5 h-3.5 text-white" />
+                              <span>Provisionar via BLE</span>
+                            </>
+                          )}
+                          {bleStatus === 'scanning' && 'Procurando...'}
+                          {bleStatus === 'connecting' && 'Conectando...'}
+                          {bleStatus === 'connected' && 'Lendo GATT...'}
+                          {bleStatus === 'sending' && 'Gravando JSON...'}
+                          {bleStatus === 'success' && (
+                            <>
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Enviado!</span>
+                            </>
+                          )}
+                          {bleStatus === 'error' && (
+                            <>
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              <span>Falha no Envio</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          id="ble-btn-scan-cmd"
+                          type="button"
+                          onClick={handleBleScanCommand}
+                          disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
+                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg bg-gradient-to-r from-orange-600 to-amber-500 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed shadow-orange-500/20`}
+                        >
+                          <Wifi className="w-3.5 h-3.5 text-white" />
+                          <span>Escanear Redes (cmd: scan)</span>
+                        </button>
+                      </div>
 
                       {/* Technical logging screen / Terminal output console */}
                       {bleLog.length > 0 && (
