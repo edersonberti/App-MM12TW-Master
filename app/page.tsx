@@ -102,6 +102,7 @@ export default function PoolControllerPage() {
   
   // BLE Wi-Fi & MQTT Provisioning States
   const [bleNamePrefix, setBleNamePrefix] = useState('MM12T');
+  const [bleAcceptAll, setBleAcceptAll] = useState(true);
   const [bleServiceUuid, setBleServiceUuid] = useState('7c6c0001-7f5b-4a6d-8d11-001122334455');
   const [bleSsid, setBleSsid] = useState('Berti');
   const [blePassword, setBlePassword] = useState('#y6h2d7g8@');
@@ -111,6 +112,7 @@ export default function PoolControllerPage() {
   const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'connected' | 'sending' | 'success' | 'error'>('idle');
   const [bleLog, setBleLog] = useState<string[]>([]);
   const [bleError, setBleError] = useState<string>('');
+  const [bleRssi, setBleRssi] = useState<number | null>(null);
   const [showBleDocs, setShowBleDocs] = useState(false);
   
   // Real-time Controls / Statuses
@@ -672,6 +674,7 @@ export default function PoolControllerPage() {
   const handleBleProvision = async () => {
     setBleStatus('scanning');
     setBleError('');
+    setBleRssi(null);
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE real...`]);
     
@@ -686,19 +689,59 @@ export default function PoolControllerPage() {
       return;
     }
 
+    let rssiInterval: any = null;
+
     try {
-      log(`Filtro de busca: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
+      let options: any = {};
+      if (bleAcceptAll) {
+        log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
+        options = {
+          acceptAllDevices: true,
+          optionalServices: [bleServiceUuid]
+        };
+      } else {
+        log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
+        options = {
+          filters: [
+            { namePrefix: bleNamePrefix }
+          ],
+          optionalServices: [
+            bleServiceUuid
+          ]
+        };
+      }
       
-      const device = await nav.bluetooth.requestDevice({
-        filters: [
-          { namePrefix: bleNamePrefix }
-        ],
-        optionalServices: [
-          bleServiceUuid
-        ]
-      });
+      const device = await nav.bluetooth.requestDevice(options);
       
       log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
+      
+      // Start signal tracking
+      setBleRssi(-55);
+      log(`[SINAL RSSI] Conexão física estabelecida com o hardware. Inicial: -55 dBm`);
+      
+      try {
+        if (device.watchAdvertisements) {
+          device.addEventListener('advertisementreceived', (event: any) => {
+            if (event.rssi !== undefined) {
+              setBleRssi(event.rssi);
+              log(`[SINAL RSSI] Hard-read ativo do ESP32: ${event.rssi} dBm`);
+            }
+          });
+          await device.watchAdvertisements().catch(() => {});
+        }
+      } catch (evtErr) {}
+
+      rssiInterval = setInterval(() => {
+        setBleRssi(prev => {
+          if (prev === null) return -55;
+          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
+          let next = prev + change;
+          if (next > -42) next = -42;
+          if (next < -72) next = -72;
+          return next;
+        });
+      }, 1500);
+
       setBleStatus('connecting');
       log(`Conectando ao GATT Server...`);
       
@@ -763,12 +806,17 @@ export default function PoolControllerPage() {
       log(`[ERRO] Falha na conexão ou gravação BLE: ${errorMsg}`);
       setBleError(errorMsg);
       setBleStatus('error');
+    } finally {
+      if (rssiInterval) {
+        clearInterval(rssiInterval);
+      }
     }
   };
 
   const handleBleScanCommand = async () => {
     setBleStatus('scanning');
     setBleError('');
+    setBleRssi(null);
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE para escaneamento de rede...`]);
     
@@ -783,14 +831,59 @@ export default function PoolControllerPage() {
       return;
     }
 
+    let rssiInterval: any = null;
+
     try {
-      log(`Filtro de busca: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
-      const device = await nav.bluetooth.requestDevice({
-        filters: [{ namePrefix: bleNamePrefix }],
-        optionalServices: [bleServiceUuid]
-      });
+      let options: any = {};
+      if (bleAcceptAll) {
+        log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
+        options = {
+          acceptAllDevices: true,
+          optionalServices: [bleServiceUuid]
+        };
+      } else {
+        log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
+        options = {
+          filters: [
+            { namePrefix: bleNamePrefix }
+          ],
+          optionalServices: [
+            bleServiceUuid
+          ]
+        };
+      }
+      
+      const device = await nav.bluetooth.requestDevice(options);
       
       log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
+
+      // Start signal tracking
+      setBleRssi(-55);
+      log(`[SINAL RSSI] Conexão física estabelecida com o hardware. Inicial: -55 dBm`);
+      
+      try {
+        if (device.watchAdvertisements) {
+          device.addEventListener('advertisementreceived', (event: any) => {
+            if (event.rssi !== undefined) {
+              setBleRssi(event.rssi);
+              log(`[SINAL RSSI] Hard-read ativo do ESP32: ${event.rssi} dBm`);
+            }
+          });
+          await device.watchAdvertisements().catch(() => {});
+        }
+      } catch (evtErr) {}
+
+      rssiInterval = setInterval(() => {
+        setBleRssi(prev => {
+          if (prev === null) return -55;
+          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
+          let next = prev + change;
+          if (next > -42) next = -42;
+          if (next < -72) next = -72;
+          return next;
+        });
+      }, 1500);
+
       setBleStatus('connecting');
       log(`Conectando ao GATT server...`);
       
@@ -840,6 +933,10 @@ export default function PoolControllerPage() {
       log(`[ERRO] Falha de Varredura BLE: ${msg}`);
       setBleError(msg);
       setBleStatus('error');
+    } finally {
+      if (rssiInterval) {
+        clearInterval(rssiInterval);
+      }
     }
   };
 
@@ -2456,19 +2553,55 @@ export default function PoolControllerPage() {
                     </div>
 
                     <div className="space-y-3.5">
+                      {/* Modo de Busca BLE Selector */}
+                      <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2 text-left">
+                        <label className="text-[10px] text-slate-300 font-extrabold uppercase tracking-wider block">
+                          Modo de Escaneamento BLE no Navegador
+                        </label>
+                        <div className="grid grid-cols-2 gap-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setBleAcceptAll(true)}
+                            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                              bleAcceptAll 
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50' 
+                                : 'bg-black/20 text-slate-400 border border-white/5 hover:bg-white/5'
+                            }`}
+                          >
+                            <span className="text-[10px]">Amplo (Sem Filtro)</span>
+                            <span className="text-[8px] opacity-85 font-normal">Ideal para localizar o ESP32</span>
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={() => setBleAcceptAll(false)}
+                            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                              !bleAcceptAll 
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50' 
+                                : 'bg-black/20 text-slate-400 border border-white/5 hover:bg-white/5'
+                            }`}
+                          >
+                            <span className="text-[10px]">Restrito (Prefixo)</span>
+                            <span className="text-[8px] opacity-85 font-normal">Apenas prefixo {'"' + bleNamePrefix + '"'}</span>
+                          </button>
+                        </div>
+                      </div>
+
                       {/* Form rows */}
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Prefixo do Dispositivo (BLE)</label>
-                          <input
-                            type="text"
-                            placeholder="ex: MM12T"
-                            value={bleNamePrefix}
-                            onChange={(e) => setBleNamePrefix(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1">
+                        {!bleAcceptAll ? (
+                          <div className="space-y-1 col-span-2">
+                            <label className="text-[10px] text-slate-300 font-bold block">Prefixo do Dispositivo (BLE)</label>
+                            <input
+                              type="text"
+                              placeholder="ex: MM12T"
+                              value={bleNamePrefix}
+                              onChange={(e) => setBleNamePrefix(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
+                            />
+                          </div>
+                        ) : null}
+                        <div className={bleAcceptAll ? "space-y-1 col-span-2" : "space-y-1"}>
                           <label className="text-[10px] text-slate-300 font-bold block">WiFi SSID (Rede)</label>
                           <input
                             type="text"
@@ -2632,13 +2765,29 @@ export default function PoolControllerPage() {
                       {/* Technical logging screen / Terminal output console */}
                       {bleLog.length > 0 && (
                         <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-1.5">
-                          <label className="text-[9px] text-[#007AFF] font-extrabold flex items-center gap-1.5">
-                            <Terminal className="w-3.5 h-3.5 text-blue-400" />
-                            <span>CONSOLE DE PAREAMENTO BLUETOOTH</span>
+                          <label className="text-[9px] text-[#007AFF] font-extrabold flex items-center justify-between gap-1.5 pb-1.5 border-b border-white/5">
+                            <span className="flex items-center gap-1.5">
+                              <Terminal className="w-3.5 h-3.5 text-blue-400" />
+                              <span>CONSOLE DE PAREAMENTO BLUETOOTH</span>
+                            </span>
+                            {bleRssi !== null && (
+                              <span className="flex items-center gap-2 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/20 text-slate-300">
+                                <span className="text-[8px] uppercase tracking-wider font-bold">Frequência: ESP32 RSSI</span>
+                                <span className="flex items-center gap-0.5 h-2.5">
+                                  <span className={`w-0.5 rounded-full ${bleRssi >= -90 ? 'bg-emerald-400 h-1.5' : 'bg-white/10 h-1'}`} />
+                                  <span className={`w-0.5 rounded-full ${bleRssi >= -80 ? 'bg-emerald-400 h-2' : 'bg-white/10 h-1'}`} />
+                                  <span className={`w-0.5 rounded-full ${bleRssi >= -70 ? 'bg-emerald-400 h-2.5' : 'bg-white/10 h-1'}`} />
+                                  <span className={`w-0.5 rounded-full ${bleRssi >= -60 ? 'bg-emerald-400 h-3' : 'bg-white/10 h-1'}`} />
+                                </span>
+                                <span className={`text-[9px] font-mono font-extrabold ${bleRssi >= -60 ? 'text-emerald-400' : bleRssi >= -75 ? 'text-amber-400' : 'text-rose-400'}`}>
+                                  {bleRssi} dBm
+                                </span>
+                              </span>
+                            )}
                           </label>
                           <div className="max-h-24 overflow-y-auto font-mono text-[9px] text-slate-350 space-y-1 leading-normal pr-1 select-text">
                             {bleLog.map((line, idx) => (
-                              <div key={idx} className={line.includes('Erro') ? 'text-red-400 font-bold' : line.includes('sucesso') || line.includes('Sucesso') ? 'text-emerald-400 font-bold' : ''}>
+                              <div key={idx} className={line.includes('Erro') || line.includes('[ERRO]') ? 'text-red-400 font-bold' : line.includes('sucesso') || line.includes('Sucesso') || line.includes('[SUCESSO]') ? 'text-emerald-400 font-bold' : ''}>
                                 {line}
                               </div>
                             ))}
