@@ -103,6 +103,8 @@ export default function PoolControllerPage() {
   // BLE Wi-Fi & MQTT Provisioning States
   const [bleNamePrefix, setBleNamePrefix] = useState('MM12T');
   const [bleAcceptAll, setBleAcceptAll] = useState(true);
+  const [bleScanType, setBleScanType] = useState<'acceptAll' | 'namePrefix' | 'serviceUuid'>('namePrefix');
+  const [bleSimulatedMode, setBleSimulatedMode] = useState(false);
   const [bleServiceUuid, setBleServiceUuid] = useState('7c6c0001-7f5b-4a6d-8d11-001122334455');
   const [bleSsid, setBleSsid] = useState('Berti');
   const [blePassword, setBlePassword] = useState('#y6h2d7g8@');
@@ -675,7 +677,63 @@ export default function PoolControllerPage() {
     setBleError('');
     setBleRssi(null);
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE real...`]);
+    
+    let rssiInterval: any = null;
+
+    if (bleSimulatedMode) {
+      log(`[MODELO MM12T / MODO SIMULADOR] Escaneando canais de RF para equipamentos Master Lazer...`);
+      log(`🔎 Filtrando no software: prefixo "${bleNamePrefix}"`);
+      await new Promise(r => setTimeout(r, 1200));
+      log(`✨ Dispositivo localizado na área de cobertura: "${bleNamePrefix}-A4B8" (ESP32-S3)`);
+      log(`[SINAL RSSI] Conexão virtual direta estabelecida sem popups nativos de navegador.`);
+      log(`[SINAL RSSI] Nível atual de sinal de hardware: -52 dBm (Excelente)`);
+      setBleRssi(-52);
+      
+      rssiInterval = setInterval(() => {
+        setBleRssi(prev => {
+          if (prev === null) return -52;
+          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
+          let next = prev + change;
+          if (next > -40) next = -40;
+          if (next < -68) next = -68;
+          return next;
+        });
+      }, 1500);
+
+      setBleStatus('connecting');
+      log(`[MODO SIMULADOR] Estabelecendo handshake criptográfico DH Curve25519...`);
+      await new Promise(r => setTimeout(r, 1000));
+      log(`[MODO SIMULADOR] Chaves negociadas. Iniciando canal seguro AES-CTR de 128 bits com o microcontrolador...`);
+      await new Promise(r => setTimeout(r, 1000));
+      setBleStatus('connected');
+      log(`[MODO SIMULADOR] GATT Server conectado.`);
+      log(`[MODO SIMULADOR] Serviço primário ESP-IDF encontrado: ${bleServiceUuid}`);
+      
+      setBleStatus('sending');
+      await new Promise(r => setTimeout(r, 1000));
+      log(`[MODO SIMULADOR] Características de escrita SEC1 localizadas via mapeamento de barramento.`);
+      
+      const payloadObj = {
+        deviceId: bleDeviceId,
+        ssid: bleSsid,
+        password: blePassword,
+        mqttServer: bleMqttServer,
+        mqttPort: Number(bleMqttPort) || 1883
+      };
+      const jsonPayload = JSON.stringify(payloadObj);
+      log(`[MODO SIMULADOR] Carregando documento JSON de criptografia e provisionamento local de Wi-Fi:`);
+      log(jsonPayload);
+      await new Promise(r => setTimeout(r, 1500));
+      log(`[SUCESSO] Bloco JSON com as credenciais do Wi-Fi gravado na memória Flash com êxito!`);
+      log(`[SUCESSO] ESP32 MM12T reinicializando canais de rádio Wi-Fi para ingressar no ponto de acesso...`);
+      log(`[INFO] Conectando ao Wi-Fi local "${bleSsid}" via DHCP...`);
+      
+      setBleStatus('success');
+      if (rssiInterval) clearInterval(rssiInterval);
+      return;
+    }
+
+    log([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE real...`][0]);
     
     const nav = typeof window !== 'undefined' ? (navigator as any) : null;
     const isBluetoothAvailable = !!(nav && nav.bluetooth);
@@ -688,24 +746,32 @@ export default function PoolControllerPage() {
       return;
     }
 
-    let rssiInterval: any = null;
-
     try {
       let options: any = {};
-      if (bleAcceptAll) {
+      if (bleScanType === 'acceptAll') {
         log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo ESP32/MM12T no popup flutuante de pareamento de segurança.`);
         options = {
           acceptAllDevices: true,
           optionalServices: [bleServiceUuid]
         };
-      } else {
+      } else if (bleScanType === 'namePrefix') {
         log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo com prefixo "${bleNamePrefix}" no popup de pareamento de segurança.`);
         options = {
           filters: [
             { namePrefix: bleNamePrefix }
           ],
           optionalServices: [
             bleServiceUuid
+          ]
+        };
+      } else {
+        log(`Filtro de busca ativo por UUID de Serviço: "${bleServiceUuid}"`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo correspondente no popup de pareamento de segurança.`);
+        options = {
+          filters: [
+            { services: [bleServiceUuid] }
           ]
         };
       }
@@ -817,7 +883,52 @@ export default function PoolControllerPage() {
     setBleError('');
     setBleRssi(null);
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE para escaneamento de rede...`]);
+    
+    let rssiInterval: any = null;
+
+    if (bleSimulatedMode) {
+      log(`[MODELO MM12T / MODO SIMULADOR] Iniciando varredura rápida de canais RF...`);
+      log(`🔎 Filtro no software selecionado: prefixo "${bleNamePrefix}"`);
+      await new Promise(r => setTimeout(r, 1000));
+      log(`✨ Dispositivo localizado na área de cobertura: "${bleNamePrefix}-A4B8" (ESP32-S4)`);
+      log(`[SINAL RSSI] Conexão virtual direta ativa. RSSI: -54 dBm (Sinal Forte)`);
+      setBleRssi(-54);
+
+      rssiInterval = setInterval(() => {
+        setBleRssi(prev => {
+          if (prev === null) return -54;
+          const change = Math.floor(Math.random() * 5) - 2;
+          let next = prev + change;
+          if (next > -40) next = -40;
+          if (next < -68) next = -68;
+          return next;
+        });
+      }, 1500);
+
+      setBleStatus('connecting');
+      log(`[MODO SIMULADOR] Negociando handshake e chaves de segurança local...`);
+      await new Promise(r => setTimeout(r, 1000));
+      setBleStatus('connected');
+      log(`[MODO SIMULADOR] Canal de comunicação SEC1 estabelecido com sucesso.`);
+      log(`[MODO SIMULADOR] Solicitando varredura de canais de Wi-Fi para o microcontrolador...`);
+      
+      setBleStatus('sending');
+      await new Promise(r => setTimeout(r, 1200));
+      log(`[MODO SIMULADOR] Enviado comando de varredura: {"cmd":"scan"}`);
+      log(`[SUCESSO] Rádio Wi-Fi do ESP32 realizou varredura de ondas com sucesso.`);
+      log(`[LISTA DE REDES DETECTADAS PELO SEU ESP32]:`);
+      log(`📡 1. Lazer_Guest (Sinal: -45 dBm, Segurança: WPA2)`);
+      log(`📡 2. Berti_Home_5G (Sinal: -58 dBm, Segurança: WPA2)`);
+      log(`📡 3. Net_Claro_124 (Sinal: -72 dBm, Segurança: WPA)`);
+      log(`📡 4. MM12T_AP (Sinal: -32 dBm, Segurança: Aberta)`);
+      log(`[INFO] Para provisionar o Wi-Fi "Berti_Home_5G", selecione-o na interface e clique em "Provisionar via BLE".`);
+      
+      setBleStatus('success');
+      if (rssiInterval) clearInterval(rssiInterval);
+      return;
+    }
+
+    log([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE para escaneamento de rede...`][0]);
     
     const nav = typeof window !== 'undefined' ? (navigator as any) : null;
     const isBluetoothAvailable = !!(nav && nav.bluetooth);
@@ -830,24 +941,32 @@ export default function PoolControllerPage() {
       return;
     }
 
-    let rssiInterval: any = null;
-
     try {
       let options: any = {};
-      if (bleAcceptAll) {
+      if (bleScanType === 'acceptAll') {
         log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo ESP32/MM12T no popup flutuante de pareamento de segurança.`);
         options = {
           acceptAllDevices: true,
           optionalServices: [bleServiceUuid]
         };
-      } else {
+      } else if (bleScanType === 'namePrefix') {
         log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo com prefixo "${bleNamePrefix}" no popup de pareamento de segurança.`);
         options = {
           filters: [
             { namePrefix: bleNamePrefix }
           ],
           optionalServices: [
             bleServiceUuid
+          ]
+        };
+      } else {
+        log(`Filtro de busca ativo por UUID de Serviço: "${bleServiceUuid}"`);
+        log(`📢 [MASTER LAZER] Escolha seu dispositivo correspondente no popup de pareamento de segurança.`);
+        options = {
+          filters: [
+            { services: [bleServiceUuid] }
           ]
         };
       }
@@ -2522,75 +2641,127 @@ export default function PoolControllerPage() {
                       </span>
                     </div>
 
-                    {/* Browser support helpful notice */}
-                    <div className="flex flex-col gap-2 p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/25 text-left">
-                      <div className="flex gap-2">
-                        <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                        <p className="text-[10px] text-slate-300 leading-normal">
-                          <strong>Conexão Física Real (ESP32):</strong> Este painel agora opera exclusivamente em modo real de hardware, comunicando-se diretamente através da Web Bluetooth API com o microcontrolador ESP32.
-                        </p>
+                    {/* Canal de Comunicação BLE Toggle */}
+                    <div className="bg-black/20 border border-white/5 rounded-xl p-3 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] font-extrabold text-white uppercase tracking-wider block">Canal de Comunicação BLE</span>
+                        <span className="text-[8.5px] text-slate-300 block max-w-[210px] leading-snug">
+                          {bleSimulatedMode 
+                            ? "Simulação integrada ativa (Não abre popups nativos do navegador)" 
+                            : "Pareamento Físico Real com hardware ESP32 próximo"}
+                        </span>
                       </div>
-
-                      {/* Interactive Real Bluetooth Status wrapper */}
-                      <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5 justify-between">
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-[10px] font-bold text-white flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && (navigator as any).bluetooth ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
-                            Suporte Web Bluetooth
-                          </span>
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-300">
-                            {typeof navigator !== 'undefined' && (navigator as any).bluetooth ? "DISPONÍVEL" : "INDISPONÍVEL"}
-                          </span>
-                        </div>
-                        <p className="text-[8px] text-slate-400 leading-tight">
-                          {typeof navigator !== 'undefined' && (navigator as any).bluetooth 
-                            ? "Seu navegador possui suporte ativo. Caso o pareamento seja bloqueado pelo iframe de desenvolvimento do estúdio, por favor abra a aplicação em aba cheia / janela dedicada fora do iframe."
-                            : "Web Bluetooth não está habilitado ou suportado neste navegador. Utilize o Chrome, Edge ou Opera em ambiente seguro (HTTPS) fora de iframes."
-                          }
-                        </p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBleSimulatedMode(!bleSimulatedMode);
+                          setBleLog([]);
+                          setBleRssi(null);
+                          setBleStatus('idle');
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase transition-all border ${
+                          bleSimulatedMode 
+                            ? 'bg-gradient-to-r from-amber-500 to-orange-400 text-black border-amber-400/50 shadow-md shadow-orange-500/10' 
+                            : 'bg-black/30 text-[#007AFF] border-[#007AFF]/30 hover:bg-[#007AFF]/10'
+                        }`}
+                      >
+                        {bleSimulatedMode ? "📡 Modo Simulação" : "🔌 Modo Real"}
+                      </button>
                     </div>
+
+                    {/* Browser support helpful notice or Simulated Guide */}
+                    {bleSimulatedMode ? (
+                      <div className="flex flex-col gap-1.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-left">
+                        <div className="flex gap-2">
+                          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <p className="text-[10px] text-slate-200 leading-normal">
+                            <strong>Simulador MM12T Ativo:</strong> Neste modo, as solicitações e o pareamento com o equipamento <strong>{bleNamePrefix}</strong> ocorrem de forma 100% interna e visual! Nenhum popup ou popover externo do navegador será exibido, permitindo testar e demonstrar o envio de credenciais com perfeição.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5 p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/25 text-left">
+                        <div className="flex gap-1.5">
+                          <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                          <p className="text-[10px] text-slate-300 leading-normal">
+                            <strong>Segurança do Navegador (Popup):</strong> O texto do popup que pergunta se deseja parear é gerado diretamente pela segurança do Chrome e do sistema operacional. Por determinação do W3C, páginas web de terceiros **não podem** customizar o texto nativo do sistema para segurança dos usuários contra phishing.
+                          </p>
+                        </div>
+
+                        {/* Interactive Real Bluetooth Status wrapper */}
+                        <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5 justify-between">
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-[10px] font-bold text-white flex items-center gap-1.5">
+                              <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && (navigator as any).bluetooth ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
+                              Suporte Web Bluetooth do Navegador
+                            </span>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-350">
+                              {typeof navigator !== 'undefined' && (navigator as any).bluetooth ? "DISPONÍVEL" : "INDISPONÍVEL"}
+                            </span>
+                          </div>
+                          <p className="text-[8.5px] text-slate-400 leading-tight">
+                            {typeof navigator !== 'undefined' && (navigator as any).bluetooth 
+                              ? "Pronto para uso! Para um funcionamento ideal em testes ou em produção, certifique-se de carregar esta página em janela dedicada em HTTPS para evitar bloqueios sanitários de iframe."
+                              : "Web Bluetooth indisponível neste ambiente. Recomendado: Google Chrome, Microsoft Edge ou Opera."
+                            }
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-3.5">
                       {/* Modo de Busca BLE Selector */}
                       <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2 text-left">
                         <label className="text-[10px] text-slate-300 font-extrabold uppercase tracking-wider block">
-                          Modo de Escaneamento BLE no Navegador
+                          Filtros de Busca BLE (Modo de Escaneamento)
                         </label>
-                        <div className="grid grid-cols-2 gap-2 text-center">
+                        <div className="grid grid-cols-3 gap-1.5 text-center">
                           <button
                             type="button"
-                            onClick={() => setBleAcceptAll(true)}
-                            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
-                              bleAcceptAll 
-                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50' 
+                            onClick={() => setBleScanType('acceptAll')}
+                            className={`py-2 px-1.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 ${
+                              bleScanType === 'acceptAll' 
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50 shadow-md shadow-blue-500/10' 
                                 : 'bg-black/20 text-slate-400 border border-white/5 hover:bg-white/5'
                             }`}
                           >
-                            <span className="text-[10px]">Amplo (Sem Filtro)</span>
-                            <span className="text-[8px] opacity-85 font-normal">Ideal para localizar o ESP32</span>
+                            <span className="text-[9px] uppercase tracking-wide">Amplo (Qualquer)</span>
+                            <span className="text-[7.5px] opacity-75 font-normal leading-none font-sans">Sem filtros</span>
                           </button>
                           
                           <button
                             type="button"
-                            onClick={() => setBleAcceptAll(false)}
-                            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
-                              !bleAcceptAll 
-                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50' 
+                            onClick={() => setBleScanType('namePrefix')}
+                            className={`py-2 px-1.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 ${
+                              bleScanType === 'namePrefix' 
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50 shadow-md shadow-blue-500/10' 
                                 : 'bg-black/20 text-slate-400 border border-white/5 hover:bg-white/5'
                             }`}
                           >
-                            <span className="text-[10px]">Restrito (Prefixo)</span>
-                            <span className="text-[8px] opacity-85 font-normal">Apenas prefixo {'"' + bleNamePrefix + '"'}</span>
+                            <span className="text-[9px] uppercase tracking-wide">Por Prefixo</span>
+                            <span className="text-[7.5px] opacity-75 font-normal leading-none font-sans">{'"' + bleNamePrefix + '"'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setBleScanType('serviceUuid')}
+                            className={`py-2 px-1.5 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 ${
+                              bleScanType === 'serviceUuid' 
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white border border-blue-500/50 shadow-md shadow-blue-500/10' 
+                                : 'bg-black/20 text-slate-400 border border-white/5 hover:bg-white/5'
+                            }`}
+                          >
+                            <span className="text-[9px] uppercase tracking-wide">Por Serviço</span>
+                            <span className="text-[7.5px] opacity-75 font-normal leading-none font-sans">ESP-IDF</span>
                           </button>
                         </div>
                       </div>
 
                       {/* Form rows */}
                       <div className="grid grid-cols-2 gap-3">
-                        {!bleAcceptAll ? (
+                        {bleScanType === 'namePrefix' && (
                           <div className="space-y-1 col-span-2">
-                            <label className="text-[10px] text-slate-300 font-bold block">Prefixo do Dispositivo (BLE)</label>
+                            <label className="text-[10px] text-slate-300 font-bold block">Prefixo do Dispositivo (BLE Filtro)</label>
                             <input
                               type="text"
                               placeholder="ex: MM12T"
@@ -2599,8 +2770,8 @@ export default function PoolControllerPage() {
                               className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
                             />
                           </div>
-                        ) : null}
-                        <div className={bleAcceptAll ? "space-y-1 col-span-2" : "space-y-1"}>
+                        )}
+                        <div className={bleScanType !== 'namePrefix' ? "space-y-1 col-span-2" : "space-y-1"}>
                           <label className="text-[10px] text-slate-300 font-bold block">WiFi SSID (Rede)</label>
                           <input
                             type="text"
@@ -2676,6 +2847,18 @@ export default function PoolControllerPage() {
                       </div>
 
                       {/* Dual BLE Trigger Buttons */}
+                      {bleStatus === 'scanning' && (
+                        <div className="bg-[#007AFF]/10 border border-[#007AFF]/30 text-slate-100 rounded-xl p-3.5 space-y-1 my-1.5 animate-pulse">
+                          <div className="font-extrabold flex items-center gap-1.5 uppercase tracking-wider text-[10px] text-blue-400">
+                            <Bluetooth className="w-4 h-4 animate-bounce text-blue-400" />
+                            <span>Master Lazer deseja Parear</span>
+                          </div>
+                          <p className="leading-relaxed text-[10.5px] text-slate-300">
+                            Por favor, escolha o seu dispositivo <strong>ESP32 (MM12T)</strong> no menu nativo que o navegador exibiu no topo da tela para prosseguir com segurança.
+                          </p>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <button
                           id="ble-btn-provision"
