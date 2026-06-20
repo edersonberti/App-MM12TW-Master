@@ -111,7 +111,7 @@ export default function PoolControllerPage() {
   const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'connected' | 'sending' | 'success' | 'error'>('idle');
   const [bleLog, setBleLog] = useState<string[]>([]);
   const [bleError, setBleError] = useState<string>('');
-  const [bleSimulationMode, setBleSimulationMode] = useState(true);
+  const [showBleDocs, setShowBleDocs] = useState(false);
   
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
@@ -673,76 +673,21 @@ export default function PoolControllerPage() {
     setBleStatus('scanning');
     setBleError('');
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE...`]);
+    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE real...`]);
     
     const nav = typeof window !== 'undefined' ? (navigator as any) : null;
     const isBluetoothAvailable = !!(nav && nav.bluetooth);
 
-    if (bleSimulationMode || !isBluetoothAvailable) {
-      log(`[SIMULAÇÃO] Operando em Modo Simulado de Provisionamento.`);
-      if (!isBluetoothAvailable) {
-        log(`[SIMULAÇÃO] Nota: O navegador ou este iframe bloqueou o Web Bluetooth, executando simulação representativa.`);
-      }
-      try {
-        await new Promise(resolve => setTimeout(resolve, 1400));
-        log(`[SIMULAÇÃO] Parâmetros de Busca - Prefixo: "${bleNamePrefix}", UUID de Serviço: "${bleServiceUuid}"`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        log(`[SIMULAÇÃO] Dispositivo BLE localizado: "${bleDeviceId}"`);
-        
-        setBleStatus('connecting');
-        log(`[SIMULAÇÃO] Conectando ao GATT Server de "${bleDeviceId}"...`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        log(`[SIMULAÇÃO] GATT Server Conectado com sucesso.`);
-        setBleStatus('connected');
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] Localizando Serviço Primário: ${bleServiceUuid}`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] Serviço UUID encontrado com sucesso.`);
-        setBleStatus('sending');
-        
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        log(`[SIMULAÇÃO] Mapeando característica de gravação (Write / WriteWithoutResponse)...`);
-        
-        const payloadObj = {
-          deviceId: bleDeviceId,
-          ssid: bleSsid,
-          password: blePassword,
-          mqttServer: bleMqttServer,
-          mqttPort: Number(bleMqttPort) || 1883
-        };
-        const jsonPayload = JSON.stringify(payloadObj);
-        
-        log(`[SIMULAÇÃO] JSON estruturado para envio:`);
-        log(jsonPayload);
-        
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        log(`[SIMULAÇÃO] Codificando payload usando TextEncoder (${jsonPayload.length} bytes)...`);
-        log(`[SIMULAÇÃO] Escrevendo característica de gravação com firmware integrado...`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] SUCESSO COGNITIVO: Confirmação recebida do dispositivo.`);
-        log(`[SIMULAÇÃO] Wi-Fi configurado para SSID: "${bleSsid}".`);
-        log(`[SIMULAÇÃO] MQTT configurado para Broker: "${bleMqttServer}:${bleMqttPort}".`);
-        
-        setBleStatus('success');
-        
-        await new Promise(resolve => setTimeout(resolve, 800));
-        log(`[SIMULAÇÃO] Desconectando GATT para liberar recursos de bateria do hardware.`);
-      } catch (err: any) {
-        const errorMsg = err.message || String(err);
-        log(`[SIMULAÇÃO-ERRO] Falha no fluxo: ${errorMsg}`);
-        setBleError(errorMsg);
-        setBleStatus('error');
-      }
+    if (!isBluetoothAvailable) {
+      const msg = "Web Bluetooth não suportado ou bloqueado. Por favor, abra o aplicativo em uma nova aba fora do iframe ou use um navegador compatível (Chrome, Edge ou Opera) com HTTPS.";
+      log(`[ERRO] ${msg}`);
+      setBleError(msg);
+      setBleStatus('error');
       return;
     }
 
     try {
-      log(`Filtro: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
+      log(`Filtro de busca: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
       
       const device = await nav.bluetooth.requestDevice({
         filters: [
@@ -753,24 +698,28 @@ export default function PoolControllerPage() {
         ]
       });
       
-      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (${device.id})`);
+      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
       setBleStatus('connecting');
-      log(`Conectando ao GATT server...`);
+      log(`Conectando ao GATT Server...`);
       
       const server = await device.gatt.connect();
-      log(`Conexão GATT estabelecida.`);
+      log(`GATT Server Conectado com sucesso.`);
       setBleStatus('connected');
       
-      log(`Obtendo serviço primário: ${bleServiceUuid}`);
+      log(`Buscando Serviço de Provisionamento ESP-IDF: ${bleServiceUuid}`);
       const service = await server.getPrimaryService(bleServiceUuid);
-      log(`Serviço obtido com sucesso.`);
+      log(`Serviço primário obtido.`);
       
       setBleStatus('sending');
-      log(`Consultando características do serviço...`);
+      log(`Obtendo características de comunicação do serviço...`);
       const characteristics = await service.getCharacteristics();
-      log(`Localizadas ${characteristics.length} características.`);
+      log(`Localizadas ${characteristics.length} características:`);
       
-      // Look for any writable characteristic
+      characteristics.forEach((c: any) => {
+        log(`- UUID: ${c.uuid} [Write: ${c.properties.write || false}, WriteWithoutResponse: ${c.properties.writeWithoutResponse || false}]`);
+      });
+      
+      // Look for characteristic
       const writableChar = characteristics.find((c: any) => 
         c.properties.write || 
         c.properties.writeWithoutResponse
@@ -780,36 +729,39 @@ export default function PoolControllerPage() {
         throw new Error("Nenhuma característica com permissão de escrita foi encontrada neste serviço.");
       }
       
-      log(`Encontrada característica de escrita: ${writableChar.uuid}`);
+      log(`Usando característica de escrita/configuração: ${writableChar.uuid}`);
       
-      const jsonPayload = JSON.stringify({
-        deviceId: bleDeviceId,
+      const payloadObj = {
+        deviceId: device.id,
         ssid: bleSsid,
         password: blePassword,
         mqttServer: bleMqttServer,
-        mqttPort: Number(bleMqttPort)
-      });
+        mqttPort: Number(bleMqttPort) || 1883
+      };
+      const jsonPayload = JSON.stringify(payloadObj);
       
-      log(`Preparando JSON de Provisionamento...`);
+      log(`Preparando JSON de Provisionamento para envio...`);
       log(jsonPayload);
       
       const encoder = new TextEncoder();
-      log(`Enviando carga útil (JSON)...`);
+      log(`Codificando payload e enviando dados...`);
       await writableChar.writeValue(encoder.encode(jsonPayload));
-      log(`Configuração enviada via BLE com sucesso!`);
+      
+      log(`[SUCESSO] Configuração de rede enviada para o dispositivo via BLE com sucesso!`);
+      log(`Firmware do microcontrolador iniciará a conexão ao Wi-Fi ${bleSsid}...`);
       
       setBleStatus('success');
       
-      // Auto disconnect
+      // Release GATT connection to spare battery
       if (device.gatt && device.gatt.connected) {
         device.gatt.disconnect();
-        log(`Bluetooth GATT desconectado para liberar recursos.`);
+        log(`Conexão Bluetooth liberada para economia de energia.`);
       }
     } catch (err: any) {
       console.error(err);
-      const msg = err.message || String(err);
-      log(`Erro de Provisionamento: ${msg}`);
-      setBleError(msg);
+      const errorMsg = err.message || String(err);
+      log(`[ERRO] Falha na conexão ou gravação BLE: ${errorMsg}`);
+      setBleError(errorMsg);
       setBleStatus('error');
     }
   };
@@ -818,69 +770,27 @@ export default function PoolControllerPage() {
     setBleStatus('scanning');
     setBleError('');
     const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando requisição de escaneamento de rede...`]);
+    setBleLog([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE para escaneamento de rede...`]);
     
     const nav = typeof window !== 'undefined' ? (navigator as any) : null;
     const isBluetoothAvailable = !!(nav && nav.bluetooth);
 
-    if (bleSimulationMode || !isBluetoothAvailable) {
-      log(`[SIMULAÇÃO] Operando em Modo Simulado de Escaneamento BLE.`);
-      if (!isBluetoothAvailable) {
-        log(`[SIMULAÇÃO] Nota: O Web Bluetooth não está disponível neste navegador/iframe.`);
-      }
-      try {
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        log(`[SIMULAÇÃO] Parâmetros de Filtro - Prefixo: "${bleNamePrefix}", UUID de Serviço: "${bleServiceUuid}"`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] Dispositivo BLE respondendo: "${bleDeviceId}"`);
-        
-        setBleStatus('connecting');
-        log(`[SIMULAÇÃO] Conectando ao GATT Server...`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] GATT Conectado.`);
-        setBleStatus('connected');
-        
-        await new Promise(resolve => setTimeout(resolve, 800));
-        log(`[SIMULAÇÃO] Localizando Serviço Primário: ${bleServiceUuid}`);
-        
-        await new Promise(resolve => setTimeout(resolve, 800));
-        setBleStatus('sending');
-        log(`[SIMULAÇÃO] Mapeando característica de escrita...`);
-        
-        const scanPayload = JSON.stringify({ cmd: "scan" });
-        log(`[SIMULAÇÃO] JSON Gravado: ${scanPayload}`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        log(`[SIMULAÇÃO] Escrevendo característica de forma assíncrona...`);
-        log(`[SIMULAÇÃO] Característica escrita com sucesso!`);
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        log(`[SIMULAÇÃO] Equipamento retornou redes sem fio disponíveis na região:`);
-        log(`[REDE] "LazerPool_WiFi_Local" - Sinal: 98% (-38dBm)`);
-        log(`[REDE] "Berti_WiFi" - Sinal: 84% (-48dBm)`);
-        log(`[REDE] "Sistemas_D" - Sinal: 60% (-65dBm)`);
-        
-        setBleStatus('success');
-        log(`[SIMULAÇÃO] Escaneamento BLE concluído.`);
-      } catch (err: any) {
-        const errorMsg = err.message || String(err);
-        log(`[SIMULAÇÃO-ERRO] Falha no fluxo: ${errorMsg}`);
-        setBleError(errorMsg);
-        setBleStatus('error');
-      }
+    if (!isBluetoothAvailable) {
+      const msg = "Web Bluetooth não suportado ou bloqueado. Por favor, abra o aplicativo em uma nova aba fora do iframe ou use um navegador compatível (Chrome, Edge ou Opera) com HTTPS.";
+      log(`[ERRO] ${msg}`);
+      setBleError(msg);
+      setBleStatus('error');
       return;
     }
 
     try {
-      log(`Filtro: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
+      log(`Filtro de busca: prefixo de nome "${bleNamePrefix}", UUID de serviço "${bleServiceUuid}"`);
       const device = await nav.bluetooth.requestDevice({
         filters: [{ namePrefix: bleNamePrefix }],
         optionalServices: [bleServiceUuid]
       });
       
-      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (${device.id})`);
+      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
       setBleStatus('connecting');
       log(`Conectando ao GATT server...`);
       
@@ -895,7 +805,11 @@ export default function PoolControllerPage() {
       setBleStatus('sending');
       log(`Consultando características...`);
       const characteristics = await service.getCharacteristics();
-      log(`Localizadas ${characteristics.length} características.`);
+      log(`Localizadas ${characteristics.length} características:`);
+      
+      characteristics.forEach((c: any) => {
+        log(`- UUID: ${c.uuid} [Write: ${c.properties.write || false}, WriteWithoutResponse: ${c.properties.writeWithoutResponse || false}]`);
+      });
       
       const writableChar = characteristics.find((c: any) => 
         c.properties.write || 
@@ -906,13 +820,13 @@ export default function PoolControllerPage() {
         throw new Error("Nenhuma característica com permissão de escrita foi encontrada neste serviço.");
       }
       
-      log(`Encontrada característica de escrita: ${writableChar.uuid}`);
+      log(`Usando característica de escrita para comando: ${writableChar.uuid}`);
       const scanPayload = JSON.stringify({ cmd: "scan" });
-      log(`Gravando comando de varredura: ${scanPayload}`);
+      log(`Enviando comando de varredura: ${scanPayload}`);
       
       const encoder = new TextEncoder();
       await writableChar.writeValue(encoder.encode(scanPayload));
-      log(`Comando {"cmd":"scan"} gravado com sucesso!`);
+      log(`Comando {"cmd":"scan"} enviado com sucesso! Aguardando o rádio Wi-Fi do microcontrolador.`);
       
       setBleStatus('success');
       
@@ -923,7 +837,7 @@ export default function PoolControllerPage() {
     } catch (err: any) {
       console.error(err);
       const msg = err.message || String(err);
-      log(`Erro de Varredura BLE: ${msg}`);
+      log(`[ERRO] Falha de Varredura BLE: ${msg}`);
       setBleError(msg);
       setBleStatus('error');
     }
@@ -2517,34 +2431,27 @@ export default function PoolControllerPage() {
                       <div className="flex gap-2">
                         <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                         <p className="text-[10px] text-slate-300 leading-normal">
-                          <strong>Aviso de Compatibilidade:</strong> Web Bluetooth exige HTTPS e interação direta. O visualizador em iframe pode restringir o pareamento direto caso o navegador bloqueie permissões de hardware.
+                          <strong>Conexão Física Real (ESP32):</strong> Este painel agora opera exclusivamente em modo real de hardware, comunicando-se diretamente através da Web Bluetooth API com o microcontrolador ESP32.
                         </p>
                       </div>
 
-                      {/* Interactive Simulation Switch wrapper */}
-                      <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                        <div className="flex flex-col">
+                      {/* Interactive Real Bluetooth Status wrapper */}
+                      <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5 justify-between">
+                        <div className="flex items-center justify-between w-full">
                           <span className="text-[10px] font-bold text-white flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full ${bleSimulationMode ? 'bg-orange-400 animate-pulse' : 'bg-emerald-400'}`}></span>
-                            Modo Simulação Ativo
+                            <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && (navigator as any).bluetooth ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
+                            Suporte Web Bluetooth
                           </span>
-                          <span className="text-[8px] text-slate-400 leading-tight">
-                            {typeof navigator !== 'undefined' && !(navigator as any).bluetooth 
-                              ? "Web Bluetooth não está disponível neste navegador/iframe"
-                              : "Simula o fluxo com logs para testar e validar o payload"
-                            }
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-300">
+                            {typeof navigator !== 'undefined' && (navigator as any).bluetooth ? "DISPONÍVEL" : "INDISPONÍVEL"}
                           </span>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer select-none">
-                          <input 
-                            type="checkbox" 
-                            checked={bleSimulationMode} 
-                            onChange={(e) => setBleSimulationMode(e.target.checked)}
-                            disabled={typeof navigator !== 'undefined' && !(navigator as any).bluetooth}
-                            className="sr-only peer"
-                          />
-                          <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
-                        </label>
+                        <p className="text-[8px] text-slate-400 leading-tight">
+                          {typeof navigator !== 'undefined' && (navigator as any).bluetooth 
+                            ? "Seu navegador possui suporte ativo. Caso o pareamento seja bloqueado pelo iframe de desenvolvimento do estúdio, por favor abra a aplicação em aba cheia / janela dedicada fora do iframe."
+                            : "Web Bluetooth não está habilitado ou suportado neste navegador. Utilize o Chrome, Edge ou Opera em ambiente seguro (HTTPS) fora de iframes."
+                          }
+                        </p>
                       </div>
                     </div>
 
@@ -2684,6 +2591,42 @@ export default function PoolControllerPage() {
                           <Wifi className="w-3.5 h-3.5 text-white" />
                           <span>Escanear Redes (cmd: scan)</span>
                         </button>
+                      </div>
+                      
+                      {/* ESP-IDF Protocol Documentation Accordion */}
+                      <div className="border border-white/5 rounded-xl bg-black/10 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setShowBleDocs(!showBleDocs)}
+                          className="w-full px-3.5 py-2 flex items-center justify-between text-left focus:outline-none hover:bg-white/5 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Info className="w-3.5 h-3.5 text-[#007AFF]" />
+                            <span className="text-[10px] text-slate-300 font-bold uppercase tracking-wider">Como funciona o Protocolo ESP-IDF?</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-bold">{showBleDocs ? 'FECHAR' : 'ABRIR'}</span>
+                        </button>
+                        
+                        {showBleDocs && (
+                          <div className="px-3.5 pb-3.5 pt-1.5 text-[10px] text-slate-300 space-y-2.5 border-t border-white/5 bg-black/20 leading-relaxed font-normal">
+                            <p>
+                              O provisionamento sem fio do equipamento modelo <strong>MM12TW</strong> utiliza a especificação proprietária <strong>ESP-IDF Protocomm</strong> sobre BLE da Espressif, compatível com a biblioteca nativa do repositório <a href="https://github.com/orbital-systems/react-native-esp-idf-provisioning" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">react-native-esp-idf-provisioning</a>.
+                            </p>
+                            
+                            <div className="space-y-1 p-2 bg-white/5 rounded border border-white/5 font-mono text-[9px] leading-normal text-slate-400">
+                              <div className="font-bold text-[#007AFF] pb-1 uppercase text-[8px] tracking-wide">Mapeamento GATT Bluetooth:</div>
+                              <div>• Serviço Primário UUID: <span className="text-white">7c6c0001-7f5b-4a6d-8d11-001122334455</span></div>
+                              <div>• Endpoint de Sessão (prov-session): <span className="text-yellow-500">7c6c0002-...</span></div>
+                              <div>• Endpoint de Config (prov-config): <span className="text-yellow-500">7c6c0003-...</span></div>
+                            </div>
+                            
+                            <p className="text-slate-450 text-[9px]">
+                              <strong>Criptografia & Handshake (Sec1):</strong>
+                              <br />
+                              Para garantir segurança, o aplicativo estabelece uma criptografia simétrica <strong>AES-CTR-128</strong> através de uma troca de chaves efêmeras <strong>Curve25519 (ECDH)</strong> gravada no endpoint de sessão antes de transmitir os dados de rede encripitados ao endpoint de configuração.
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {/* Technical logging screen / Terminal output console */}
