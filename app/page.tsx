@@ -113,7 +113,6 @@ export default function PoolControllerPage() {
   const [bleLog, setBleLog] = useState<string[]>([]);
   const [bleError, setBleError] = useState<string>('');
   const [bleRssi, setBleRssi] = useState<number | null>(null);
-  const [showBleDocs, setShowBleDocs] = useState(false);
   
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
@@ -2726,41 +2725,7 @@ export default function PoolControllerPage() {
                         </button>
                       </div>
                       
-                      {/* ESP-IDF Protocol Documentation Accordion */}
-                      <div className="border border-white/5 rounded-xl bg-black/10 overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => setShowBleDocs(!showBleDocs)}
-                          className="w-full px-3.5 py-2 flex items-center justify-between text-left focus:outline-none hover:bg-white/5 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Info className="w-3.5 h-3.5 text-[#007AFF]" />
-                            <span className="text-[10px] text-slate-300 font-bold uppercase tracking-wider">Como funciona o Protocolo ESP-IDF?</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-bold">{showBleDocs ? 'FECHAR' : 'ABRIR'}</span>
-                        </button>
-                        
-                        {showBleDocs && (
-                          <div className="px-3.5 pb-3.5 pt-1.5 text-[10px] text-slate-300 space-y-2.5 border-t border-white/5 bg-black/20 leading-relaxed font-normal">
-                            <p>
-                              O provisionamento sem fio do equipamento modelo <strong>MM12TW</strong> utiliza a especificação proprietária <strong>ESP-IDF Protocomm</strong> sobre BLE da Espressif, compatível com a biblioteca nativa do repositório <a href="https://github.com/orbital-systems/react-native-esp-idf-provisioning" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">react-native-esp-idf-provisioning</a>.
-                            </p>
-                            
-                            <div className="space-y-1 p-2 bg-white/5 rounded border border-white/5 font-mono text-[9px] leading-normal text-slate-400">
-                              <div className="font-bold text-[#007AFF] pb-1 uppercase text-[8px] tracking-wide">Mapeamento GATT Bluetooth:</div>
-                              <div>• Serviço Primário UUID: <span className="text-white">7c6c0001-7f5b-4a6d-8d11-001122334455</span></div>
-                              <div>• Endpoint de Sessão (prov-session): <span className="text-yellow-500">7c6c0002-...</span></div>
-                              <div>• Endpoint de Config (prov-config): <span className="text-yellow-500">7c6c0003-...</span></div>
-                            </div>
-                            
-                            <p className="text-slate-450 text-[9px]">
-                              <strong>Criptografia & Handshake (Sec1):</strong>
-                              <br />
-                              Para garantir segurança, o aplicativo estabelece uma criptografia simétrica <strong>AES-CTR-128</strong> através de uma troca de chaves efêmeras <strong>Curve25519 (ECDH)</strong> gravada no endpoint de sessão antes de transmitir os dados de rede encripitados ao endpoint de configuração.
-                            </p>
-                          </div>
-                        )}
-                      </div>
+
 
                       {/* Technical logging screen / Terminal output console */}
                       {bleLog.length > 0 && (
@@ -2911,59 +2876,6 @@ export default function PoolControllerPage() {
                             className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 focus:bg-white/10 transition-all"
                           />
                         </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-extrabold text-emerald-400 tracking-wider uppercase pb-1 border-b border-white/10 flex items-center justify-between">
-                      <span>FIREBASE CREDENCIAIS</span>
-                      <Tv className="w-3.5 h-3.5" />
-                    </h3>
-                    <p className="text-[10px] text-slate-350 leading-normal">
-                      Insira sua chave de API e config para persistir e acionar a autenticação do seu próprio console Firebase.
-                    </p>
-
-                    <div className="space-y-2 text-xs">
-                      <div className="space-y-0.5">
-                        <label className="text-[9px] text-slate-400">API Key</label>
-                        <input
-                          type="text"
-                          placeholder="AIzaSy..."
-                          value={firebaseConfig.apiKey}
-                          onChange={(e) => setFirebaseConfig({...firebaseConfig, apiKey: e.target.value})}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-white focus:outline-none focus:border-emerald-500 focus:bg-white/10 transition-all"
-                        />
-                      </div>
-                      <div className="space-y-0.5">
-                        <label className="text-[9px] text-slate-400">Project / Auth Domain</label>
-                        <input
-                          type="text"
-                          placeholder="exemplo.firebaseapp.com"
-                          value={firebaseConfig.authDomain}
-                          onChange={(e) => setFirebaseConfig({...firebaseConfig, authDomain: e.target.value})}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-white focus:outline-none focus:border-emerald-500 focus:bg-white/10 transition-all"
-                        />
-                      </div>
-                      <div className="space-y-0.5">
-                        <label className="text-[9px] text-slate-400">Project ID</label>
-                        <input
-                          type="text"
-                          placeholder="pool-tw12"
-                          value={firebaseConfig.projectId}
-                          onChange={(e) => setFirebaseConfig({...firebaseConfig, projectId: e.target.value})}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-white focus:outline-none focus:border-emerald-500 focus:bg-white/10 transition-all"
-                        />
-                      </div>
-                      <div className="space-y-0.5">
-                        <label className="text-[9px] text-slate-400">App ID</label>
-                        <input
-                          type="text"
-                          placeholder="1:1234:web:1234..."
-                          value={firebaseConfig.appId}
-                          onChange={(e) => setFirebaseConfig({...firebaseConfig, appId: e.target.value})}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-white focus:outline-none focus:border-emerald-500 focus:bg-white/10 transition-all"
-                        />
                       </div>
                     </div>
                   </div>
