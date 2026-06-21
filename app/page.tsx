@@ -46,11 +46,11 @@ const DEFAULT_DEVICE_ID = '12TW'; // Matches 12TW prefix from user requirements
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
     <Image 
-      src="https://www.masterlazer.com.br/images/logo1.png"
+      src="https://www.masterlazer.com.br/images/icon.jpg"
       alt="Master Lazer Logo"
       fill
       sizes="168px"
-      className="object-contain"
+      className="object-contain rounded-2xl"
       referrerPolicy="no-referrer"
       priority
     />
@@ -1776,16 +1776,16 @@ export default function PoolControllerPage() {
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Image 
-                    src="https://masterlazer.com.br/images/logoazul.png" 
+                    src="https://www.masterlazer.com.br/images/icon.jpg" 
                     alt="Master Lazer Logo" 
                     width={28}
                     height={28}
-                    className="object-contain" 
+                    className="object-contain rounded-md" 
                     referrerPolicy="no-referrer"
                   />
                   <div>
-                    <h1 className="text-xs font-bold tracking-tight text-white m-0 leading-none">MASTER LAZER</h1>
-                    <p className="text-[8px] text-[#0066DD] font-mono tracking-widest uppercase mt-0.5 leading-none">AUTO • MM12TW</p>
+                    <h1 className="text-xs font-bold tracking-tight text-[#4398fa] m-1 leading-none">MASTER LAZER</h1>
+                    <p className="text-[8px] text-[#4398fa] font-mono tracking-widest uppercase mt-2 leading-none">AUTO • MM12TW</p>
                   </div>
                 </div>
 
@@ -1793,14 +1793,14 @@ export default function PoolControllerPage() {
                 <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 shadow-sm">
                   <span className={`w-1.5 h-1.5 rounded-full ${
                     mqttConnected 
-                      ? 'bg-[#0066DD] animate-pulse' 
+                      ? 'bg-[#4398fa] animate-pulse' 
                       : mqttStatusMessage === 'Conectando...' 
                         ? 'bg-amber-400 animate-pulse' 
                         : 'bg-slate-400'
                   }`} />
                   <span className={`text-[9px] font-black tracking-wider uppercase ${
                     mqttConnected 
-                      ? 'text-[#0066DD]' 
+                      ? 'text-[#4398fa]' 
                       : mqttStatusMessage === 'Conectando...' 
                         ? 'text-amber-400' 
                         : 'text-slate-400'
@@ -1831,7 +1831,7 @@ export default function PoolControllerPage() {
                     onClick={() => setActiveScreen('home')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'home' 
-                        ? 'text-[#0066DD] bg-white/12 shadow-inner border border-white/10' 
+                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
@@ -1844,7 +1844,7 @@ export default function PoolControllerPage() {
                     onClick={() => setActiveScreen('aux')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'aux' 
-                        ? 'text-[#0066DD] bg-white/12 shadow-inner border border-white/10' 
+                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
@@ -1857,7 +1857,7 @@ export default function PoolControllerPage() {
                     onClick={() => setActiveScreen('led')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'led' 
-                        ? 'text-[#0066DD] bg-white/12 shadow-inner border border-white/10' 
+                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
@@ -1870,7 +1870,7 @@ export default function PoolControllerPage() {
                     onClick={() => setActiveScreen('timers')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'timers' 
-                        ? 'text-[#0066DD] bg-white/12 shadow-inner border border-white/10' 
+                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
@@ -1955,7 +1955,7 @@ export default function PoolControllerPage() {
                     <button
                       onClick={() => handleAuthSubmit('login')}
                       disabled={isLoadingAuth}
-                      className="w-full py-3 bg-gradient-to-r from-[#0055CC] to-[#0066DD] hover:brightness-110 disabled:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-lg shadow-[#0066DD]/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      className="w-full py-3 bg-gradient-to-r from-[#0055CC] to-[#4398fa] hover:brightness-110 disabled:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
                       {isLoadingAuth ? 'Verificando...' : 'Entrar'}
                       <ChevronRight className="w-4 h-4" />
@@ -1964,7 +1964,7 @@ export default function PoolControllerPage() {
                     <button
                       type="button"
                       onClick={handleResetPasswordSimulated}
-                      className="w-full text-center text-xs text-slate-400 hover:text-[#0066DD] transition-all py-1"
+                      className="w-full text-center text-xs text-slate-400 hover:text-[#4398fa] transition-all py-1"
                     >
                       Esqueci minha senha
                     </button>
@@ -1985,7 +1985,7 @@ export default function PoolControllerPage() {
                             }}
                             className="bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl p-2 text-left transition-all duration-200"
                           >
-                            <span className="text-[10px] font-bold text-[#0066DD] block">Admin</span>
+                            <span className="text-[10px] font-bold text-[#4398fa] block">Admin</span>
                             <span className="text-[8px] text-slate-400 font-mono truncate block">admin@admin.com</span>
                           </button>
                           
@@ -2014,7 +2014,7 @@ export default function PoolControllerPage() {
                       Não tem cadastro?{' '}
                       <button
                         onClick={() => setActiveScreen('register')}
-                        className="text-[#0066DD] hover:underline font-bold"
+                        className="text-[#4398fa] hover:underline font-bold"
                       >
                         Criar nova conta
                       </button>
@@ -2033,8 +2033,8 @@ export default function PoolControllerPage() {
                   className="flex flex-col h-full justify-between py-6"
                 >
                   <div className="text-center mt-6">
-                    <div className="w-16 h-16 mx-auto mb-4 bg-[#0066DD]/10 rounded-2xl flex items-center justify-center border border-[#0066DD]/25 shadow-lg">
-                      <User className="w-8 h-8 text-[#0066DD]" />
+                    <div className="w-16 h-16 mx-auto mb-4 bg-[#4398fa]/10 rounded-2xl flex items-center justify-center border border-[#4398fa]/25 shadow-lg">
+                      <User className="w-8 h-8 text-[#4398fa]" />
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Novo Usuário</h2>
                     <p className="text-xs text-slate-400">Cadastre-se para gerenciar seus sistemas</p>
@@ -2084,7 +2084,7 @@ export default function PoolControllerPage() {
                       Já é cadastrado?{' '}
                       <button
                         onClick={() => setActiveScreen('login')}
-                        className="text-[#0066DD] hover:underline font-bold"
+                        className="text-[#4398fa] hover:underline font-bold"
                       >
                         Voltar para o Login
                       </button>
@@ -2109,15 +2109,15 @@ export default function PoolControllerPage() {
                       <button
                         id="home-status-led"
                         onClick={() => setActiveScreen('led')}
-                        className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-[#0066DD]/50"
+                        className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                         title="Ver controle do LED / Iluminação"
                       >
                         <div className="flex items-center justify-between w-full">
                           <div className="flex items-center gap-1.5">
-                            <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-[#0066DD]' : 'text-slate-500'}`} />
+                            <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-[#4398fa]' : 'text-slate-500'}`} />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LED</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-[#0066DD] animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-[#4398fa] animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -2125,7 +2125,7 @@ export default function PoolControllerPage() {
                             {currentProgram !== '---' ? `Prog: ${currentProgram}` : 'Sem Programa'}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium">
-                            Status: <span className={currentProgram !== '---' ? 'text-[#0066DD] font-bold' : 'text-slate-500 font-bold'}>
+                            Status: <span className={currentProgram !== '---' ? 'text-[#4398fa] font-bold' : 'text-slate-500 font-bold'}>
                               {currentProgram !== '---' ? 'LIGADO' : 'DESLIGADO'}
                             </span>
                           </p>
@@ -2165,11 +2165,11 @@ export default function PoolControllerPage() {
                       <button
                         id="home-status-hidro"
                         onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-[#0066DD]/50"
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                         title="Ver controle do Motor Hidromassagem"
                       >
                         <p className="text-[10px] text-slate-400 font-medium font-bold">MOTOR HIDRO</p>
-                        <p className={`text-xs font-bold mt-1 ${motorHidro ? 'text-[#0066DD]' : 'text-slate-500'}`}>
+                        <p className={`text-xs font-bold mt-1 ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
                           {motorHidro ? 'LIGADO' : 'DESLIGADO'}
                         </p>
                       </button>
@@ -2191,7 +2191,7 @@ export default function PoolControllerPage() {
                     <div className="grid grid-cols-2 gap-2 text-center">
                       {/* Connection Status Column */}
                       {mqttConnected ? (
-                        <div className="p-3 bg-white/10 backdrop-blur-md border border-white/10 rounded-xl flex flex-col justify-center items-center shadow-md shadow-[#0066DD]/5">
+                        <div className="p-3 bg-white/10 backdrop-blur-md border border-white/10 rounded-xl flex flex-col justify-center items-center shadow-md shadow-[#4398fa]/5">
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">SISTEMA</p>
                           <p className="text-xs font-bold text-emerald-400 mt-1 flex items-center gap-1 justify-center">
                             <span className="relative flex h-2 w-2">
@@ -2237,14 +2237,14 @@ export default function PoolControllerPage() {
                   className="space-y-4"
                 >
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-lg">
-                    <h3 className="text-xs font-bold text-[#0066DD] tracking-wider uppercase mb-3 pb-1.5 border-b border-white/10 flex items-center gap-1">
+                    <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase mb-3 pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <Sliders className="w-3.5 h-3.5" /> CONTROLE DE MOTORES
                     </h3>
 
                     <div className="space-y-4 my-2">
                       <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorHidro ? 'bg-[#0066DD]/10 border-[#0066DD]/20 text-[#0066DD]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorHidro ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
                             <Droplet className="w-4 h-4" />
                           </div>
                           <div>
@@ -2259,13 +2259,13 @@ export default function PoolControllerPage() {
                             onChange={(e) => handleMotorChange('hidro', e.target.checked)}
                             className="sr-only peer"
                           />
-                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0066DD] peer-checked:border-[#0066DD] shadow-[0_0_10px_rgba(0,102,221,0)] peer-checked:shadow-[0_0_12px_rgba(0,102,221,0.4)]"></div>
+                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4398fa] peer-checked:border-[#4398fa] shadow-[0_0_10px_rgba(0,102,221,0)] peer-checked:shadow-[0_0_12px_rgba(0,102,221,0.4)]"></div>
                         </label>
                       </div>
 
                       <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorFiltro ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorFiltro ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
                             <FolderSync className="w-4 h-4" />
                           </div>
                           <div>
@@ -2280,13 +2280,13 @@ export default function PoolControllerPage() {
                             onChange={(e) => handleMotorChange('filtro', e.target.checked)}
                             className="sr-only peer"
                           />
-                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500 peer-checked:border-cyan-600 shadow-[0_0_10px_rgba(6,182,212,0)] peer-checked:shadow-[0_0_12px_rgba(6,182,212,0.4)]"></div>
+                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4398fa] peer-checked:border-[#4398fa] shadow-[0_0_10px_rgba(6,182,212,0)] peer-checked:shadow-[0_0_12px_rgba(6,182,212,0.4)]"></div>
                         </label>
                       </div>
                     </div>
 
                     {!mqttConnected && (
-                      <p className="text-[10px] text-[#0066DD]/90 leading-snug mt-3 flex items-start gap-1 bg-[#0066DD]/10 p-2 rounded-xl border border-[#0066DD]/25">
+                      <p className="text-[10px] text-[#4398fa]/90 leading-snug mt-3 flex items-start gap-1 bg-[#4398fa]/10 p-2 rounded-xl border border-[#4398fa]/25">
                         <Info className="w-3.5 h-3.5 shrink-0" />
                         Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba HOME.
                       </p>
@@ -2352,7 +2352,7 @@ export default function PoolControllerPage() {
                   <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-2">
                     <div className="flex items-center justify-start gap-1 px-1 py-0.5">
                       <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL:</p>
-                      <span className="text-[12px] font-black text-[#0066DD] font-mono">
+                      <span className="text-[12px] font-black text-[#4398fa] font-mono">
                         {currentProgram === '---' ? '---' : currentProgram}
                       </span>
                     </div>
@@ -2362,14 +2362,14 @@ export default function PoolControllerPage() {
                       <button
                         id="led-btn-voltar"
                         onClick={handleProgramDec}
-                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Voltar
                       </button>
                       <button
                         id="led-btn-avancar"
                         onClick={handleProgramInc}
-                        className="py-2 bg-[#007AFF] hover:bg-[#0066DD] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
                       >
                         Avançar
                       </button>
@@ -2403,7 +2403,7 @@ export default function PoolControllerPage() {
                 >
                   {/* FILTRAGEM Card */}
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-bold text-[#0066DD] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
+                    <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5" /> FILTRAGEM
                     </h3>
 
@@ -2419,11 +2419,11 @@ export default function PoolControllerPage() {
                           <select
                             value={filterInit1}
                             onChange={(e) => setFilterInit1(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none focus:border-[#0066DD] focus:bg-white/10"
+                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
                           >
                             <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 24 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#0066DD] font-bold">{h}h</option>
+                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
+                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
                             ))}
                           </select>
                         </div>
@@ -2434,11 +2434,11 @@ export default function PoolControllerPage() {
                           <select
                             value={filterInit2}
                             onChange={(e) => setFilterInit2(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none focus:border-[#0066DD] focus:bg-white/10"
+                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
                           >
                             <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 24 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#0066DD] font-bold">{h}h</option>
+                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
+                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
                             ))}
                           </select>
                         </div>
@@ -2449,11 +2449,11 @@ export default function PoolControllerPage() {
                           <select
                             value={filterInit3}
                             onChange={(e) => setFilterInit3(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none focus:border-[#0066DD] focus:bg-white/10"
+                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
                           >
                             <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 24 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#0066DD] font-bold">{h}h</option>
+                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
+                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
                             ))}
                           </select>
                         </div>
@@ -2465,10 +2465,10 @@ export default function PoolControllerPage() {
                       <select
                         value={filterHours}
                         onChange={(e) => setFilterHours(e.target.value)}
-                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none focus:border-[#0066DD] focus:bg-white/10"
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
                       >
-                        {Array.from({ length: 25 }, (_, i) => String(i)).map(h => (
-                          <option key={h} value={h} className="bg-slate-950 text-[#0066DD] font-bold">{h}h</option>
+                        {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
+                          <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
                         ))}
                       </select>
                     </div>
@@ -2481,7 +2481,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => setFilterDays([true, true, true, true, true, true, true])}
-                            className="text-[9px] font-bold text-[#0066DD] bg-[#0066DD]/10 hover:bg-[#0066DD]/20 px-1.5 py-0.5 rounded transition-all"
+                            className="text-[9px] font-bold text-[#4398fa] bg-[#4398fa]/10 hover:bg-[#4398fa]/20 px-1.5 py-0.5 rounded transition-all"
                           >
                             Todos
                           </button>
@@ -2510,7 +2510,7 @@ export default function PoolControllerPage() {
                               className="flex flex-col items-center gap-1.5 py-1 focus:outline-none focus:ring-0 group"
                               title={dayNames[idx]}
                             >
-                              <span className={`text-[11px] font-extrabold transition-colors ${filterDays[idx] ? 'text-[#0066DD]' : 'text-slate-400 group-hover:text-slate-300'}`}>
+                              <span className={`text-[11px] font-extrabold transition-colors ${filterDays[idx] ? 'text-[#4398fa]' : 'text-slate-400 group-hover:text-slate-300'}`}>
                                 {day}
                               </span>
                               
@@ -2518,12 +2518,12 @@ export default function PoolControllerPage() {
                               <div 
                                 className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
                                   filterDays[idx]
-                                    ? 'border-[#0066DD] bg-[#0066DD]/20 shadow-[0_0_6px_rgba(0,102,221,0.4)]'
+                                    ? 'border-[#4398fa] bg-[#4398fa]/20 shadow-[0_0_6px_rgba(0,102,221,0.4)]'
                                     : 'border-white/20 bg-transparent group-hover:border-slate-500'
                                 }`}
                               >
                                 {filterDays[idx] && (
-                                  <div className="w-1.5 h-1.5 rounded-full bg-[#0066DD]" />
+                                  <div className="w-1.5 h-1.5 rounded-full bg-[#4398fa]" />
                                 )}
                               </div>
                             </button>
@@ -2534,7 +2534,7 @@ export default function PoolControllerPage() {
 
                     <button
                       onClick={handleSaveFilter}
-                      className="w-full py-2 bg-[#007AFF] hover:bg-[#0066DD] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
+                      className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                     >
                       Salvar Filtro
                     </button>
@@ -2542,7 +2542,7 @@ export default function PoolControllerPage() {
 
                   {/* TIMER ILUMINAÇÃO Card */}
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-bold text-[#0066DD] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
+                    <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <SlidersHorizontal className="w-3.5 h-3.5" /> TIMER ILUMINAÇÃO
                     </h3>
 
@@ -2551,10 +2551,10 @@ export default function PoolControllerPage() {
                       <select
                         value={ledStartHour}
                         onChange={(e) => setLedStartHour(e.target.value)}
-                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none"
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none"
                       >
                         {['18','19','20','21','22','23'].map(h => (
-                          <option key={h} value={h} className="bg-slate-950 text-[#0066DD] font-bold">{h}h</option>
+                          <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
                         ))}
                       </select>
                     </div>
@@ -2578,7 +2578,7 @@ export default function PoolControllerPage() {
                       <select
                         value={ledProgram}
                         onChange={(e) => setLedProgram(e.target.value)}
-                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none"
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none"
                       >
                         {/* 0 to 25 */}
                         {Array.from({ length: 26 }, (_, i) => String(i)).map(p => (
@@ -2592,7 +2592,7 @@ export default function PoolControllerPage() {
 
                     <button
                       onClick={handleSaveLedTimer}
-                      className="w-full py-2 bg-[#007AFF] hover:bg-[#0066DD] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
+                      className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                     >
                       Salvar Timer LED
                     </button>
@@ -2600,7 +2600,7 @@ export default function PoolControllerPage() {
 
                   {/* TIMER HIDRO Card */}
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-bold text-[#0066DD] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
+                    <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5" /> TIMER HIDRO
                     </h3>
 
@@ -2616,18 +2616,18 @@ export default function PoolControllerPage() {
                         <select
                           value={hidroTimerHours || 'off'}
                           onChange={(e) => setHidroTimerHours(e.target.value)}
-                          className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#0066DD] text-xs font-bold focus:outline-none"
+                          className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none"
                         >
                           <option value="off" className="bg-slate-950 text-slate-300 font-bold">Desligado</option>
                           {Array.from({ length: 23 }, (_, i) => i + 1).map(h => (
-                            <option key={h} value={String(h)} className="bg-slate-950 text-[#0066DD] font-bold">{h} {h === 1 ? 'Hora' : 'Horas'}</option>
+                            <option key={h} value={String(h)} className="bg-slate-950 text-[#4398fa] font-bold">{h} {h === 1 ? 'Hora' : 'Horas'}</option>
                           ))}
                         </select>
                       </div>
 
                       <button
                         type="submit"
-                        className="w-full py-2 bg-[#007AFF] hover:bg-[#0066DD] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
+                        className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                       >
                         Salvar Timer Hidro
                       </button>
@@ -2661,8 +2661,8 @@ export default function PoolControllerPage() {
 
                     {isConnectingLocalWifi ? (
                       <div className="py-4 text-center space-y-3">
-                        <div className="w-8 h-8 border-2 border-[#0066DD] border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p className="text-xs text-[#0066DD] font-bold animate-pulse">Estabelecendo conexão sem fio...</p>
+                        <div className="w-8 h-8 border-2 border-[#4398fa] border-t-transparent rounded-full animate-spin mx-auto"></div>
+                        <p className="text-xs text-[#4398fa] font-bold animate-pulse">Estabelecendo conexão sem fio...</p>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-4">
@@ -2671,7 +2671,7 @@ export default function PoolControllerPage() {
                             <button
                               id="wifi-btn-simple-connect"
                               onClick={handleSimpleWifiConnect}
-                              className="px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#0066DD]/20 transition-all flex items-center gap-1.5"
+                              className="px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-1.5"
                             >
                               Conectar Equipamento
                             </button>
@@ -2687,7 +2687,7 @@ export default function PoolControllerPage() {
                         </div>
 
                         {/* WiFi indicator showing connect/disconnect state */}
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-[#0066DD]/10 border-[#0066DD]/30 text-[#0066DD] shadow-[0_0_12px_rgba(0,102,221,0.3)] animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-500'}`}>
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-[#4398fa]/10 border-[#4398fa]/30 text-[#4398fa] shadow-[0_0_12px_rgba(0,102,221,0.3)] animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-500'}`}>
                           <Wifi className="w-5 h-5" />
                         </div>
                       </div>
@@ -2708,7 +2708,7 @@ export default function PoolControllerPage() {
                         bleStatus === 'success' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
                         bleStatus === 'error' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
                         bleStatus === 'idle' ? 'bg-slate-500/20 text-slate-400 border-slate-500/30' :
-                        'bg-[#0066DD]/20 text-[#0066DD] border-[#0066DD]/30 animate-pulse'
+                        'bg-[#4398fa]/20 text-[#4398fa] border-[#4398fa]/30 animate-pulse'
                       }`}>
                         {bleStatus === 'idle' && 'PRONTO'}
                         {bleStatus === 'scanning' && 'BUSCANDO'}
@@ -2740,7 +2740,7 @@ export default function PoolControllerPage() {
                         }}
                         className={`px-3 py-1.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase transition-all border ${
                           bleSimulatedMode 
-                            ? 'bg-gradient-to-r from-amber-500 to-[#0066DD] text-black border-amber-400/50 shadow-md shadow-[#0066DD]/10' 
+                            ? 'bg-gradient-to-r from-amber-500 to-[#4398fa] text-black border-amber-400/50 shadow-md shadow-[#4398fa]/10' 
                             : 'bg-black/30 text-[#007AFF] border-[#007AFF]/30 hover:bg-[#007AFF]/10'
                         }`}
                       >
@@ -2933,7 +2933,7 @@ export default function PoolControllerPage() {
                           type="button"
                           onClick={handleBleScanCommand}
                           disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
-                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg bg-gradient-to-r from-[#0055CC] to-indigo-500 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed shadow-[#0066DD]/20`}
+                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg bg-gradient-to-r from-[#0055CC] to-indigo-500 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed shadow-[#4398fa]/20`}
                         >
                           <Wifi className="w-3.5 h-3.5 text-white" />
                           <span>Escanear Redes (cmd: scan)</span>
@@ -2991,7 +2991,7 @@ export default function PoolControllerPage() {
                         {!mqttConnected ? (
                           <button
                             onClick={connectMQTT}
-                            className="px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#0066DD]/20 transition-all flex items-center gap-1.5"
+                            className="px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-1.5"
                           >
                             Conectar Sistema
                           </button>
@@ -3006,8 +3006,8 @@ export default function PoolControllerPage() {
                       </div>
 
                       {/* WiFi indicator aligned to the right of the button */}
-                      <div className="w-10 h-10 bg-[#0066DD]/10 rounded-full flex items-center justify-center border border-[#0066DD]/20 shrink-0">
-                        <Wifi className={`w-5 h-5 ${mqttConnected ? 'text-[#0066DD]' : 'text-slate-400'}`} />
+                      <div className="w-10 h-10 bg-[#4398fa]/10 rounded-full flex items-center justify-center border border-[#4398fa]/20 shrink-0">
+                        <Wifi className={`w-5 h-5 ${mqttConnected ? 'text-[#4398fa]' : 'text-slate-400'}`} />
                       </div>
                     </div>
                   </div>
@@ -3016,7 +3016,7 @@ export default function PoolControllerPage() {
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs backdrop-blur-sm">
                     <div className="flex justify-between items-center pb-2 border-b border-white/10">
                       <span className="text-slate-300">Identificação (ID)</span>
-                      <span className="font-mono font-bold text-[#0066DD]">{deviceId || 'N/A'}</span>
+                      <span className="font-mono font-bold text-[#4398fa]">{deviceId || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between items-center py-1">
                       <span className="text-slate-300">Conexão Ativa</span>
@@ -3031,7 +3031,7 @@ export default function PoolControllerPage() {
                   </div>
 
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-extrabold text-[#0066DD] tracking-wider uppercase pb-1 border-b border-white/10 flex items-center justify-between">
+                    <h3 className="text-xs font-extrabold text-[#4398fa] tracking-wider uppercase pb-1 border-b border-white/10 flex items-center justify-between">
                       <span>SERVIÇOS DE REDE (MQTT)</span>
                       <SlidersHorizontal className="w-3.5 h-3.5" />
                     </h3>
@@ -3044,7 +3044,7 @@ export default function PoolControllerPage() {
                           type="text"
                           value={mqttBroker}
                           onChange={(e) => setMqttBroker(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#0066DD] focus:bg-white/10 transition-all"
+                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
                         />
                       </div>
                       
@@ -3055,7 +3055,7 @@ export default function PoolControllerPage() {
                             type="text"
                             value={mqttPort}
                             onChange={(e) => setMqttPort(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#0066DD] focus:bg-white/10 transition-all"
+                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
                           />
                         </div>
                         <div className="space-y-1">
@@ -3064,7 +3064,7 @@ export default function PoolControllerPage() {
                             type="text"
                             value={deviceId}
                             onChange={(e) => setDeviceId(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#0066DD] focus:bg-white/10 transition-all"
+                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
                           />
                         </div>
                       </div>
@@ -3078,7 +3078,7 @@ export default function PoolControllerPage() {
                             placeholder="sem usuário"
                             value={mqttUser}
                             onChange={(e) => setMqttUser(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#0066DD] focus:bg-white/10 transition-all"
+                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
                           />
                         </div>
                         <div className="space-y-1">
@@ -3088,7 +3088,7 @@ export default function PoolControllerPage() {
                             placeholder="sem senha"
                             value={mqttPassword}
                             onChange={(e) => setMqttPassword(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#0066DD] focus:bg-white/10 transition-all"
+                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
                           />
                         </div>
                       </div>
@@ -3104,7 +3104,7 @@ export default function PoolControllerPage() {
                     </button>
                     <button
                       onClick={handleSaveDevConfig}
-                      className="flex-1 py-2.5 bg-[#0066DD] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#0066DD]/20 active:scale-95 transition-all"
+                      className="flex-1 py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
                     >
                       Salvar Tudo
                     </button>
