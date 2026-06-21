@@ -23,9 +23,9 @@ import {
   Info,
   SlidersHorizontal,
   FolderSync,
-  Bluetooth,
   Send,
-  Terminal
+  Terminal,
+  Save
 } from 'lucide-react';
 
 // TypeScript declarations for browser-loaded scripts
@@ -115,6 +115,10 @@ export default function PoolControllerPage() {
   const [bleLog, setBleLog] = useState<string[]>([]);
   const [bleError, setBleError] = useState<string>('');
   const [bleRssi, setBleRssi] = useState<number | null>(null);
+
+  // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW)
+  const [registeredEquipments, setRegisteredEquipments] = useState<{ id: string; model: 'MM12TW' | 'MM03TW' | 'MM08TSW' }[]>([]);
+  const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<'MM12TW' | 'MM03TW' | 'MM08TSW'>('MM12TW');
   
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
@@ -206,6 +210,23 @@ export default function PoolControllerPage() {
       setDeviceId(storedDevice);
       setMqttUser(storedMqttUser);
       setMqttPassword(storedMqttPass);
+
+      const storedEquips = localStorage.getItem('registered_equipments');
+      if (storedEquips) {
+        try {
+          setRegisteredEquipments(JSON.parse(storedEquips));
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        const initialEquips = [
+          { id: 'MM12TW-0001', model: 'MM12TW' as const },
+          { id: 'MM03TW-1002', model: 'MM03TW' as const },
+          { id: 'MM08TSW-2004', model: 'MM08TSW' as const }
+        ];
+        setRegisteredEquipments(initialEquips);
+        localStorage.setItem('registered_equipments', JSON.stringify(initialEquips));
+      }
 
       const storedWifiConnected = localStorage.getItem('local_wifi_connected') === 'true';
       const storedWifiSsid = localStorage.getItem('local_wifi_ssid') || '';
@@ -1679,6 +1700,42 @@ export default function PoolControllerPage() {
     alert(`Programação do Timer Hidro enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
   };
 
+  // Save specific equipment
+  const handleSaveEquipment = () => {
+    const trimmedId = bleDeviceId.trim();
+    if (!trimmedId) {
+      alert("Por favor, digite um ID de equipamento válido.");
+      return;
+    }
+    
+    // Check if equipment is already in registered list
+    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
+    let updated = [...registeredEquipments];
+    if (!exists) {
+      updated.push({ id: trimmedId, model: selectedEquipmentModel });
+    } else {
+      // Update existing model for this ID
+      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, model: selectedEquipmentModel } : eq);
+    }
+    
+    setRegisteredEquipments(updated);
+    localStorage.setItem('registered_equipments', JSON.stringify(updated));
+    
+    // Also make this the active device under control!
+    setDeviceId(trimmedId);
+    localStorage.setItem('mqtt_device', trimmedId);
+    
+    // Log registration info in the BLE Pairing terminal console
+    setBleLog(prev => [
+      ...prev,
+      `[REGISTRO] Novo equipamento salvo: ${selectedEquipmentModel}`,
+      `[REGISTRO] ID único: ${trimmedId}`,
+      `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
+    ]);
+    
+    alert(`Equipamento ${selectedEquipmentModel} com ID "${trimmedId}" salvo com sucesso e definido como ativo!`);
+  };
+
   // Save Advanced Developer Config
   const handleSaveDevConfig = () => {
     localStorage.setItem('mqtt_broker', mqttBroker);
@@ -2645,132 +2702,7 @@ export default function PoolControllerPage() {
                   exit={{ opacity: 0, scale: 0.95 }}
                   className="space-y-4 py-2"
                 >
-                  {/* REAL-TIME BLE WI-FI PROVISIONING BLOCK */}
-                  <div id="ble-wifi-provisioner" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-white/5">
-                      <div className="flex items-center gap-2">
-                        <Bluetooth className={`w-5 h-5 text-[#007AFF] ${bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error' ? 'animate-bounce' : ''}`} />
-                      </div>
-                    </div>
-
-
-
-                    <div className="space-y-3.5">
-                      {/* Form rows */}
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Senha do Wi-Fi</label>
-                          <input
-                            type="text"
-                            placeholder="ex: #y6h2d7g8@"
-                            value={blePassword}
-                            onChange={(e) => setBlePassword(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">ID do Equipamento</label>
-                          <input
-                            type="text"
-                            placeholder="ex: MM12TW-0001"
-                            value={bleDeviceId}
-                            onChange={(e) => setBleDeviceId(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Service UUID & MQTT Server details */}
-                      <div className="pt-2 border-t border-white/5 space-y-3">
-                        <label className="text-[9px] text-[#007AFF] font-extrabold uppercase tracking-widest block">
-                          CONFIGURAÇÕES DE SERVIÇO & MQTT
-                        </label>
-                        
-                        <div className="space-y-2">
-                          <div className="space-y-1">
-                            <label className="text-[9px] text-slate-400 block">UUID do Serviço BLE</label>
-                            <input
-                              type="text"
-                              value={bleServiceUuid}
-                              onChange={(e) => setBleServiceUuid(e.target.value)}
-                              className="w-full px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-mono text-slate-300 focus:outline-none focus:border-[#007AFF] transition-all"
-                            />
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="col-span-2 space-y-1">
-                              <label className="text-[9px] text-slate-400 block">Broker / Server MQTT</label>
-                              <input
-                                type="text"
-                                value={bleMqttServer}
-                                onChange={(e) => setBleMqttServer(e.target.value)}
-                                className="w-full px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-mono text-slate-300 focus:outline-none focus:border-[#007AFF] transition-all"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-slate-400 block">Porta MQTT</label>
-                              <input
-                                type="text"
-                                value={bleMqttPort}
-                                onChange={(e) => setBleMqttPort(e.target.value)}
-                                className="w-full px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-mono text-slate-300 focus:outline-none focus:border-[#007AFF] transition-all"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Dual BLE Trigger Buttons */}
-                      {bleStatus === 'scanning' && (
-                        <div className="bg-[#007AFF]/10 border border-[#007AFF]/30 text-slate-100 rounded-xl p-3.5 space-y-1 my-1.5 animate-pulse">
-                          <div className="font-extrabold flex items-center gap-1.5 uppercase tracking-wider text-[10px] text-blue-400">
-                            <Bluetooth className="w-4 h-4 animate-bounce text-blue-400" />
-                            <span>Master Lazer deseja Parear</span>
-                          </div>
-                          <p className="leading-relaxed text-[10.5px] text-slate-300">
-                            Por favor, escolha o seu dispositivo <strong>ESP32 (MM12T)</strong> no menu nativo que o navegador exibiu no topo da tela para prosseguir com segurança.
-                          </p>
-                        </div>
-                      )}
-
-                      
-
-                      {/* Technical logging screen / Terminal output console */}
-                      {bleLog.length > 0 && (
-                        <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-1.5">
-                          <label className="text-[9px] text-[#007AFF] font-extrabold flex items-center justify-between gap-1.5 pb-1.5 border-b border-white/5">
-                            <span className="flex items-center gap-1.5">
-                              <Terminal className="w-3.5 h-3.5 text-blue-400" />
-                              <span>CONSOLE DE PAREAMENTO BLUETOOTH</span>
-                            </span>
-                            {bleRssi !== null && (
-                              <span className="flex items-center gap-2 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/20 text-slate-300">
-                                <span className="text-[8px] uppercase tracking-wider font-bold">Frequência: ESP32 RSSI</span>
-                                <span className="flex items-center gap-0.5 h-2.5">
-                                  <span className={`w-0.5 rounded-full ${bleRssi >= -90 ? 'bg-emerald-400 h-1.5' : 'bg-white/10 h-1'}`} />
-                                  <span className={`w-0.5 rounded-full ${bleRssi >= -80 ? 'bg-emerald-400 h-2' : 'bg-white/10 h-1'}`} />
-                                  <span className={`w-0.5 rounded-full ${bleRssi >= -70 ? 'bg-emerald-400 h-2.5' : 'bg-white/10 h-1'}`} />
-                                  <span className={`w-0.5 rounded-full ${bleRssi >= -60 ? 'bg-emerald-400 h-3' : 'bg-white/10 h-1'}`} />
-                                </span>
-                                <span className={`text-[9px] font-mono font-extrabold ${bleRssi >= -60 ? 'text-emerald-400' : bleRssi >= -75 ? 'text-amber-400' : 'text-rose-400'}`}>
-                                  {bleRssi} dBm
-                                </span>
-                              </span>
-                            )}
-                          </label>
-                          <div className="max-h-24 overflow-y-auto font-mono text-[9px] text-slate-350 space-y-1 leading-normal pr-1 select-text">
-                            {bleLog.map((line, idx) => (
-                              <div key={idx} className={line.includes('Erro') || line.includes('[ERRO]') ? 'text-red-400 font-bold' : line.includes('sucesso') || line.includes('Sucesso') || line.includes('[SUCESSO]') ? 'text-emerald-400 font-bold' : ''}>
-                                {line}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
+                  {/* SISTEMA REMOTO BLOCK PLACE AT THE TOP */}
                   <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl py-5 text-left">
                     <h3 className="text-sm font-bold text-white mb-3">Sistema Remoto</h3>
 
@@ -2803,6 +2735,73 @@ export default function PoolControllerPage() {
                       <div className="w-10 h-10 bg-[#4398fa]/10 rounded-full flex items-center justify-center border border-[#4398fa]/20 shrink-0">
                         <Wifi className={`w-5 h-5 ${mqttConnected ? 'text-[#4398fa]' : 'text-slate-400'}`} />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* REAL-TIME WI-FI PROVISIONING BLOCK */}
+                  <div id="ble-wifi-provisioner" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
+                    <h3 className="text-sm font-bold text-white pb-1.5 border-b border-white/10 flex items-center justify-between">
+                      <span>Equipamentos</span>
+                    </h3>
+
+                    <div className="space-y-3.5">
+                      {/* Form rows */}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-300 font-bold block">ID do Equipamento</label>
+                          <input
+                            type="text"
+                            placeholder="ex: MM12TW-0001"
+                            value={bleDeviceId}
+                            onChange={(e) => setBleDeviceId(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all font-semibold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-300 font-bold block">Selecione o modelo</label>
+                          <select
+                            value={selectedEquipmentModel}
+                            onChange={(e) => setSelectedEquipmentModel(e.target.value as any)}
+                            className="w-full px-2 py-1.5 bg-[#1C1C1E] border border-white/10 rounded-lg text-xs font-semibold text-white focus:outline-none focus:border-[#007AFF] focus:bg-[#2C2C2E] transition-all cursor-pointer h-[34px]"
+                          >
+                            <option value="MM12TW" className="bg-[#1C1C1E] text-white">MM12TW</option>
+                            <option value="MM03TW" className="bg-[#1C1C1E] text-white">MM03TW</option>
+                            <option value="MM08TSW" className="bg-[#1C1C1E] text-white">MM08TSW</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Salvar Button (Incluir ainda um botão "Salvar" - Cada equipamento irá possuir um ID único quando for cadastrado) */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={handleSaveEquipment}
+                          className="w-full py-2 bg-[#007AFF] hover:bg-[#0055CC] active:scale-[0.98] text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Salvar</span>
+                        </button>
+                      </div>
+
+                      {/* Technical logging screen / Terminal output console */}
+                      {bleLog.length > 0 && (
+                        <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-1.5">
+                          <label className="text-[9px] text-[#007AFF] font-extrabold flex items-center justify-between gap-1.5 pb-1.5 border-b border-white/5">
+                            <span className="flex items-center gap-1.5">
+                              <Terminal className="w-3.5 h-3.5 text-blue-400" />
+                              <span>CONSOLE DE REGISTRO DO EQUIPAMENTO</span>
+                            </span>
+                          </label>
+                          <div className="max-h-24 overflow-y-auto font-mono text-[9px] text-slate-350 space-y-1 leading-normal pr-1 select-text">
+                            {bleLog.map((line, idx) => (
+                              <div key={idx} className={line.includes('Erro') || line.includes('[ERRO]') ? 'text-red-400 font-bold' : line.includes('sucesso') || line.includes('Sucesso') || line.includes('[SUCESSO]') ? 'text-emerald-400 font-bold' : ''}>
+                                {line}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
