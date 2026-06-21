@@ -1497,11 +1497,36 @@ export default function PoolControllerPage() {
     // Standard publish layout matches requirements
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
-        const fullTopic = subTopic;
-        const message = new window.Paho.MQTT.Message(payload);
-        message.destinationName = fullTopic;
-        mqttClientRef.current.send(message);
-        console.log(`MQTT Published topic [${fullTopic}]: ${payload}`);
+        const topicsToSend = new Set<string>();
+        topicsToSend.add(subTopic);
+
+        const currentId = deviceId || '12TW';
+        const upperId = currentId.toUpperCase();
+
+        // Check if the topic starts with currentId (case-insensitive)
+        if (subTopic.toLowerCase().startsWith(currentId.toLowerCase())) {
+          const suffix = subTopic.substring(currentId.length);
+          
+          // Ensure "ID" prefix is capitalized in the suffix: e.g. "/id/mt1" -> "/ID/mt1"
+          let normalizedSuffix = suffix;
+          if (suffix.toLowerCase().startsWith('/id/')) {
+            normalizedSuffix = '/ID/' + suffix.substring(4);
+          } else if (suffix.toLowerCase() === '/id') {
+            normalizedSuffix = '/ID';
+          }
+          
+          topicsToSend.add(`${upperId}${normalizedSuffix}`);
+          topicsToSend.add(`${currentId}${normalizedSuffix}`);
+          topicsToSend.add(`12TW${normalizedSuffix}`);
+        }
+
+        // Send to all computed variations to guarantee compliance with arbitrary ESP32 firmware expectations
+        topicsToSend.forEach((fullTopic) => {
+          const message = new window.Paho.MQTT.Message(payload);
+          message.destinationName = fullTopic;
+          mqttClientRef.current!.send(message);
+          console.log(`MQTT Published topic [${fullTopic}]: ${payload}`);
+        });
       } catch (err) {
         console.error('Publish error:', err);
       }
