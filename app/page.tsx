@@ -2564,7 +2564,7 @@ export default function PoolControllerPage() {
                       <select
                         value={ledDuration}
                         onChange={(e) => setLedDuration(e.target.value)}
-                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-orange-400 text-xs font-bold focus:outline-none"
+                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none"
                       >
                         <option value="0">0 (Desligado)</option>
                         {[1,2,3,4,5,6,7,8,9,10,11,12].map(duration => (
@@ -2645,175 +2645,18 @@ export default function PoolControllerPage() {
                   exit={{ opacity: 0, scale: 0.95 }}
                   className="space-y-4 py-2"
                 >
-                  {/* LOCAL WI-FI CONFIG BLOCK */}
-                  <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-sm font-bold text-white">Internet Local</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Conexão sem fio direta com o equipamento</p>
-                      </div>
-                      {localWifiConnected && (
-                        <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-mono rounded-full border border-emerald-500/30">
-                          {localWifiSsid}
-                        </span>
-                      )}
-                    </div>
-
-                    {isConnectingLocalWifi ? (
-                      <div className="py-4 text-center space-y-3">
-                        <div className="w-8 h-8 border-2 border-[#4398fa] border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p className="text-xs text-[#4398fa] font-bold animate-pulse">Estabelecendo conexão sem fio...</p>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex gap-2">
-                          {!localWifiConnected ? (
-                            <button
-                              id="wifi-btn-simple-connect"
-                              onClick={handleSimpleWifiConnect}
-                              className="px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-1.5"
-                            >
-                              Conectar Equipamento
-                            </button>
-                          ) : (
-                            <button
-                              id="wifi-btn-simple-disconnect"
-                              onClick={handleWifiDisconnect}
-                              className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-rose-400 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-colors"
-                            >
-                              Desconectar
-                            </button>
-                          )}
-                        </div>
-
-                        {/* WiFi indicator showing connect/disconnect state */}
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-300 ${localWifiConnected ? 'bg-[#4398fa]/10 border-[#4398fa]/30 text-[#4398fa] shadow-[0_0_12px_rgba(0,102,221,0.3)] animate-pulse' : 'bg-slate-500/10 border-slate-500/20 text-slate-500'}`}>
-                          <Wifi className="w-5 h-5" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   {/* REAL-TIME BLE WI-FI PROVISIONING BLOCK */}
                   <div id="ble-wifi-provisioner" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
                     <div className="flex justify-between items-center pb-2 border-b border-white/5">
                       <div className="flex items-center gap-2">
                         <Bluetooth className={`w-5 h-5 text-[#007AFF] ${bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error' ? 'animate-bounce' : ''}`} />
-                        <div>
-                          <h3 className="text-sm font-bold text-white">Provisionar Equipamento via BLE</h3>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Configure sem fio via Bluetooth Low Energy de forma direta</p>
-                        </div>
                       </div>
-                      <span className={`px-2 py-0.5 text-[9px] font-mono rounded-full border ${
-                        bleStatus === 'success' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
-                        bleStatus === 'error' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
-                        bleStatus === 'idle' ? 'bg-slate-500/20 text-slate-400 border-slate-500/30' :
-                        'bg-[#4398fa]/20 text-[#4398fa] border-[#4398fa]/30 animate-pulse'
-                      }`}>
-                        {bleStatus === 'idle' && 'PRONTO'}
-                        {bleStatus === 'scanning' && 'BUSCANDO'}
-                        {bleStatus === 'connecting' && 'CONECTANDO'}
-                        {bleStatus === 'connected' && 'CONECTADO'}
-                        {bleStatus === 'sending' && 'ENVIANDO'}
-                        {bleStatus === 'success' && 'SUCESSO'}
-                        {bleStatus === 'error' && 'ERRO'}
-                      </span>
                     </div>
 
-                    {/* Canal de Comunicação BLE Toggle */}
-                    <div className="bg-black/20 border border-white/5 rounded-xl p-3 flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <span className="text-[10px] font-extrabold text-white uppercase tracking-wider block">Canal de Comunicação BLE</span>
-                        <span className="text-[8.5px] text-slate-300 block max-w-[210px] leading-snug">
-                          {bleSimulatedMode 
-                            ? "Simulação integrada activa (Não abre popups nativos do navegador)" 
-                            : "Pareamento Físico Real com hardware ESP32 próximo"}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBleSimulatedMode(!bleSimulatedMode);
-                          setBleLog([]);
-                          setBleRssi(null);
-                          setBleStatus('idle');
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase transition-all border ${
-                          bleSimulatedMode 
-                            ? 'bg-gradient-to-r from-amber-500 to-[#4398fa] text-black border-amber-400/50 shadow-md shadow-[#4398fa]/10' 
-                            : 'bg-black/30 text-[#007AFF] border-[#007AFF]/30 hover:bg-[#007AFF]/10'
-                        }`}
-                      >
-                        {bleSimulatedMode ? "📡 Modo Simulação" : "🔌 Modo Real"}
-                      </button>
-                    </div>
 
-                    {/* Browser support helpful notice or Simulated Guide */}
-                    {bleSimulatedMode ? (
-                      <div className="flex flex-col gap-1.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-left">
-                        <div className="flex gap-2">
-                          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                          <p className="text-[10px] text-slate-200 leading-normal">
-                            <strong>Simulador MM12T Ativo:</strong> Neste modo, as solicitações e o pareamento com o equipamento <strong>{bleNamePrefix}</strong> ocorrem de forma 100% interna e visual! Nenhum popup ou popover externo do navegador será exibido, permitindo testar e demonstrar o envio de credenciais com perfeição.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2.5 p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/25 text-left">
-                        <div className="flex gap-1.5">
-                          <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                          <p className="text-[10px] text-slate-300 leading-normal">
-                            <strong>Segurança do Navegador (Popup):</strong> O texto do popup que pergunta se deseja parear é gerado diretamente pela segurança do Chrome e do sistema operacional. Por determinação do W3C, páginas web de terceiros **não podem** customizar o texto nativo do sistema para segurança dos usuários contra phishing.
-                          </p>
-                        </div>
-
-                        {/* Interactive Real Bluetooth Status wrapper */}
-                        <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5 justify-between">
-                          <div className="flex items-center justify-between w-full">
-                            <span className="text-[10px] font-bold text-white flex items-center gap-1.5">
-                              <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && (navigator as any).bluetooth ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
-                              Suporte Web Bluetooth do Navegador
-                            </span>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-350">
-                              {typeof navigator !== 'undefined' && (navigator as any).bluetooth ? "DISPONÍVEL" : "INDISPONÍVEL"}
-                            </span>
-                          </div>
-                          <p className="text-[8.5px] text-slate-400 leading-tight">
-                            {typeof navigator !== 'undefined' && (navigator as any).bluetooth 
-                              ? "Pronto para uso! Para um funcionamento ideal em testes ou em produção, certifique-se de carregar esta página em janela dedicada em HTTPS para evitar bloqueios sanitários de iframe."
-                              : "Web Bluetooth indisponível neste ambiente. Recomendado: Google Chrome, Microsoft Edge ou Opera."
-                            }
-                          </p>
-                        </div>
-                      </div>
-                    )}
 
                     <div className="space-y-3.5">
                       {/* Form rows */}
-                      <div className="grid grid-cols-2 gap-3">
-                        {bleScanType === 'namePrefix' && (
-                          <div className="space-y-1 col-span-2">
-                            <label className="text-[10px] text-slate-300 font-bold block">Prefixo do Dispositivo (BLE Filtro)</label>
-                            <input
-                              type="text"
-                              placeholder="ex: MM12T"
-                              value={bleNamePrefix}
-                              onChange={(e) => setBleNamePrefix(e.target.value)}
-                              className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
-                            />
-                          </div>
-                        )}
-                        <div className={bleScanType !== 'namePrefix' ? "space-y-1 col-span-2" : "space-y-1"}>
-                          <label className="text-[10px] text-slate-300 font-bold block">WiFi SSID (Rede)</label>
-                          <input
-                            type="text"
-                            placeholder="ex: Berti"
-                            value={bleSsid}
-                            onChange={(e) => setBleSsid(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                      </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1">
@@ -2891,56 +2734,7 @@ export default function PoolControllerPage() {
                         </div>
                       )}
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <button
-                          id="ble-btn-provision"
-                          type="button"
-                          onClick={handleBleProvision}
-                          disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
-                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg ${
-                            bleStatus === 'idle' ? 'bg-gradient-to-r from-blue-600 to-indigo-500 hover:brightness-110 shadow-blue-500/20' :
-                            bleStatus === 'success' ? 'bg-gradient-to-r from-emerald-600 to-teal-500 shadow-emerald-500/20' :
-                            bleStatus === 'error' ? 'bg-gradient-to-r from-rose-600 to-pink-500 shadow-rose-500/20 hover:brightness-110' :
-                            'bg-slate-700 cursor-not-allowed animate-pulse'
-                          }`}
-                        >
-                          {bleStatus === 'idle' && (
-                            <>
-                              <Bluetooth className="w-3.5 h-3.5 text-white" />
-                              <span>Provisionar via BLE</span>
-                            </>
-                          )}
-                          {bleStatus === 'scanning' && 'Procurando...'}
-                          {bleStatus === 'connecting' && 'Conectando...'}
-                          {bleStatus === 'connected' && 'Lendo GATT...'}
-                          {bleStatus === 'sending' && 'Gravando JSON...'}
-                          {bleStatus === 'success' && (
-                            <>
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Enviado!</span>
-                            </>
-                          )}
-                          {bleStatus === 'error' && (
-                            <>
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>Falha no Envio</span>
-                            </>
-                          )}
-                        </button>
-
-                        <button
-                          id="ble-btn-scan-cmd"
-                          type="button"
-                          onClick={handleBleScanCommand}
-                          disabled={bleStatus !== 'idle' && bleStatus !== 'success' && bleStatus !== 'error'}
-                          className={`py-3 px-2 rounded-xl font-bold text-[11px] text-white transition-all transform active:scale-98 flex items-center justify-center gap-1.5 shadow-lg bg-gradient-to-r from-[#0055CC] to-indigo-500 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed shadow-[#4398fa]/20`}
-                        >
-                          <Wifi className="w-3.5 h-3.5 text-white" />
-                          <span>Escanear Redes (cmd: scan)</span>
-                        </button>
-                      </div>
                       
-
 
                       {/* Technical logging screen / Terminal output console */}
                       {bleLog.length > 0 && (
