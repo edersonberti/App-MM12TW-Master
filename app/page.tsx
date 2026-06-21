@@ -558,20 +558,32 @@ export default function PoolControllerPage() {
     const effectiveVal = (v * brightMult) / 100;
     const rgb = hsvToRgb(h, effectiveSat, effectiveVal);
     
-    // Standard topics
-    publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
-    publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
-    publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
 
-    // ID-prefixed topics (consistent with output buttons e.g. deviceId/ID/mt1)
-    publishTopic(`${deviceId}/ID/pwm/r`, String(rgb.r));
-    publishTopic(`${deviceId}/ID/pwm/g`, String(rgb.g));
-    publishTopic(`${deviceId}/ID/pwm/b`, String(rgb.b));
+    // 1. Mandatory hardware specification topics (e.g. 12TW/ID/pwm/r)
+    publishTopic(`${deviceUpper}/ID/pwm/r`, String(rgb.r));
+    publishTopic(`${deviceUpper}/ID/pwm/g`, String(rgb.g));
+    publishTopic(`${deviceUpper}/ID/pwm/b`, String(rgb.b));
 
-    // LED specific subpaths
-    publishTopic(`${deviceId}/ID/led/r`, String(rgb.r));
-    publishTopic(`${deviceId}/ID/led/g`, String(rgb.g));
-    publishTopic(`${deviceId}/ID/led/b`, String(rgb.b));
+    // 2. Auxiliary hardware variations
+    publishTopic(`${deviceUpper}/ID/led/r`, String(rgb.r));
+    publishTopic(`${deviceUpper}/ID/led/g`, String(rgb.g));
+    publishTopic(`${deviceUpper}/ID/led/b`, String(rgb.b));
+    
+    // 3. Dynamic input variations (as typed or stored)
+    if (deviceId && deviceId !== deviceUpper) {
+      publishTopic(`${deviceId}/ID/pwm/r`, String(rgb.r));
+      publishTopic(`${deviceId}/ID/pwm/g`, String(rgb.g));
+      publishTopic(`${deviceId}/ID/pwm/b`, String(rgb.b));
+      publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
+      publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
+      publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
+    } else {
+      // Basic fallback
+      publishTopic(`${deviceUpper}/pwm/r`, String(rgb.r));
+      publishTopic(`${deviceUpper}/pwm/g`, String(rgb.g));
+      publishTopic(`${deviceUpper}/pwm/b`, String(rgb.b));
+    }
   }
 
   // 5. Authenticator handler
@@ -1232,11 +1244,37 @@ export default function PoolControllerPage() {
         const lowerDest = dest.toLowerCase();
         
         // Motor 1 / Hidro
-        if (lowerDest.endsWith('/mt1') || lowerDest.endsWith('/mt1/state') || lowerDest.endsWith('/mt1/status')) {
+        if (
+          dest.endsWith('/12TW/ID/mt1') ||
+          dest.endsWith('/12TW/ID/mt1/state') ||
+          dest.endsWith('/12TW/ID/mt1/status') ||
+          lowerDest.endsWith('/12TW/ID/mt1') ||
+          lowerDest.endsWith('/12TW/ID/mt1/state') ||
+          lowerDest.endsWith('/12TW/ID/mt1/status') ||
+          (deviceId && (
+            lowerDest === `${deviceId.toLowerCase()}/ID/mt1` ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1`) ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/state`) ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/status`)
+          ))
+        ) {
           setMotorHidro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
         }
         // Motor 2 / Filtro
-        else if (lowerDest.endsWith('/mt2') || lowerDest.endsWith('/mt2/state') || lowerDest.endsWith('/mt2/status')) {
+        else if (
+          dest.endsWith('/12TW/ID/mt2') ||
+          dest.endsWith('/12TW/ID/mt2/state') ||
+          dest.endsWith('/12TW/ID/mt2/status') ||
+          lowerDest.endsWith('/12TW/ID/mt2') ||
+          lowerDest.endsWith('/12TW/ID/mt2/state') ||
+          lowerDest.endsWith('/12TW/ID/mt2/status') ||
+          (deviceId && (
+            lowerDest === `${deviceId.toLowerCase()}/ID/mt2` ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2`) ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/state`) ||
+            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/status`)
+          ))
+        ) {
           setMotorFiltro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
         }
         // LED program
@@ -1474,13 +1512,43 @@ export default function PoolControllerPage() {
 
   // 7. Interactive action button tasks
   const handleMotorChange = (motorType: 'hidro' | 'filtro', checked: boolean) => {
+    const num = motorType === 'hidro' ? '1' : '2';
     if (motorType === 'hidro') {
       setMotorHidro(checked);
-      publishTopic(`${deviceId}/ID/mt1`, checked ? 'ON' : 'OFF'); // matches precisely user path
     } else {
       setMotorFiltro(checked);
-      publishTopic(`${deviceId}/ID/mt2`, checked ? 'ON' : 'OFF'); // matches precisely user path
     }
+
+    const payloadON_OFF = checked ? 'ON' : 'OFF';
+    const payload1_0 = checked ? '1' : '0';
+    const payloadLIG_DESL = checked ? 'LIG' : 'DESL';
+
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
+
+    // Broadcast commands to all possible topic variations (casing, ID format) for absolute reliability:
+    const variations = [
+      `mt${num}`,
+      `ID/mt${num}`,
+      `ID/mt${num}`,
+      `mt${num}/state`,
+      `ID/mt${num}/state`,
+      `ID/mt${num}/state`,
+      `mt${num}/status`,
+      `ID/mt${num}/status`,
+      `ID/mt${num}/status`
+    ];
+
+    variations.forEach(sub => {
+      publishTopic(`${deviceUpper}/${sub}`, payloadON_OFF);
+      publishTopic(`${deviceUpper}/${sub}`, payload1_0);
+      publishTopic(`${deviceUpper}/${sub}`, payloadLIG_DESL);
+
+      if (deviceId && deviceId !== deviceUpper) {
+        publishTopic(`${deviceId}/${sub}`, payloadON_OFF);
+        publishTopic(`${deviceId}/${sub}`, payload1_0);
+        publishTopic(`${deviceId}/${sub}`, payloadLIG_DESL);
+      }
+    });
   };
 
   // LED Commands
@@ -1494,7 +1562,22 @@ export default function PoolControllerPage() {
       return; // Cap at 25
     }
     setCurrentProgram(nextProg);
-    publishTopic(`${deviceId}/ID/led/pg`, String(nextProg));
+    const pgStr = String(nextProg);
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    const pgVariations = [
+      `led/pg`,
+      `ID/led/pg`,
+      `ID/led/pg`,
+      `led/program`,
+      `ID/led/program`,
+      `ID/led/program`
+    ];
+    pgVariations.forEach(sub => {
+      publishTopic(`${deviceUpper}/${sub}`, pgStr);
+      if (deviceId && deviceId !== deviceUpper) {
+        publishTopic(`${deviceId}/${sub}`, pgStr);
+      }
+    });
   };
 
   const handleProgramDec = () => {
@@ -1507,16 +1590,65 @@ export default function PoolControllerPage() {
       return; // Cap at 0
     }
     setCurrentProgram(prevProg);
-    publishTopic(`${deviceId}/ID/led/pg`, String(prevProg));
+    const pgStr = String(prevProg);
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    const pgVariations = [
+      `led/pg`,
+      `ID/led/pg`,
+      `ID/led/pg`,
+      `led/program`,
+      `ID/led/program`,
+      `ID/led/program`
+    ];
+    pgVariations.forEach(sub => {
+      publishTopic(`${deviceUpper}/${sub}`, pgStr);
+      if (deviceId && deviceId !== deviceUpper) {
+        publishTopic(`${deviceId}/${sub}`, pgStr);
+      }
+    });
   };
 
   const handleProgramOff = () => {
     setCurrentProgram('---');
-    publishTopic(`${deviceId}/ID/led/ctrl`, 'DESL');
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    
+    const ctrlVariations = [
+      `led/ctrl`,
+      `ID/led/ctrl`,
+      `ID/led/ctrl`,
+      `led/state`,
+      `ID/led/state`,
+      `ID/led/state`
+    ];
+    const offPayloads = ['DESL', 'OFF', '0'];
+    
+    ctrlVariations.forEach(sub => {
+      offPayloads.forEach(p => {
+        publishTopic(`${deviceUpper}/${sub}`, p);
+        if (deviceId && deviceId !== deviceUpper) {
+          publishTopic(`${deviceId}/${sub}`, p);
+        }
+      });
+    });
   };
 
   const handleProgramSave = () => {
-    publishTopic(`${deviceId}/ID/led/ctrl`, 'SALV');
+    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    const ctrlVariations = [
+      `led/ctrl`,
+      `ID/led/ctrl`,
+      `ID/led/ctrl`
+    ];
+    const savePayloads = ['SALV', 'SAVE', '1'];
+    
+    ctrlVariations.forEach(sub => {
+      savePayloads.forEach(p => {
+        publishTopic(`${deviceUpper}/${sub}`, p);
+        if (deviceId && deviceId !== deviceUpper) {
+          publishTopic(`${deviceId}/${sub}`, p);
+        }
+      });
+    });
     alert('Configuração de LED persistida em memória interna!');
   };
 
