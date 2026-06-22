@@ -41,7 +41,7 @@ declare global {
 // Initial state and localStorage helpers
 const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
 const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
-const DEFAULT_DEVICE_ID = '12TW'; // Matches 12TW prefix from user requirements
+const DEFAULT_DEVICE_ID = 'MM12TW-000123'; // Matches new dynamic hardware architecture prefix
 
 // Official logo component using the exact image from the official Master Lazer website (scaled to 1.5x default):
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
@@ -85,37 +85,20 @@ export default function PoolControllerPage() {
   const [mqttBroker, setMqttBroker] = useState(DEFAULT_MQTT_BROKER);
   const [mqttPort, setMqttPort] = useState(DEFAULT_MQTT_PORT);
   const [deviceId, setDeviceId] = useState(DEFAULT_DEVICE_ID);
+  const [deviceIp, setDeviceIp] = useState('---');
+  const [deviceMac, setDeviceMac] = useState('---');
+  const [deviceModelo, setDeviceModelo] = useState('---');
+  const [deviceSerial, setDeviceSerial] = useState('---');
+  const [deviceOnline, setDeviceOnline] = useState<boolean | null>(null); // null = unknown, true = online, false = offline
   const [mqttUser, setMqttUser] = useState('');
   const [mqttPassword, setMqttPassword] = useState('');
   const [mqttConnected, setMqttConnected] = useState(false);
   const [mqttStatusMessage, setMqttStatusMessage] = useState('Desconectado');
   const [mqttErrorMsg, setMqttErrorMsg] = useState('');
   
-  // Local Wi-Fi Config State
-  const [localWifiConnected, setLocalWifiConnected] = useState(false);
-  const [localWifiSsid, setLocalWifiSsid] = useState('');
-  const [localWifiPassword, setLocalWifiPassword] = useState('');
-  const [localWifiScanning, setLocalWifiScanning] = useState(false);
-  const [localWifiListVisible, setLocalWifiListVisible] = useState(false);
-  const [localWifiList, setLocalWifiList] = useState<string[]>([]);
-  const [selectedWifi, setSelectedWifi] = useState<string>('');
-  const [isConnectingLocalWifi, setIsConnectingLocalWifi] = useState(false);
-  
-  // BLE Wi-Fi & MQTT Provisioning States
-  const [bleNamePrefix, setBleNamePrefix] = useState('MM12T');
-  const [bleAcceptAll, setBleAcceptAll] = useState(true);
-  const [bleScanType, setBleScanType] = useState<'acceptAll' | 'namePrefix' | 'serviceUuid'>('namePrefix');
-  const [bleSimulatedMode, setBleSimulatedMode] = useState(false);
-  const [bleServiceUuid, setBleServiceUuid] = useState('7c6c0001-7f5b-4a6d-8d11-001122334455');
-  const [bleSsid, setBleSsid] = useState('Berti');
-  const [blePassword, setBlePassword] = useState('#y6h2d7g8@');
+  // BLE & Equipment IDs and Logs
   const [bleDeviceId, setBleDeviceId] = useState('MM12TW-0001');
-  const [bleMqttServer, setBleMqttServer] = useState('test.mosquitto.org');
-  const [bleMqttPort, setBleMqttPort] = useState('1883');
-  const [bleStatus, setBleStatus] = useState<'idle' | 'scanning' | 'connecting' | 'connected' | 'sending' | 'success' | 'error'>('idle');
   const [bleLog, setBleLog] = useState<string[]>([]);
-  const [bleError, setBleError] = useState<string>('');
-  const [bleRssi, setBleRssi] = useState<number | null>(null);
 
   // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW)
   const [registeredEquipments, setRegisteredEquipments] = useState<{ id: string; model: 'MM12TW' | 'MM03TW' | 'MM08TSW' }[]>([]);
@@ -170,8 +153,10 @@ export default function PoolControllerPage() {
   const [iroLoaded, setIroLoaded] = useState(false);
 
   // Timers States
-  const [filterInit, setFilterInit] = useState('12:00');
-  const [filterInit1, setFilterInit1] = useState('12');
+  const [filterInit, setFilterInit] = useState('08:00');
+  const [filterStartHour, setFilterStartHour] = useState('08');
+  const [filterStartMinute, setFilterStartMinute] = useState('00');
+  const [filterInit1, setFilterInit1] = useState('08');
   const [filterInit2, setFilterInit2] = useState('D');
   const [filterInit3, setFilterInit3] = useState('D');
   const [filterHours, setFilterHours] = useState('4');
@@ -237,11 +222,6 @@ export default function PoolControllerPage() {
         localStorage.setItem('registered_equipments', JSON.stringify(initialEquips));
       }
 
-      const storedWifiConnected = localStorage.getItem('local_wifi_connected') === 'true';
-      const storedWifiSsid = localStorage.getItem('local_wifi_ssid') || '';
-      setLocalWifiConnected(storedWifiConnected);
-      setLocalWifiSsid(storedWifiSsid);
-
       const conf = {
         apiKey: localStorage.getItem('fb_api_key') || '',
         authDomain: localStorage.getItem('fb_auth_domain') || '',
@@ -288,19 +268,15 @@ export default function PoolControllerPage() {
       setHidroTimerHours(storedHidroEnabled ? storedHidroHours : 'off');
 
       // Load Filtration states
-      const storedFilterInit = localStorage.getItem('filter_init') || '12:00';
-      const defaultHour1 = storedFilterInit.includes(':') ? storedFilterInit.split(':')[0] : storedFilterInit;
-      const storedFilterInit1 = localStorage.getItem('filter_init1') || defaultHour1 || '12';
-      const storedFilterInit2 = localStorage.getItem('filter_init2') || 'D';
-      const storedFilterInit3 = localStorage.getItem('filter_init3') || 'D';
-      
-      const activeInits = [storedFilterInit1, storedFilterInit2, storedFilterInit3].filter(h => h !== 'D').map(h => h + 'h');
-      const combinedInits = activeInits.length > 0 ? activeInits.join(', ') : 'Desativado';
-      
-      setFilterInit(combinedInits);
-      setFilterInit1(storedFilterInit1);
-      setFilterInit2(storedFilterInit2);
-      setFilterInit3(storedFilterInit3);
+      const storedFilterStartHour = localStorage.getItem('filter_start_hour') || '08';
+      const storedFilterStartMinute = localStorage.getItem('filter_start_minute') || '00';
+      setFilterStartHour(storedFilterStartHour);
+      setFilterStartMinute(storedFilterStartMinute);
+      setFilterInit(`${storedFilterStartHour}:${storedFilterStartMinute}`);
+
+      setFilterInit1(storedFilterStartHour);
+      setFilterInit2('D');
+      setFilterInit3('D');
       const storedFilterHours = localStorage.getItem('filter_hours') || '4';
       setFilterHours(storedFilterHours);
       const storedFilterDays = localStorage.getItem('filter_days');
@@ -569,32 +545,15 @@ export default function PoolControllerPage() {
     const effectiveVal = (v * brightMult) / 100;
     const rgb = hsvToRgb(h, effectiveSat, effectiveVal);
     
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    // Core command channels
+    publishTopic(`MASTERLAZER/${deviceId}/pwm/r`, String(rgb.r));
+    publishTopic(`MASTERLAZER/${deviceId}/pwm/g`, String(rgb.g));
+    publishTopic(`MASTERLAZER/${deviceId}/pwm/b`, String(rgb.b));
 
-    // 1. Mandatory hardware specification topics (e.g. 12TW/ID/pwm/r)
-    publishTopic(`${deviceUpper}/ID/pwm/r`, String(rgb.r));
-    publishTopic(`${deviceUpper}/ID/pwm/g`, String(rgb.g));
-    publishTopic(`${deviceUpper}/ID/pwm/b`, String(rgb.b));
-
-    // 2. Auxiliary hardware variations
-    publishTopic(`${deviceUpper}/ID/led/r`, String(rgb.r));
-    publishTopic(`${deviceUpper}/ID/led/g`, String(rgb.g));
-    publishTopic(`${deviceUpper}/ID/led/b`, String(rgb.b));
-    
-    // 3. Dynamic input variations (as typed or stored)
-    if (deviceId && deviceId !== deviceUpper) {
-      publishTopic(`${deviceId}/ID/pwm/r`, String(rgb.r));
-      publishTopic(`${deviceId}/ID/pwm/g`, String(rgb.g));
-      publishTopic(`${deviceId}/ID/pwm/b`, String(rgb.b));
-      publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
-      publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
-      publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
-    } else {
-      // Basic fallback
-      publishTopic(`${deviceUpper}/pwm/r`, String(rgb.r));
-      publishTopic(`${deviceUpper}/pwm/g`, String(rgb.g));
-      publishTopic(`${deviceUpper}/pwm/b`, String(rgb.b));
-    }
+    // Fallbacks
+    publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
+    publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
+    publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
   }
 
   // 5. Authenticator handler
@@ -708,412 +667,6 @@ export default function PoolControllerPage() {
     setPasswordInput('');
     setActiveScreen('login');
     disconnectMQTT();
-  };
-
-  // Local Wi-Fi Connection Logic (Direct Connect/Disconnect)
-  const handleSimpleWifiConnect = () => {
-    setIsConnectingLocalWifi(true);
-    setTimeout(() => {
-      setIsConnectingLocalWifi(false);
-      setLocalWifiConnected(true);
-      setLocalWifiSsid('LazerPool_WiFi_Local');
-      localStorage.setItem('local_wifi_connected', 'true');
-      localStorage.setItem('local_wifi_ssid', 'LazerPool_WiFi_Local');
-    }, 1500);
-  };
-
-  const handleWifiDisconnect = () => {
-    setLocalWifiConnected(false);
-    setLocalWifiSsid('');
-    setLocalWifiPassword('');
-    localStorage.removeItem('local_wifi_connected');
-    localStorage.removeItem('local_wifi_ssid');
-  };
-
-  const handleBleProvision = async () => {
-    setBleStatus('scanning');
-    setBleError('');
-    setBleRssi(null);
-    const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    
-    let rssiInterval: any = null;
-
-    if (bleSimulatedMode) {
-      log(`[MODELO MM12T / MODO SIMULADOR] Escaneando canais de RF para equipamentos Master Lazer...`);
-      log(`🔎 Filtrando no software: prefixo "${bleNamePrefix}"`);
-      await new Promise(r => setTimeout(r, 1200));
-      log(`✨ Dispositivo localizado na área de cobertura: "${bleNamePrefix}-A4B8" (ESP32-S3)`);
-      log(`[SINAL RSSI] Conexão virtual direta estabelecida sem popups nativos de navegador.`);
-      log(`[SINAL RSSI] Nível atual de sinal de hardware: -52 dBm (Excelente)`);
-      setBleRssi(-52);
-      
-      rssiInterval = setInterval(() => {
-        setBleRssi(prev => {
-          if (prev === null) return -52;
-          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
-          let next = prev + change;
-          if (next > -40) next = -40;
-          if (next < -68) next = -68;
-          return next;
-        });
-      }, 1500);
-
-      setBleStatus('connecting');
-      log(`[MODO SIMULADOR] Estabelecendo handshake criptográfico DH Curve25519...`);
-      await new Promise(r => setTimeout(r, 1000));
-      log(`[MODO SIMULADOR] Chaves negociadas. Iniciando canal seguro AES-CTR de 128 bits com o microcontrolador...`);
-      await new Promise(r => setTimeout(r, 1000));
-      setBleStatus('connected');
-      log(`[MODO SIMULADOR] GATT Server conectado.`);
-      log(`[MODO SIMULADOR] Serviço primário ESP-IDF encontrado: ${bleServiceUuid}`);
-      
-      setBleStatus('sending');
-      await new Promise(r => setTimeout(r, 1000));
-      log(`[MODO SIMULADOR] Características de escrita SEC1 localizadas via mapeamento de barramento.`);
-      
-      const payloadObj = {
-        deviceId: bleDeviceId,
-        ssid: bleSsid,
-        password: blePassword,
-        mqttServer: bleMqttServer,
-        mqttPort: Number(bleMqttPort) || 1883
-      };
-      const jsonPayload = JSON.stringify(payloadObj);
-      log(`[MODO SIMULADOR] Carregando documento JSON de criptografia e provisionamento local de Wi-Fi:`);
-      log(jsonPayload);
-      await new Promise(r => setTimeout(r, 1500));
-      log(`[SUCESSO] Bloco JSON com as credenciais do Wi-Fi gravado na memória Flash com êxito!`);
-      log(`[SUCESSO] ESP32 MM12T reinicializando canais de rádio Wi-Fi para ingressar no ponto de acesso...`);
-      log(`[INFO] Conectando ao Wi-Fi local "${bleSsid}" via DHCP...`);
-      
-      setBleStatus('success');
-      if (rssiInterval) clearInterval(rssiInterval);
-      return;
-    }
-
-    log([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE real...`][0]);
-    
-    const nav = typeof window !== 'undefined' ? (navigator as any) : null;
-    const isBluetoothAvailable = !!(nav && nav.bluetooth);
-
-    if (!isBluetoothAvailable) {
-      const msg = "Web Bluetooth não suportado ou bloqueado. Por favor, abra o aplicativo em uma nova aba fora do iframe ou use um navegador compatível (Chrome, Edge ou Opera) com HTTPS.";
-      log(`[ERRO] ${msg}`);
-      setBleError(msg);
-      setBleStatus('error');
-      return;
-    }
-
-    try {
-      let options: any = {};
-      if (bleScanType === 'acceptAll') {
-        log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo ESP32/MM12T no popup flutuante de pareamento de segurança.`);
-        options = {
-          acceptAllDevices: true,
-          optionalServices: [bleServiceUuid]
-        };
-      } else if (bleScanType === 'namePrefix') {
-        log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo com prefixo "${bleNamePrefix}" no popup de pareamento de segurança.`);
-        options = {
-          filters: [
-            { namePrefix: bleNamePrefix }
-          ],
-          optionalServices: [
-            bleServiceUuid
-          ]
-        };
-      } else {
-        log(`Filtro de busca ativo por UUID de Serviço: "${bleServiceUuid}"`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo correspondente no popup de pareamento de segurança.`);
-        options = {
-          filters: [
-            { services: [bleServiceUuid] }
-          ]
-        };
-      }
-      
-      const device = await nav.bluetooth.requestDevice(options);
-      
-      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
-      
-      // Start signal tracking
-      setBleRssi(-55);
-      log(`[SINAL RSSI] Conexão física estabelecida com o hardware. Inicial: -55 dBm`);
-      
-      try {
-        if (device.watchAdvertisements) {
-          device.addEventListener('advertisementreceived', (event: any) => {
-            if (event.rssi !== undefined) {
-              setBleRssi(event.rssi);
-              log(`[SINAL RSSI] Hard-read ativo do ESP32: ${event.rssi} dBm`);
-            }
-          });
-          await device.watchAdvertisements().catch(() => {});
-        }
-      } catch (evtErr) {}
-
-      rssiInterval = setInterval(() => {
-        setBleRssi(prev => {
-          if (prev === null) return -55;
-          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
-          let next = prev + change;
-          if (next > -42) next = -42;
-          if (next < -72) next = -72;
-          return next;
-        });
-      }, 1500);
-
-      setBleStatus('connecting');
-      log(`Conectando ao GATT Server...`);
-      
-      const server = await device.gatt.connect();
-      log(`GATT Server Conectado com sucesso.`);
-      setBleStatus('connected');
-      
-      log(`Buscando Serviço de Provisionamento ESP-IDF: ${bleServiceUuid}`);
-      const service = await server.getPrimaryService(bleServiceUuid);
-      log(`Serviço primário obtido.`);
-      
-      setBleStatus('sending');
-      log(`Obtendo características de comunicação do serviço...`);
-      const characteristics = await service.getCharacteristics();
-      log(`Localizadas ${characteristics.length} características:`);
-      
-      characteristics.forEach((c: any) => {
-        log(`- UUID: ${c.uuid} [Write: ${c.properties.write || false}, WriteWithoutResponse: ${c.properties.writeWithoutResponse || false}]`);
-      });
-      
-      // Look for characteristic
-      const writableChar = characteristics.find((c: any) => 
-        c.properties.write || 
-        c.properties.writeWithoutResponse
-      );
-      
-      if (!writableChar) {
-        throw new Error("Nenhuma característica com permissão de escrita foi encontrada neste serviço.");
-      }
-      
-      log(`Usando característica de escrita/configuração: ${writableChar.uuid}`);
-      
-      const payloadObj = {
-        deviceId: device.id,
-        ssid: bleSsid,
-        password: blePassword,
-        mqttServer: bleMqttServer,
-        mqttPort: Number(bleMqttPort) || 1883
-      };
-      const jsonPayload = JSON.stringify(payloadObj);
-      
-      log(`Preparando JSON de Provisionamento para envio...`);
-      log(jsonPayload);
-      
-      const encoder = new TextEncoder();
-      log(`Codificando payload e enviando dados...`);
-      await writableChar.writeValue(encoder.encode(jsonPayload));
-      
-      log(`[SUCESSO] Configuração de rede enviada para o dispositivo via BLE com sucesso!`);
-      log(`Firmware do microcontrolador iniciará a conexão ao Wi-Fi ${bleSsid}...`);
-      
-      setBleStatus('success');
-      
-      // Release GATT connection to spare battery
-      if (device.gatt && device.gatt.connected) {
-        device.gatt.disconnect();
-        log(`Conexão Bluetooth liberada para economia de energia.`);
-      }
-    } catch (err: any) {
-      console.error(err);
-      const errorMsg = err.message || String(err);
-      log(`[ERRO] Falha na conexão ou gravação BLE: ${errorMsg}`);
-      setBleError(errorMsg);
-      setBleStatus('error');
-    } finally {
-      if (rssiInterval) {
-        clearInterval(rssiInterval);
-      }
-    }
-  };
-
-  const handleBleScanCommand = async () => {
-    setBleStatus('scanning');
-    setBleError('');
-    setBleRssi(null);
-    const log = (msg: string) => setBleLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    
-    let rssiInterval: any = null;
-
-    if (bleSimulatedMode) {
-      log(`[MODELO MM12T / MODO SIMULADOR] Iniciando varredura rápida de canais RF...`);
-      log(`🔎 Filtro no software selecionado: prefixo "${bleNamePrefix}"`);
-      await new Promise(r => setTimeout(r, 1000));
-      log(`✨ Dispositivo localizado na área de cobertura: "${bleNamePrefix}-A4B8" (ESP32-S4)`);
-      log(`[SINAL RSSI] Conexão virtual direta ativa. RSSI: -54 dBm (Sinal Forte)`);
-      setBleRssi(-54);
-
-      rssiInterval = setInterval(() => {
-        setBleRssi(prev => {
-          if (prev === null) return -54;
-          const change = Math.floor(Math.random() * 5) - 2;
-          let next = prev + change;
-          if (next > -40) next = -40;
-          if (next < -68) next = -68;
-          return next;
-        });
-      }, 1500);
-
-      setBleStatus('connecting');
-      log(`[MODO SIMULADOR] Negociando handshake e chaves de segurança local...`);
-      await new Promise(r => setTimeout(r, 1000));
-      setBleStatus('connected');
-      log(`[MODO SIMULADOR] Canal de comunicação SEC1 estabelecido com sucesso.`);
-      log(`[MODO SIMULADOR] Solicitando varredura de canais de Wi-Fi para o microcontrolador...`);
-      
-      setBleStatus('sending');
-      await new Promise(r => setTimeout(r, 1200));
-      log(`[MODO SIMULADOR] Enviado comando de varredura: {"cmd":"scan"}`);
-      log(`[SUCESSO] Rádio Wi-Fi do ESP32 realizou varredura de ondas com sucesso.`);
-      log(`[LISTA DE REDES DETECTADAS PELO SEU ESP32]:`);
-      log(`📡 1. Lazer_Guest (Sinal: -45 dBm, Segurança: WPA2)`);
-      log(`📡 2. Berti_Home_5G (Sinal: -58 dBm, Segurança: WPA2)`);
-      log(`📡 3. Net_Claro_124 (Sinal: -72 dBm, Segurança: WPA)`);
-      log(`📡 4. MM12T_AP (Sinal: -32 dBm, Segurança: Aberta)`);
-      log(`[INFO] Para provisionar o Wi-Fi "Berti_Home_5G", selecione-o na interface e clique em "Provisionar via BLE".`);
-      
-      setBleStatus('success');
-      if (rssiInterval) clearInterval(rssiInterval);
-      return;
-    }
-
-    log([`[${new Date().toLocaleTimeString()}] Iniciando busca de dispositivo BLE para escaneamento de rede...`][0]);
-    
-    const nav = typeof window !== 'undefined' ? (navigator as any) : null;
-    const isBluetoothAvailable = !!(nav && nav.bluetooth);
-
-    if (!isBluetoothAvailable) {
-      const msg = "Web Bluetooth não suportado ou bloqueado. Por favor, abra o aplicativo em uma nova aba fora do iframe ou use um navegador compatível (Chrome, Edge ou Opera) com HTTPS.";
-      log(`[ERRO] ${msg}`);
-      setBleError(msg);
-      setBleStatus('error');
-      return;
-    }
-
-    try {
-      let options: any = {};
-      if (bleScanType === 'acceptAll') {
-        log(`Iniciando busca ampla de BLE: listando todos os dispositivos próximos (UUID do serviço opcional: ${bleServiceUuid})`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo ESP32/MM12T no popup flutuante de pareamento de segurança.`);
-        options = {
-          acceptAllDevices: true,
-          optionalServices: [bleServiceUuid]
-        };
-      } else if (bleScanType === 'namePrefix') {
-        log(`Filtro de busca ativo: prefixo de nome "${bleNamePrefix}", filtrando por UUID de serviço "${bleServiceUuid}"`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo com prefixo "${bleNamePrefix}" no popup de pareamento de segurança.`);
-        options = {
-          filters: [
-            { namePrefix: bleNamePrefix }
-          ],
-          optionalServices: [
-            bleServiceUuid
-          ]
-        };
-      } else {
-        log(`Filtro de busca ativo por UUID de Serviço: "${bleServiceUuid}"`);
-        log(`📢 [MASTER LAZER] Escolha seu dispositivo correspondente no popup de pareamento de segurança.`);
-        options = {
-          filters: [
-            { services: [bleServiceUuid] }
-          ]
-        };
-      }
-      
-      const device = await nav.bluetooth.requestDevice(options);
-      
-      log(`Dispositivo pareado: ${device.name || 'Sem nome'} (ID: ${device.id})`);
-
-      // Start signal tracking
-      setBleRssi(-55);
-      log(`[SINAL RSSI] Conexão física estabelecida com o hardware. Inicial: -55 dBm`);
-      
-      try {
-        if (device.watchAdvertisements) {
-          device.addEventListener('advertisementreceived', (event: any) => {
-            if (event.rssi !== undefined) {
-              setBleRssi(event.rssi);
-              log(`[SINAL RSSI] Hard-read ativo do ESP32: ${event.rssi} dBm`);
-            }
-          });
-          await device.watchAdvertisements().catch(() => {});
-        }
-      } catch (evtErr) {}
-
-      rssiInterval = setInterval(() => {
-        setBleRssi(prev => {
-          if (prev === null) return -55;
-          const change = Math.floor(Math.random() * 5) - 2; // -2 to +2
-          let next = prev + change;
-          if (next > -42) next = -42;
-          if (next < -72) next = -72;
-          return next;
-        });
-      }, 1500);
-
-      setBleStatus('connecting');
-      log(`Conectando ao GATT server...`);
-      
-      const server = await device.gatt.connect();
-      log(`Conexão GATT estabelecida.`);
-      setBleStatus('connected');
-      
-      log(`Obtendo serviço primário: ${bleServiceUuid}`);
-      const service = await server.getPrimaryService(bleServiceUuid);
-      log(`Serviço obtido com sucesso.`);
-      
-      setBleStatus('sending');
-      log(`Consultando características...`);
-      const characteristics = await service.getCharacteristics();
-      log(`Localizadas ${characteristics.length} características:`);
-      
-      characteristics.forEach((c: any) => {
-        log(`- UUID: ${c.uuid} [Write: ${c.properties.write || false}, WriteWithoutResponse: ${c.properties.writeWithoutResponse || false}]`);
-      });
-      
-      const writableChar = characteristics.find((c: any) => 
-        c.properties.write || 
-        c.properties.writeWithoutResponse
-      );
-      
-      if (!writableChar) {
-        throw new Error("Nenhuma característica com permissão de escrita foi encontrada neste serviço.");
-      }
-      
-      log(`Usando característica de escrita para comando: ${writableChar.uuid}`);
-      const scanPayload = JSON.stringify({ cmd: "scan" });
-      log(`Enviando comando de varredura: ${scanPayload}`);
-      
-      const encoder = new TextEncoder();
-      await writableChar.writeValue(encoder.encode(scanPayload));
-      log(`Comando {"cmd":"scan"} enviado com sucesso! Aguardando o rádio Wi-Fi do microcontrolador.`);
-      
-      setBleStatus('success');
-      
-      if (device.gatt && device.gatt.connected) {
-        device.gatt.disconnect();
-        log(`Bluetooth GATT desconectado para liberar recursos.`);
-      }
-    } catch (err: any) {
-      console.error(err);
-      const msg = err.message || String(err);
-      log(`[ERRO] Falha de Varredura BLE: ${msg}`);
-      setBleError(msg);
-      setBleStatus('error');
-    } finally {
-      if (rssiInterval) {
-        clearInterval(rssiInterval);
-      }
-    }
   };
 
   // 6. MQTT Client Logic Wrapper
@@ -1252,22 +805,86 @@ export default function PoolControllerPage() {
         }
 
         // Individual topic parsed fallback
+        const mqttBase = `MASTERLAZER/${deviceId}`;
         const lowerDest = dest.toLowerCase();
+        const basePref = mqttBase.toLowerCase();
+        const prevPref = `${deviceId.toLowerCase()}`;
+
+        // 1. Listen for device status (online / offline)
+        if (
+          lowerDest === `${basePref}/status` || 
+          lowerDest === `${prevPref}/status` ||
+          dest === `${mqttBase}/status`
+        ) {
+          const isOnline = payload === 'online' || payload === '1' || payload.toUpperCase() === 'ON';
+          setDeviceOnline(isOnline);
+          return;
+        }
+
+        // 2. Listen for equipment info topics
+        if (lowerDest === `${basePref}/info/ip` || lowerDest === `${prevPref}/info/ip` || dest === `${mqttBase}/info/ip`) {
+          setDeviceIp(payload);
+          return;
+        }
+        if (lowerDest === `${basePref}/info/mac` || lowerDest === `${prevPref}/info/mac` || dest === `${mqttBase}/info/mac`) {
+          setDeviceMac(payload);
+          return;
+        }
+        if (lowerDest === `${basePref}/info/modelo` || lowerDest === `${prevPref}/info/modelo` || dest === `${mqttBase}/info/modelo`) {
+          setDeviceModelo(payload);
+          return;
+        }
+        if (lowerDest === `${basePref}/info/serial` || lowerDest === `${prevPref}/info/serial` || dest === `${mqttBase}/info/serial`) {
+          setDeviceSerial(payload);
+          return;
+        }
         
+        // 3. Listen for Filtration Timer config
+        if (lowerDest === `${basePref}/ft/cfg` || dest === `${mqttBase}/ft/cfg`) {
+          try {
+            const timerData = JSON.parse(payload);
+            if (timerData.start) {
+              setFilterInit(timerData.start);
+              const parts = timerData.start.split(':');
+              if (parts.length >= 1) setFilterStartHour(parts[0]);
+              if (parts.length >= 2) setFilterStartMinute(parts[1]);
+            }
+            if (timerData.hours !== undefined) {
+              setFilterHours(String(timerData.hours));
+            }
+          } catch (err) {
+            console.warn('Erro ao decodificar ft/cfg JSON:', err);
+          }
+          return;
+        }
+
+        // 4. Listen for LED Timer config
+        if (lowerDest === `${basePref}/led/tmr/cfg` || dest === `${mqttBase}/led/tmr/cfg`) {
+          try {
+            const ledTimerData = JSON.parse(payload);
+            if (ledTimerData.start) {
+              const parts = ledTimerData.start.split(':');
+              if (parts.length >= 1) setLedStartHour(parts[0]);
+              if (parts.length >= 2) setLedStartMinute(parts[1]);
+            }
+            if (ledTimerData.hours !== undefined) {
+              setLedDuration(String(ledTimerData.hours));
+            }
+            if (ledTimerData.program !== undefined) {
+              setLedProgram(String(ledTimerData.program));
+            }
+          } catch (err) {
+            console.warn('Erro ao decodificar led/tmr/cfg JSON:', err);
+          }
+          return;
+        }
+
         // Motor 1 / Hidro
         if (
-          dest.endsWith('/12TW/ID/mt1') ||
-          dest.endsWith('/12TW/ID/mt1/state') ||
-          dest.endsWith('/12TW/ID/mt1/status') ||
-          lowerDest.endsWith('/12TW/ID/mt1') ||
-          lowerDest.endsWith('/12TW/ID/mt1/state') ||
-          lowerDest.endsWith('/12TW/ID/mt1/status') ||
-          (deviceId && (
-            lowerDest === `${deviceId.toLowerCase()}/ID/mt1` ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1`) ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/state`) ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/status`)
-          ))
+          lowerDest === `${basePref}/mt1` ||
+          lowerDest === `${basePref}/mt1/state` ||
+          dest === `${mqttBase}/mt1` ||
+          dest === `${mqttBase}/mt1/state`
         ) {
           setMotorHidro(payload.toUpperCase() === 'ON' || 
           payload.toUpperCase() === 'LIG' || 
@@ -1276,18 +893,10 @@ export default function PoolControllerPage() {
         }
         // Motor 2 / Filtro
         else if (
-          dest.endsWith('/12TW/ID/mt2') ||
-          dest.endsWith('/12TW/ID/mt2/state') ||
-          dest.endsWith('/12TW/ID/mt2/status') ||
-          lowerDest.endsWith('/12TW/ID/mt2') ||
-          lowerDest.endsWith('/12TW/ID/mt2/state') ||
-          lowerDest.endsWith('/12TW/ID/mt2/status') ||
-          (deviceId && (
-            lowerDest === `${deviceId.toLowerCase()}/ID/mt2` ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2`) ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/state`) ||
-            lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/status`)
-          ))
+          lowerDest === `${basePref}/mt2` ||
+          lowerDest === `${basePref}/mt2/state` ||
+          dest === `${mqttBase}/mt2` ||
+          dest === `${mqttBase}/mt2/state`
         ) {
           setMotorFiltro(payload.toUpperCase() === 'ON' || 
           payload.toUpperCase() === 'LIG' || 
@@ -1295,7 +904,10 @@ export default function PoolControllerPage() {
           payload === '1');
         }
         // LED program
-        else if (lowerDest.endsWith('/led/pg') || lowerDest.endsWith('/led/pg/state')) {
+        else if (
+          lowerDest === `${basePref}/led/pg` ||
+          dest === `${mqttBase}/led/pg`
+        ) {
           const pgVal = parseInt(payload);
           if (!isNaN(pgVal)) {
             setCurrentProgram(pgVal);
@@ -1304,7 +916,10 @@ export default function PoolControllerPage() {
           }
         }
         // LED Control
-        else if (lowerDest.endsWith('/led/ctrl') || lowerDest.endsWith('/led/state')) {
+        else if (
+          lowerDest === `${basePref}/led/ctrl` ||
+          dest === `${mqttBase}/led/ctrl`
+        ) {
           if (payload.toUpperCase() === 'DESL' || payload.toUpperCase() === 'OFF' || payload === '0') {
             setCurrentProgram('---');
           } else if (payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'ON' || payload === '1') {
@@ -1314,7 +929,11 @@ export default function PoolControllerPage() {
           }
         }
         // LED RGB colors feedback
-        else if (lowerDest.endsWith('/pwm/r') || lowerDest.endsWith('/led/r')) {
+        else if (
+          lowerDest === `${basePref}/pwm/r` ||
+          lowerDest === `${basePref}/led/r` ||
+          dest === `${mqttBase}/pwm/r`
+        ) {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -1326,7 +945,11 @@ export default function PoolControllerPage() {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
-        } else if (lowerDest.endsWith('/pwm/g') || lowerDest.endsWith('/led/g')) {
+        } else if (
+          lowerDest === `${basePref}/pwm/g` ||
+          lowerDest === `${basePref}/led/g` ||
+          dest === `${mqttBase}/pwm/g`
+        ) {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -1338,7 +961,11 @@ export default function PoolControllerPage() {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
-        } else if (lowerDest.endsWith('/pwm/b') || lowerDest.endsWith('/led/b')) {
+        } else if (
+          lowerDest === `${basePref}/pwm/b` ||
+          lowerDest === `${basePref}/led/b` ||
+          dest === `${mqttBase}/pwm/b`
+        ) {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -1369,6 +996,24 @@ export default function PoolControllerPage() {
           
           // Subscribe to target topics to monitor LED and AUX hardware status
           const topicsToSubscribe = [
+            `MASTERLAZER/${deviceId}/status`,
+            `MASTERLAZER/${deviceId}/info/ip`,
+            `MASTERLAZER/${deviceId}/info/mac`,
+            `MASTERLAZER/${deviceId}/info/modelo`,
+            `MASTERLAZER/${deviceId}/info/serial`,
+            `MASTERLAZER/${deviceId}/mt1`,
+            `MASTERLAZER/${deviceId}/mt2`,
+            `MASTERLAZER/${deviceId}/mt1/state`,
+            `MASTERLAZER/${deviceId}/mt2/state`,
+            `MASTERLAZER/${deviceId}/ID/mt1`,
+            `MASTERLAZER/${deviceId}/ID/mt2`,
+            `MASTERLAZER/${deviceId}/led/pg`,
+            `MASTERLAZER/${deviceId}/led/ctrl`,
+            `MASTERLAZER/${deviceId}/led/state`,
+            `MASTERLAZER/${deviceId}/pwm/r`,
+            `MASTERLAZER/${deviceId}/pwm/g`,
+            `MASTERLAZER/${deviceId}/pwm/b`,
+            `MASTERLAZER/${deviceId}/solar/erro`,
             `${deviceId}/solar/erro`,
             `${deviceId}/ID/mt1`,
             `${deviceId}/ID/mt2`,
@@ -1392,6 +1037,8 @@ export default function PoolControllerPage() {
             `${deviceId}/ID/pwm/b`,
             `${deviceId}/pwm/r`,
             `${deviceId}/pwm/g`,
+            `MASTERLAZER/${deviceId}/status`,
+            `MASTERLAZER/${deviceId}/state`,
             `${deviceId}/pwm/b`,
             `${deviceId}/status`,
             `${deviceId}/state`,
@@ -1410,6 +1057,10 @@ export default function PoolControllerPage() {
 
           // Send query commands to request immediate status update from hardware
           const queryTopics = [
+            `MASTERLAZER/${deviceId}/get`,
+            `MASTERLAZER/${deviceId}/ID/get`,
+            `MASTERLAZER/${deviceId}/cmd`,
+            `MASTERLAZER/${deviceId}/status/get`,
             `${deviceId}/ID/get`,
             `${deviceId}/get`,
             `${deviceId}/ID/cmd`,
@@ -1511,44 +1162,33 @@ export default function PoolControllerPage() {
   };
 
   function publishTopic(subTopic: string, payload: string) {
-    // Standard publish layout matches requirements
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
         const topicsToSend = new Set<string>();
         topicsToSend.add(subTopic);
 
-        const currentId = deviceId || '12TW';
-        const upperId = currentId.toUpperCase();
-
-        // Check if the topic starts with currentId (case-insensitive)
-        if (subTopic.toLowerCase().startsWith(currentId.toLowerCase())) {
-          const suffix = subTopic.substring(currentId.length);
-          
-          // Ensure "ID" prefix is capitalized in the suffix: e.g. "/id/mt1" -> "/ID/mt1"
-          let normalizedSuffix = suffix;
-          if (suffix.toLowerCase().startsWith('/id/')) {
-            normalizedSuffix = '/ID/' + suffix.substring(4);
-          } else if (suffix.toLowerCase() === '/id') {
-            normalizedSuffix = '/ID';
-          }
-          
-          topicsToSend.add(`${upperId}${normalizedSuffix}`);
-          topicsToSend.add(`${currentId}${normalizedSuffix}`);
-          topicsToSend.add(`12TW${normalizedSuffix}`);
+        if (subTopic.startsWith('MASTERLAZER/')) {
+          const relativePart = subTopic.substring('MASTERLAZER/'.length);
+          topicsToSend.add(relativePart);
+        } else {
+          topicsToSend.add(`MASTERLAZER/${subTopic}`);
         }
 
-        // Send to all computed variations to guarantee compliance with arbitrary ESP32 firmware expectations
-        topicsToSend.forEach((fullTopic) => {
-          const message = new window.Paho.MQTT.Message(payload);
-          message.destinationName = fullTopic;
-          mqttClientRef.current!.send(message);
-          console.log(`MQTT Published topic [${fullTopic}]: ${payload}`);
+        topicsToSend.forEach((t) => {
+          try {
+            const message = new window.Paho.MQTT.Message(payload);
+            message.destinationName = t;
+            mqttClientRef.current.send(message);
+            console.log(`MQTT Published topic [${t}]: ${payload}`);
+          } catch (innerErr) {
+            console.warn(`MQTT individual send failed on [${t}]:`, innerErr);
+          }
         });
       } catch (err) {
         console.error('Publish error:', err);
       }
     } else {
-      console.warn('MQTT client is offline. Skipping write operation.');
+      console.warn('MQTT client is offline. Skipping write operation on topic:', subTopic);
     }
   }
 
@@ -1562,35 +1202,14 @@ export default function PoolControllerPage() {
     }
 
     const payloadON_OFF = checked ? 'ON' : 'OFF';
-    const payload1_0 = checked ? '1' : '0';
-    const payloadLIG_DESL = checked ? 'LIG' : 'DESL';
 
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
+    // Core brand commands
+    publishTopic(`MASTERLAZER/${deviceId}/mt${num}`, payloadON_OFF);
 
-    // Broadcast commands to all possible topic variations (casing, ID format) for absolute reliability:
-    const variations = [
-      `mt${num}`,
-      `ID/mt${num}`,
-      `ID/mt${num}`,
-      `mt${num}/state`,
-      `ID/mt${num}/state`,
-      `ID/mt${num}/state`,
-      `mt${num}/status`,
-      `ID/mt${num}/status`,
-      `ID/mt${num}/status`
-    ];
-
-    variations.forEach(sub => {
-      publishTopic(`${deviceUpper}/${sub}`, payloadON_OFF);
-      publishTopic(`${deviceUpper}/${sub}`, payload1_0);
-      publishTopic(`${deviceUpper}/${sub}`, payloadLIG_DESL);
-
-      if (deviceId && deviceId !== deviceUpper) {
-        publishTopic(`${deviceId}/${sub}`, payloadON_OFF);
-        publishTopic(`${deviceId}/${sub}`, payload1_0);
-        publishTopic(`${deviceId}/${sub}`, payloadLIG_DESL);
-      }
-    });
+    // Fallbacks
+    publishTopic(`${deviceId}/mt${num}`, payloadON_OFF);
+    publishTopic(`MASTERLAZER/${deviceId}/mt${num}/state`, payloadON_OFF);
+    publishTopic(`${deviceId}/mt${num}/state`, payloadON_OFF);
   };
 
   // LED Commands
@@ -1605,21 +1224,14 @@ export default function PoolControllerPage() {
     }
     setCurrentProgram(nextProg);
     const pgStr = String(nextProg);
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
-    const pgVariations = [
-      `led/pg`,
-      `ID/led/pg`,
-      `ID/led/pg`,
-      `led/program`,
-      `ID/led/program`,
-      `ID/led/program`
-    ];
-    pgVariations.forEach(sub => {
-      publishTopic(`${deviceUpper}/${sub}`, pgStr);
-      if (deviceId && deviceId !== deviceUpper) {
-        publishTopic(`${deviceId}/${sub}`, pgStr);
-      }
-    });
+    
+    // Core command topic
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
+
+    // Fallbacks
+    publishTopic(`${deviceId}/led/pg`, pgStr);
+    publishTopic(`MASTERLAZER/${deviceId}/ID/led/pg`, pgStr);
+    publishTopic(`${deviceId}/ID/led/pg`, pgStr);
   };
 
   const handleProgramDec = () => {
@@ -1633,82 +1245,58 @@ export default function PoolControllerPage() {
     }
     setCurrentProgram(prevProg);
     const pgStr = String(prevProg);
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
-    const pgVariations = [
-      `led/pg`,
-      `ID/led/pg`,
-      `ID/led/pg`,
-      `led/program`,
-      `ID/led/program`,
-      `ID/led/program`
-    ];
-    pgVariations.forEach(sub => {
-      publishTopic(`${deviceUpper}/${sub}`, pgStr);
-      if (deviceId && deviceId !== deviceUpper) {
-        publishTopic(`${deviceId}/${sub}`, pgStr);
-      }
-    });
+    
+    // Core command topic
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
+
+    // Fallbacks
+    publishTopic(`${deviceId}/led/pg`, pgStr);
+    publishTopic(`MASTERLAZER/${deviceId}/ID/led/pg`, pgStr);
+    publishTopic(`${deviceId}/ID/led/pg`, pgStr);
   };
 
   const handleProgramOff = () => {
     setCurrentProgram('---');
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
     
-    const ctrlVariations = [
-      `led/ctrl`,
-      `ID/led/ctrl`,
-      `ID/led/ctrl`,
-      `led/state`,
-      `ID/led/state`,
-      `ID/led/state`
-    ];
-    const offPayloads = ['DESL', 'OFF', '0'];
+    // Core command topic
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "OFF");
     
-    ctrlVariations.forEach(sub => {
-      offPayloads.forEach(p => {
-        publishTopic(`${deviceUpper}/${sub}`, p);
-        if (deviceId && deviceId !== deviceUpper) {
-          publishTopic(`${deviceId}/${sub}`, p);
-        }
-      });
-    });
+    // Fallbacks
+    publishTopic(`${deviceId}/led/ctrl`, "OFF");
+    publishTopic(`MASTERLAZER/${deviceId}/ID/led/ctrl`, "OFF");
+    publishTopic(`${deviceId}/ID/led/ctrl`, "OFF");
   };
 
   const handleProgramSave = () => {
-    const deviceUpper = (deviceId || '12TW').toUpperCase();
-    const ctrlVariations = [
-      `led/ctrl`,
-      `ID/led/ctrl`,
-      `ID/led/ctrl`
-    ];
-    const savePayloads = ['SALV', 'SAVE', '1'];
-    
-    ctrlVariations.forEach(sub => {
-      savePayloads.forEach(p => {
-        publishTopic(`${deviceUpper}/${sub}`, p);
-        if (deviceId && deviceId !== deviceUpper) {
-          publishTopic(`${deviceId}/${sub}`, p);
-        }
-      });
-    });
+    // Core command topic
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SAVE");
+
+    // Fallbacks
+    publishTopic(`${deviceId}/led/ctrl`, "SAVE");
+    publishTopic(`MASTERLAZER/${deviceId}/ID/led/ctrl`, "SAVE");
+    publishTopic(`${deviceId}/ID/led/ctrl`, "SAVE");
     alert('Configuração de LED persistida em memória interna!');
   };
 
   // Save Timers
   const handleSaveFilter = () => {
-    localStorage.setItem('filter_init1', filterInit1);
-    localStorage.setItem('filter_init2', filterInit2);
-    localStorage.setItem('filter_init3', filterInit3);
-
-    const activeInits = [filterInit1, filterInit2, filterInit3].filter(h => h !== 'D').map(h => h + 'h');
-    const combinedInits = activeInits.length > 0 ? activeInits.join(', ') : 'Desativado';
-
-    // Save legacy field for compatibility
-    localStorage.setItem('filter_init', combinedInits);
-    setFilterInit(combinedInits);
+    localStorage.setItem('filter_start_hour', filterStartHour);
+    localStorage.setItem('filter_start_minute', filterStartMinute);
     localStorage.setItem('filter_hours', filterHours);
     localStorage.setItem('filter_days', JSON.stringify(filterDays));
 
+    const formattedHour = filterStartHour.padStart(2, '0');
+    const formattedMinute = filterStartMinute.padStart(2, '0');
+    const startingTime = `${formattedHour}:${formattedMinute}`;
+    setFilterInit(startingTime);
+
+    // Exact requested JSON payload format: { start: "HH:MM", hours: num }
+    const coreJson = {
+      start: startingTime,
+      hours: parseInt(filterHours) || 4
+    };
+
+    // Extended JSON payload for backward compatibility
     const dayLabels = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
     const selectedDaysList = filterDays
       .map((active, index) => (active ? dayLabels[index] : ''))
@@ -1716,63 +1304,32 @@ export default function PoolControllerPage() {
       .join(',');
     const daysBinary = filterDays.map(d => d ? '1' : '0').join('');
 
-    const data = {
-      start: combinedInits,
-      start1: filterInit1,
-      start2: filterInit2,
-      start3: filterInit3,
-      hours: filterHours,
-      inicio: combinedInits,
-      inicio1: filterInit1,
-      inicio2: filterInit2,
-      inicio3: filterInit3,
-      horas: filterHours,
-      duration: filterHours,
-      duracao: filterHours,
-      tempo: filterHours,
+    const extendedData = {
+      ...coreJson,
+      inicio: startingTime,
+      horas: parseInt(filterHours) || 4,
+      duration: parseInt(filterHours) || 4,
       days: filterDays,
-      dias: filterDays,
       days_binary: daysBinary,
-      dias_binario: daysBinary,
       active_days_str: selectedDaysList
     };
-    
-    // Publish JSON formats to normal and alternate topics
-    publishTopic(`${deviceId}/ID/ft/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ft/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ID/ft`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ft`, JSON.stringify(data));
 
-    // Publish individual keys to facilitate simpler parsers on MCU
-    publishTopic(`${deviceId}/ID/ft/start`, combinedInits);
-    publishTopic(`${deviceId}/ft/start`, combinedInits);
-    publishTopic(`${deviceId}/ID/ft/inicio`, combinedInits);
-    publishTopic(`${deviceId}/ft/inicio`, combinedInits);
+    // 1. Publish precise requested topic style
+    publishTopic(`MASTERLAZER/${deviceId}/ft/cfg`, JSON.stringify(coreJson));
 
-    publishTopic(`${deviceId}/ID/ft/start1`, filterInit1);
-    publishTopic(`${deviceId}/ft/start1`, filterInit1);
-    publishTopic(`${deviceId}/ID/ft/start2`, filterInit2);
-    publishTopic(`${deviceId}/ft/start2`, filterInit2);
-    publishTopic(`${deviceId}/ID/ft/start3`, filterInit3);
-    publishTopic(`${deviceId}/ft/start3`, filterInit3);
+    // 2. Publish compatibility formats
+    publishTopic(`${deviceId}/ft/cfg`, JSON.stringify(extendedData));
+    publishTopic(`MASTERLAZER/${deviceId}/ID/ft/cfg`, JSON.stringify(extendedData));
+    publishTopic(`${deviceId}/ID/ft/cfg`, JSON.stringify(extendedData));
 
-    publishTopic(`${deviceId}/ID/ft/hours`, String(filterHours));
+    // Individual topics publish
+    publishTopic(`MASTERLAZER/${deviceId}/ft/start`, startingTime);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/hours`, String(filterHours));
+    publishTopic(`${deviceId}/ft/start`, startingTime);
     publishTopic(`${deviceId}/ft/hours`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/horas`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/horas`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/duration`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/duration`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/duracao`, String(filterHours));
-    publishTopic(`${deviceId}/ID/ft/duracao`, String(filterHours));
-
-    // Publish days variables
-    publishTopic(`${deviceId}/ID/ft/days`, daysBinary);
-    publishTopic(`${deviceId}/ft/days`, daysBinary);
-    publishTopic(`${deviceId}/ID/ft/dias`, daysBinary);
-    publishTopic(`${deviceId}/ft/dias`, daysBinary);
 
     const activeText = selectedDaysList ? `\nDias: [ ${selectedDaysList} ]` : `\nDias: Nenhum selecionado`;
-    alert(`Programação de filtragem enviada!\nHorários de Início: ${combinedInits}\nDuração: ${filterHours} horas.${activeText}`);
+    alert(`Programação de filtragem enviada!\nHorário de Início: ${startingTime}\nDuração: ${filterHours} horas.${activeText}`);
   };
 
   const handleSaveLedTimer = () => {
@@ -1788,50 +1345,34 @@ export default function PoolControllerPage() {
     // Detailed JSON options supporting multi-language keys
     const data = {
       start: startingTime,
-      hours: ledDuration,
-      program: ledProgram,
-      inicio: startingTime,
-      horas: ledDuration,
-      programacao: ledProgram,
-      prog: ledProgram,
-      duration: ledDuration,
-      duracao: ledDuration,
-      tempo: ledDuration
+      hours: parseInt(ledDuration) || 4,
+      program: parseInt(ledProgram) || 0
     };
 
-    // Publish JSON format combinations
-    publishTopic(`${deviceId}/ID/led/tmr/cfg`, JSON.stringify(data));
+    // 1. Publish precise requested topic style
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/cfg`, JSON.stringify(data));
+
+    // 2. Publish compatibility formats
     publishTopic(`${deviceId}/led/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ID/led/tmr`, JSON.stringify(data));
-    publishTopic(`${deviceId}/led/tmr`, JSON.stringify(data));
+    publishTopic(`MASTERLAZER/${deviceId}/ID/led/tmr/cfg`, JSON.stringify(data));
+    publishTopic(`${deviceId}/ID/led/tmr/cfg`, JSON.stringify(data));
 
     // Publish individual parameters to simplify Arduino / ESP logic
     
     // Hour/Start Topics
-    publishTopic(`${deviceId}/ID/led/tmr/start`, startingTime);
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/start`, startingTime);
     publishTopic(`${deviceId}/led/tmr/start`, startingTime);
-    publishTopic(`${deviceId}/ID/led/tmr/inicio`, startingTime);
-    publishTopic(`${deviceId}/led/tmr/inicio`, startingTime);
-    publishTopic(`${deviceId}/ID/led/tmr/hora`, startingTime);
-    publishTopic(`${deviceId}/led/tmr/hora`, startingTime);
 
     // Duration/Hours Topics
-    publishTopic(`${deviceId}/ID/led/tmr/hours`, String(ledDuration));
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/hours`, String(ledDuration));
     publishTopic(`${deviceId}/led/tmr/hours`, String(ledDuration));
-    publishTopic(`${deviceId}/ID/led/tmr/horas`, String(ledDuration));
-    publishTopic(`${deviceId}/led/tmr/horas`, String(ledDuration));
-    publishTopic(`${deviceId}/ID/led/tmr/duration`, String(ledDuration));
-    publishTopic(`${deviceId}/led/tmr/duration`, String(ledDuration));
-    publishTopic(`${deviceId}/ID/led/tmr/duracao`, String(ledDuration));
-    publishTopic(`${deviceId}/led/tmr/duracao`, String(ledDuration));
+
 
     // Program Topics
-    publishTopic(`${deviceId}/ID/led/tmr/program`, String(ledProgram));
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/program`, String(ledProgram));
     publishTopic(`${deviceId}/led/tmr/program`, String(ledProgram));
-    publishTopic(`${deviceId}/ID/led/tmr/prog`, String(ledProgram));
-    publishTopic(`${deviceId}/led/tmr/prog`, String(ledProgram));
-    publishTopic(`${deviceId}/ID/led/tmr/programacao`, String(ledProgram));
-    publishTopic(`${deviceId}/led/tmr/programacao`, String(ledProgram));
+
+
 
     alert(`Programação do Timer LED enviada!\nInício: ${startingTime}\nDuração: ${ledDuration} horas\nPrograma: ${ledProgram}.`);
   };
@@ -1847,29 +1388,24 @@ export default function PoolControllerPage() {
 
     const data = {
       enabled: isEnabled,
-      active: isEnabled,
-      ativo: isEnabled,
-      hours: hoursVal,
-      horas: hoursVal,
-      duracao: hoursVal,
-      duration: hoursVal
+      hours: parseInt(hoursVal) || 1
     };
 
-    // Publish JSON formats
-    publishTopic(`${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
+    // 1. Publish core brand style
+    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
+
+    // 2. Publish compatibility formats
     publishTopic(`${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ID/hidro/tmr`, JSON.stringify(data));
-    publishTopic(`${deviceId}/hidro/tmr`, JSON.stringify(data));
+    publishTopic(`MASTERLAZER/${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
+    publishTopic(`${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
 
     // Publish individual parameters
-    publishTopic(`${deviceId}/ID/hidro/tmr/active`, isEnabled ? '1' : '0');
+    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
     publishTopic(`${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
-    publishTopic(`${deviceId}/ID/hidro/tmr/ativo`, isEnabled ? 'LIG' : 'DESL');
-    publishTopic(`${deviceId}/hidro/tmr/ativo`, isEnabled ? 'LIG' : 'DESL');
-    publishTopic(`${deviceId}/ID/hidro/tmr/hours`, String(hoursVal));
+
+    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/hours`, String(hoursVal));
     publishTopic(`${deviceId}/hidro/tmr/hours`, String(hoursVal));
-    publishTopic(`${deviceId}/ID/hidro/tmr/horas`, String(hoursVal));
-    publishTopic(`${deviceId}/hidro/tmr/horas`, String(hoursVal));
+
 
     alert(`Programação do Timer ${motor1Name} enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
   };
@@ -1899,7 +1435,7 @@ export default function PoolControllerPage() {
     setDeviceId(trimmedId);
     localStorage.setItem('mqtt_device', trimmedId);
     
-    // Log registration info in the BLE Pairing terminal console
+    // Log registration info in the Equipment terminal console
     setBleLog(prev => [
       ...prev,
       `[REGISTRO] Novo equipamento salvo: ${selectedEquipmentModel}`,
@@ -3004,8 +2540,8 @@ export default function PoolControllerPage() {
                     </div>
                   </div>
 
-                  {/* REAL-TIME WI-FI PROVISIONING BLOCK */}
-                  <div id="ble-wifi-provisioner" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
+                  {/* EQUIPMENT REGISTRATION BLOCK */}
+                  <div id="equipment-registration-block" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
                     <h3 className="text-sm font-bold text-white pb-1.5 border-b border-white/10 flex items-center justify-between">
                       <span>Equipamentos</span>
                     </h3>
@@ -3076,6 +2612,28 @@ export default function PoolControllerPage() {
                     <div className="flex justify-between items-center pb-2 border-b border-white/10">
                       <span className="text-slate-300">Identificação (ID)</span>
                       <span className="font-mono font-bold text-[#4398fa]">{deviceId || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-white/5">
+                      <span className="text-slate-300">Status do Equipamento</span>
+                      <span className={`font-bold transition-all px-2 py-0.5 rounded text-[10px] ${deviceOnline === true ? 'text-emerald-400 bg-emerald-500/10' : deviceOnline === false ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 bg-white/5'}`}>
+                        {deviceOnline === true ? '● ONLINE' : deviceOnline === false ? '● OFFLINE' : '● AGUARDANDO...'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-white/5">
+                      <span className="text-slate-300">Endereço IP</span>
+                      <span className="font-mono font-semibold text-slate-450">{deviceIp || '---'}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-white/5">
+                      <span className="text-slate-300">Endereço MAC</span>
+                      <span className="font-mono font-semibold text-slate-450">{deviceMac || '---'}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-white/5">
+                      <span className="text-slate-300">Modelo</span>
+                      <span className="font-semibold text-slate-400">{deviceModelo || '---'}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-1 border-b border-white/5">
+                      <span className="text-slate-300">Serial</span>
+                      <span className="font-mono font-semibold text-slate-400">{deviceSerial || '---'}</span>
                     </div>
                     <div className="flex justify-between items-center py-1">
                       <span className="text-slate-300">Conexão Ativa</span>
