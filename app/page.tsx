@@ -1269,7 +1269,10 @@ export default function PoolControllerPage() {
             lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/status`)
           ))
         ) {
-          setMotorHidro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'TRUE');
+          setMotorHidro(payload.toUpperCase() === 'ON' || 
+          payload.toUpperCase() === 'LIG' || 
+          payload.toUpperCase() === 'TRUE'||
+          payload === '1');
         }
         // Motor 2 / Filtro
         else if (
@@ -1286,7 +1289,10 @@ export default function PoolControllerPage() {
             lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/status`)
           ))
         ) {
-          setMotorFiltro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'TRUE');
+          setMotorFiltro(payload.toUpperCase() === 'ON' || 
+          payload.toUpperCase() === 'LIG' || 
+          payload.toUpperCase() === 'TRUE'||
+          payload === '1');
         }
         // LED program
         else if (lowerDest.endsWith('/led/pg') || lowerDest.endsWith('/led/pg/state')) {
@@ -2414,7 +2420,7 @@ export default function PoolControllerPage() {
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorFiltro ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         <div className="mt-1">
-                          <p className={`text-xs font-bold ${motorFiltro ? 'text-cyan-400' : 'text-slate-500'}`}>
+                          <p className={`text-xs font-bold ${motorFiltro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
                             {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
                           </p>
                         </div>
