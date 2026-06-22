@@ -458,6 +458,7 @@ export default function PoolControllerPage() {
               borderWidth: 0,
               borderColor: 'transparent',
               wheelLightness: false,
+              sliderSize: 12,
               layout: [
                 { 
                   component: window.iro.ui.Wheel,
@@ -471,6 +472,7 @@ export default function PoolControllerPage() {
                   options: {
                     sliderType: 'value',
                     borderWidth: 0,
+                    sliderSize: 5,
                   }
                 }
               ]
@@ -2384,28 +2386,38 @@ export default function PoolControllerPage() {
                     </div>
 
                     {/* Quick Status Block */}
-                    <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="grid grid-cols-2 gap-2 text-left">
                       <button
                         id="home-status-hidro"
                         onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                         title={`Ver controle: ${motor1Name}`}
                       >
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate">{motor1Name}</p>
-                        <p className={`text-xs font-bold mt-1 ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
-                          {motorHidro ? 'LIGADO' : 'DESLIGADO'}
-                        </p>
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor1Name}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorHidro ? 'bg-[#4398fa] animate-pulse' : 'bg-slate-500'}`} />
+                        </div>
+                        <div className="mt-1">
+                          <p className={`text-xs font-bold ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
+                            {motorHidro ? 'LIGADO' : 'DESLIGADO'}
+                          </p>
+                        </div>
                       </button>
                       <button
                         id="home-status-filtro"
                         onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                         title={`Ver controle: ${motor2Name}`}
                       >
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate">{motor2Name}</p>
-                        <p className={`text-xs font-bold mt-1 ${motorFiltro ? 'text-cyan-400' : 'text-slate-500'}`}>
-                          {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
-                        </p>
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor2Name}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorFiltro ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                        </div>
+                        <div className="mt-1">
+                          <p className={`text-xs font-bold ${motorFiltro ? 'text-cyan-400' : 'text-slate-500'}`}>
+                            {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
+                          </p>
+                        </div>
                       </button>
                     </div>
                   </div>
