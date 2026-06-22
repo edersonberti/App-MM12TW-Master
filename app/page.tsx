@@ -25,7 +25,8 @@ import {
   FolderSync,
   Send,
   Terminal,
-  Save
+  Save,
+  Edit2
 } from 'lucide-react';
 
 // TypeScript declarations for browser-loaded scripts
@@ -123,6 +124,10 @@ export default function PoolControllerPage() {
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
   const [motorFiltro, setMotorFiltro] = useState(false);
+  const [motor1Name, setMotor1Name] = useState('Motor 01');
+  const [motor2Name, setMotor2Name] = useState('Motor 02');
+  const [isEditingM1, setIsEditingM1] = useState(false);
+  const [isEditingM2, setIsEditingM2] = useState(false);
   const [solarErrorBanner, setSolarErrorBanner] = useState<string | null>(null);
 
   // LED States
@@ -204,12 +209,16 @@ export default function PoolControllerPage() {
       const storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
+      const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
+      const storedMotor2Name = localStorage.getItem('motor2_name') || 'Motor 02';
 
       setMqttBroker(storedBroker);
       setMqttPort(storedPort);
       setDeviceId(storedDevice);
       setMqttUser(storedMqttUser);
       setMqttPassword(storedMqttPass);
+      setMotor1Name(storedMotor1Name);
+      setMotor2Name(storedMotor2Name);
 
       const storedEquips = localStorage.getItem('registered_equipments');
       if (storedEquips) {
@@ -1258,7 +1267,7 @@ export default function PoolControllerPage() {
             lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt1/status`)
           ))
         ) {
-          setMotorHidro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
+          setMotorHidro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'TRUE');
         }
         // Motor 2 / Filtro
         else if (
@@ -1275,7 +1284,7 @@ export default function PoolControllerPage() {
             lowerDest.endsWith(`/${deviceId.toLowerCase()}/ID/mt2/status`)
           ))
         ) {
-          setMotorFiltro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload === '1' || payload.toUpperCase() === 'TRUE');
+          setMotorFiltro(payload.toUpperCase() === 'ON' || payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'TRUE');
         }
         // LED program
         else if (lowerDest.endsWith('/led/pg') || lowerDest.endsWith('/led/pg/state')) {
@@ -1854,7 +1863,7 @@ export default function PoolControllerPage() {
     publishTopic(`${deviceId}/ID/hidro/tmr/horas`, String(hoursVal));
     publishTopic(`${deviceId}/hidro/tmr/horas`, String(hoursVal));
 
-    alert(`Programação do Timer Hidro enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
+    alert(`Programação do Timer ${motor1Name} enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
   };
 
   // Save specific equipment
@@ -2363,7 +2372,7 @@ export default function PoolControllerPage() {
                         
                         <div className="mt-1">
                           <p className="text-[11px] text-white font-bold truncate">
-                            {filterHours !== '0' ? `Filtro: ${filterInit} (${filterHours}h)` : 'Filtro: Inativo'}
+                            {filterHours !== '0' ? `${motor2Name}: ${filterInit} (${filterHours}h)` : `${motor2Name}: Inativo`}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium truncate">
                             LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>
@@ -2380,9 +2389,9 @@ export default function PoolControllerPage() {
                         id="home-status-hidro"
                         onClick={() => setActiveScreen('aux')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
-                        title="Ver controle do Motor Hidromassagem"
+                        title={`Ver controle: ${motor1Name}`}
                       >
-                        <p className="text-[10px] text-slate-400 font-medium font-bold">MOTOR HIDRO</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate">{motor1Name}</p>
                         <p className={`text-xs font-bold mt-1 ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
                           {motorHidro ? 'LIGADO' : 'DESLIGADO'}
                         </p>
@@ -2391,9 +2400,9 @@ export default function PoolControllerPage() {
                         id="home-status-filtro"
                         onClick={() => setActiveScreen('aux')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-                        title="Ver controle do Motor Filtro"
+                        title={`Ver controle: ${motor2Name}`}
                       >
-                        <p className="text-[10px] text-slate-400 font-medium font-bold">MOTOR FILTRO</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate">{motor2Name}</p>
                         <p className={`text-xs font-bold mt-1 ${motorFiltro ? 'text-cyan-400' : 'text-slate-500'}`}>
                           {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
                         </p>
@@ -2461,8 +2470,49 @@ export default function PoolControllerPage() {
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorHidro ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
                             <Droplet className="w-4 h-4" />
                           </div>
-                          <div>
-                            <p className="text-xs font-bold text-white">Motor 01</p>
+                          <div className="flex flex-col">
+                            {isEditingM1 ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={motor1Name}
+                                  onChange={(e) => {
+                                    setMotor1Name(e.target.value);
+                                    localStorage.setItem('motor1_name', e.target.value);
+                                  }}
+                                  onBlur={() => setIsEditingM1(false)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') setIsEditingM1(false);
+                                  }}
+                                  autoFocus
+                                  maxLength={30}
+                                  className="text-xs font-bold text-white bg-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#4398fa] w-32 border border-white/20"
+                                />
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM1(false);
+                                  }} 
+                                  className="text-emerald-400 hover:text-emerald-300 p-0.5"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <p className="text-xs font-bold text-white">{motor1Name}</p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM1(true);
+                                  }}
+                                  title="Editar nome"
+                                  className="text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
@@ -2482,8 +2532,49 @@ export default function PoolControllerPage() {
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motorFiltro ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
                             <FolderSync className="w-4 h-4" />
                           </div>
-                          <div>
-                            <p className="text-xs font-bold text-white">Motor 02</p>
+                          <div className="flex flex-col">
+                            {isEditingM2 ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={motor2Name}
+                                  onChange={(e) => {
+                                    setMotor2Name(e.target.value);
+                                    localStorage.setItem('motor2_name', e.target.value);
+                                  }}
+                                  onBlur={() => setIsEditingM2(false)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') setIsEditingM2(false);
+                                  }}
+                                  autoFocus
+                                  maxLength={30}
+                                  className="text-xs font-bold text-white bg-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#4398fa] w-32 border border-white/20"
+                                />
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM2(false);
+                                  }} 
+                                  className="text-emerald-400 hover:text-emerald-300 p-0.5"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <p className="text-xs font-bold text-white">{motor2Name}</p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM2(true);
+                                  }}
+                                  title="Editar nome"
+                                  className="text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
@@ -2618,7 +2709,7 @@ export default function PoolControllerPage() {
                   {/* FILTRAGEM Card */}
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
                     <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> FILTRAGEM
+                      <Clock className="w-3.5 h-3.5" /> {motor2Name.toUpperCase()}
                     </h3>
 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-1.5 border-b border-white/5 pb-2.5">
@@ -2750,7 +2841,7 @@ export default function PoolControllerPage() {
                       onClick={handleSaveFilter}
                       className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                     >
-                      Salvar Filtro
+                      Salvar {motor2Name}
                     </button>
                   </div>
 
@@ -2815,7 +2906,7 @@ export default function PoolControllerPage() {
                   {/* TIMER HIDRO Card */}
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
                     <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> TIMER HIDRO
+                      <Clock className="w-3.5 h-3.5" /> TIMER {motor1Name.toUpperCase()}
                     </h3>
 
                     <form 
@@ -2843,7 +2934,7 @@ export default function PoolControllerPage() {
                         type="submit"
                         className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                       >
-                        Salvar Timer Hidro
+                        Salvar Timer {motor1Name}
                       </button>
                     </form>
                   </div>
