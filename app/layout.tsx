@@ -9,6 +9,26 @@ export const metadata: Metadata = {
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html lang="pt-BR" className="w-full h-[100dvh] min-h-[100dvh] overflow-hidden overscroll-behavior-none select-none">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.addEventListener('error', function(e) {
+                if (e && (e.message === 'Script error.' || (e.error && e.error.message === 'Script error.'))) {
+                  e.stopImmediatePropagation();
+                  e.preventDefault();
+                }
+              }, true);
+              window.addEventListener('unhandledrejection', function(e) {
+                if (e && e.reason && (e.reason.message === 'Script error.' || String(e.reason).includes('Script error'))) {
+                  e.stopImmediatePropagation();
+                  e.preventDefault();
+                }
+              }, true);
+            `,
+          }}
+        />
+      </head>
       <body suppressHydrationWarning className="bg-slate-950 w-full h-[100dvh] min-h-[100dvh] text-slate-100 flex items-center justify-center relative overflow-hidden overscroll-behavior-none font-sans antialiased">
         {/* Background Mesh Gradients */}
         <div className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none"></div>

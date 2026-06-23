@@ -26,7 +26,10 @@ import {
   Send,
   Terminal,
   Save,
-  Edit2
+  Edit2,
+  QrCode,
+  Camera,
+  X
 } from 'lucide-react';
 
 // TypeScript declarations for browser-loaded scripts
@@ -41,9 +44,9 @@ declare global {
 // Initial state and localStorage helpers
 const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
 const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
-const DEFAULT_DEVICE_ID = 'MM12TW-000123'; // Matches new dynamic hardware architecture prefix
+const DEFAULT_DEVICE_ID = 'MM12TW-0001'; // Matches new dynamic hardware architecture prefix
 
-// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-000123-7c9ebd1a" -> "MM12TW-000123")
+// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-0001-7c9ebd1a" -> "MM12TW-0001")
 function cleanDeviceId(id: string): string {
   if (!id) return '';
   const parts = id.trim().split('-');
@@ -119,6 +122,12 @@ export default function PoolControllerPage() {
   const [registeredEquipments, setRegisteredEquipments] = useState<{ id: string; model: 'MM12TW' | 'MM03TW' | 'MM08TSW' }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<'MM12TW' | 'MM03TW' | 'MM08TSW'>('MM12TW');
   
+  // QR Code Scanner States
+  const [isScanningQr, setIsScanningQr] = useState(false);
+  const [qrScannerError, setQrScannerError] = useState<string | null>(null);
+  const [scannedData, setScannedData] = useState<any | null>(null);
+  const qrScannerRef = useRef<any>(null);
+  
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
   const [motorFiltro, setMotorFiltro] = useState(false);
@@ -192,6 +201,7 @@ export default function PoolControllerPage() {
   const pickerContainerId = 'iro-color-picker-target';
 
   const [pahoLoaded, setPahoLoaded] = useState(false);
+  const [firebaseAppLoaded, setFirebaseAppLoaded] = useState(false);
   const [userWantsMqtt, setUserWantsMqttState] = useState(true);
   const userWantsMqttRef = useRef(true);
   
@@ -206,7 +216,11 @@ export default function PoolControllerPage() {
     setTimeout(() => {
       const storedBroker = localStorage.getItem('mqtt_broker') || DEFAULT_MQTT_BROKER;
       const storedPort = localStorage.getItem('mqtt_port') || DEFAULT_MQTT_PORT;
-      const storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
+      let storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
+      if (storedDevice === 'MM12TW-000123') {
+        storedDevice = 'MM12TW-0001';
+        localStorage.setItem('mqtt_device', 'MM12TW-0001');
+      }
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
       const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
@@ -223,15 +237,23 @@ export default function PoolControllerPage() {
       const storedEquips = localStorage.getItem('registered_equipments');
       if (storedEquips) {
         try {
-          setRegisteredEquipments(JSON.parse(storedEquips));
+          const parsed = JSON.parse(storedEquips);
+          const migrated = parsed.map((eq: any) => {
+            if (eq.id === 'MM12TW-000123') {
+              return { ...eq, id: 'MM12TW-0001' };
+            }
+            return eq;
+          });
+          setRegisteredEquipments(migrated);
+          localStorage.setItem('registered_equipments', JSON.stringify(migrated));
         } catch (e) {
           console.error(e);
         }
       } else {
         const initialEquips = [
           { id: 'MM12TW-0001', model: 'MM12TW' as const },
-          { id: 'MM03TW-1002', model: 'MM03TW' as const },
-          { id: 'MM08TSW-2004', model: 'MM08TSW' as const }
+          { id: 'MM03TW-100223', model: 'MM03TW' as const },
+          { id: 'MM08TSW-20045', model: 'MM08TSW' as const }
         ];
         setRegisteredEquipments(initialEquips);
         localStorage.setItem('registered_equipments', JSON.stringify(initialEquips));
@@ -332,6 +354,8 @@ export default function PoolControllerPage() {
     return () => clearInterval(interval);
   }, []);
 
+
+
   // 1b. Auto-connection on startup / auth resolve-reconnect loop
   useEffect(() => {
     // If we've loaded Paho and have a currentUser logged in, and user wants Mqtt
@@ -419,21 +443,6 @@ export default function PoolControllerPage() {
   // 3. Dynamic setup of Iro.js Color picker when active screen is 'led'
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    // Proactively inject the script if not already present
-    if (!window.iro) {
-      const scriptSrc = "https://cdn.jsdelivr.net/npm/@jaames/iro@5";
-      let script = document.querySelector(`script[src="${scriptSrc}"]`) as HTMLScriptElement;
-      if (!script) {
-        script = document.createElement('script');
-        script.src = scriptSrc;
-        script.async = true;
-        script.onload = () => {
-          setIroLoaded(true);
-        };
-        document.head.appendChild(script);
-      }
-    }
 
     let intervalId: any = null;
     let fallbackTimeoutId: any = null;
@@ -1202,24 +1211,36 @@ export default function PoolControllerPage() {
   function publishTopic(subTopic: string, payload: string) {
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
-        const activeCleanId = cleanDeviceId(deviceId);
-        
-        // Clean up raw deviceId with the hex suffix in the subtopic to match ESP32 deviceId topic expectations
-        let normalizedSubTopic = subTopic;
-        if (deviceId && activeCleanId && deviceId !== activeCleanId) {
-          normalizedSubTopic = subTopic.replace(new RegExp(escapeRegExp(deviceId), 'gi'), activeCleanId);
+        const rawId = (deviceId || '').trim();
+        const cleanId = cleanDeviceId(deviceId).trim();
+
+        const uniqueTopics = new Set<string>();
+
+        // 1. Add original subTopic to our list of targets
+        uniqueTopics.add(subTopic);
+
+        // 2. If rawId and cleanId differ, we generate respective alternate versions
+        if (rawId && cleanId && rawId.toLowerCase() !== cleanId.toLowerCase()) {
+          const replacedWithClean = subTopic.replace(new RegExp(escapeRegExp(rawId), 'gi'), cleanId);
+          uniqueTopics.add(replacedWithClean);
+
+          const replacedWithRaw = subTopic.replace(new RegExp(escapeRegExp(cleanId), 'gi'), rawId);
+          uniqueTopics.add(replacedWithRaw);
         }
 
+        // 3. To be absolutely sure, for each topic, ensure we send both with and without "MASTERLAZER/" prefix
         const topicsToSend = new Set<string>();
-        topicsToSend.add(normalizedSubTopic);
+        uniqueTopics.forEach((t) => {
+          topicsToSend.add(t);
+          if (t.startsWith('MASTERLAZER/')) {
+            const relativePart = t.substring('MASTERLAZER/'.length);
+            topicsToSend.add(relativePart);
+          } else {
+            topicsToSend.add(`MASTERLAZER/${t}`);
+          }
+        });
 
-        if (normalizedSubTopic.startsWith('MASTERLAZER/')) {
-          const relativePart = normalizedSubTopic.substring('MASTERLAZER/'.length);
-          topicsToSend.add(relativePart);
-        } else {
-          topicsToSend.add(`MASTERLAZER/${normalizedSubTopic}`);
-        }
-
+        // 4. Send the messages to all computed topic targets
         topicsToSend.forEach((t) => {
           try {
             const message = new window.Paho.MQTT.Message(payload);
@@ -1263,56 +1284,78 @@ export default function PoolControllerPage() {
     let nextProg = 0;
     if (currentProgram === '---') {
       nextProg = 1;
-    } else if (currentProgram < 25) {
-      nextProg = currentProgram + 1;
     } else {
-      return; // Cap at 25
+      const currentVal = typeof currentProgram === 'number' ? currentProgram : parseInt(String(currentProgram), 10);
+      if (isNaN(currentVal)) {
+        nextProg = 1;
+      } else if (currentVal < 25) {
+        nextProg = currentVal + 1;
+      } else {
+        return; // Cap at 25
+      }
     }
     setCurrentProgram(nextProg);
     const pgStr = String(nextProg);
     
-    // Core command topic
+    // 1. Direct Numeric Program Selection
     publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, pgStr);
 
-    // Fallbacks
-    publishTopic(`${deviceId}/led/pg`, pgStr);
+    // 2. Incremental Command triggers
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "INC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "INC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "INC");
+
+    // Case fallbacks
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "inc");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "inc");
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "inc");
   };
 
   const handleProgramDec = () => {
     let prevProg = 0;
     if (currentProgram === '---') {
       prevProg = 0;
-    } else if (currentProgram > 0) {
-      prevProg = currentProgram - 1;
     } else {
-      return; // Cap at 0
+      const currentVal = typeof currentProgram === 'number' ? currentProgram : parseInt(String(currentProgram), 10);
+      if (isNaN(currentVal) || currentVal <= 0) {
+        prevProg = 0; // Cap at 0
+      } else {
+        prevProg = currentVal - 1;
+      }
     }
     setCurrentProgram(prevProg);
     const pgStr = String(prevProg);
     
-    // Core command topic
+    // 1. Direct Numeric Program Selection
     publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, pgStr);
 
-    // Fallbacks
-    publishTopic(`${deviceId}/led/pg`, pgStr);
+    // 2. Decremental Command triggers
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "DEC");
+
+    // Case fallbacks
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "dec");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "dec");
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "dec");
   };
 
   const handleProgramOff = () => {
     setCurrentProgram('---');
     
-    // Core command topic
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "OFF");
-    
-    // Fallbacks
-    publishTopic(`${deviceId}/led/ctrl`, "OFF");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DESL");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "0");
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "0");
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "OFF");
   };
 
   const handleProgramSave = () => {
-    // Core command topic
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SAVE");
-
-    // Fallbacks
-    publishTopic(`${deviceId}/led/ctrl`, "SAVE");
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SALVAR");
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "SAVE");
     alert('Configuração de LED persistida em memória interna!');
   };
 
@@ -1442,9 +1485,151 @@ export default function PoolControllerPage() {
     alert(`Programação do Timer ${motor1Name} enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
   };
 
+  // Start the QR Code Scanner camera
+  const startQrScanner = async () => {
+    setQrScannerError(null);
+    setScannedData(null);
+    setIsScanningQr(true);
+
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      
+      setTimeout(() => {
+        const scannerElement = document.getElementById('qr-reader');
+        if (!scannerElement) {
+          setQrScannerError('Elemento de visualização da câmera não encontrado.');
+          return;
+        }
+
+        const html5QrCode = new Html5Qrcode('qr-reader');
+        qrScannerRef.current = html5QrCode;
+
+        html5QrCode.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: (width, height) => {
+              const size = Math.min(width, height) * 0.7;
+              return { width: size, height: size };
+            },
+            aspectRatio: 1.0,
+          },
+          (decodedText) => {
+            handleQrCodeScanned(decodedText);
+          },
+          () => {
+            // ignore verbose log
+          }
+        ).catch((err) => {
+          console.error('Erro ao iniciar a câmera:', err);
+          let userFriendlyMsg = 'Erro ao acessar a câmera. Verifique as permissões.';
+          if (String(err).includes('NotAllowedError')) {
+            userFriendlyMsg = 'Permissão de câmera negada. Ative as permissões nas configurações do seu navegador.';
+          } else if (String(err).includes('NotFoundError')) {
+            userFriendlyMsg = 'Nenhuma câmera traseira compatível encontrada no seu dispositivo.';
+          }
+          setQrScannerError(userFriendlyMsg);
+        });
+      }, 300);
+    } catch (e) {
+      console.error('Falha ao importar o scanner:', e);
+      setQrScannerError('Falha ao carregar a biblioteca do scanner.');
+    }
+  };
+
+  // Stop the QR Code Scanner camera
+  const stopQrScanner = async () => {
+    if (qrScannerRef.current) {
+      try {
+        await qrScannerRef.current.stop();
+      } catch (e) {
+        console.warn('Erro ao parar o scanner:', e);
+      }
+      qrScannerRef.current = null;
+    }
+    setIsScanningQr(false);
+  };
+
+  // Handle scanned text
+  const handleQrCodeScanned = (text: string) => {
+    try {
+      const cleanJsonStr = text.trim();
+      const parsed = JSON.parse(cleanJsonStr);
+      
+      if (!parsed.deviceId) {
+        throw new Error('JSON lido não possui a chave "deviceId".');
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(100);
+      }
+
+      setScannedData(parsed);
+      
+      // Auto-populate form
+      setBleDeviceId(parsed.deviceId);
+      
+      let finalModel: 'MM12TW' | 'MM03TW' | 'MM08TSW' = 'MM12TW';
+      if (parsed.model) {
+        const upperModel = parsed.model.toUpperCase();
+        if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
+          finalModel = upperModel as any;
+        }
+      } else {
+        const matchedModel = parsed.deviceId.match(/^(MM\d+T?S?W?)/i);
+        if (matchedModel) {
+          const upperModel = matchedModel[1].toUpperCase();
+          if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
+            finalModel = upperModel as any;
+          }
+        }
+      }
+      setSelectedEquipmentModel(finalModel);
+      stopQrScanner();
+    } catch (err) {
+      console.warn('O QR Code escaneado não é um JSON válido. Tentando texto puro...', err);
+      
+      const matchedModel = text.match(/^(MM\d+T?S?W?)/i);
+      if (matchedModel && text.length >= 5) {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          navigator.vibrate(100);
+        }
+        let finalModel: 'MM12TW' | 'MM03TW' | 'MM08TSW' = 'MM12TW';
+        const upperModel = matchedModel[1].toUpperCase();
+        if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
+          finalModel = upperModel as any;
+        }
+
+        const simulatedJson = {
+          deviceId: text.trim(),
+          model: finalModel,
+          serial: text.split('-')[1] || '',
+          manufacturer: 'MASTERLAZER'
+        };
+        setScannedData(simulatedJson);
+        setBleDeviceId(simulatedJson.deviceId);
+        setSelectedEquipmentModel(simulatedJson.model as any);
+        stopQrScanner();
+      } else {
+        setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento.');
+      }
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (qrScannerRef.current) {
+        qrScannerRef.current.stop().catch(() => {});
+      }
+    };
+  }, []);
+
   // Save specific equipment
-  const handleSaveEquipment = () => {
-    const trimmedId = bleDeviceId.trim();
+  const handleSaveEquipment = (idOverride?: string, modelOverride?: 'MM12TW' | 'MM03TW' | 'MM08TSW') => {
+    const finalId = idOverride || bleDeviceId;
+    const finalModel = modelOverride || selectedEquipmentModel;
+    const trimmedId = finalId.trim();
     if (!trimmedId) {
       alert("Por favor, digite um ID de equipamento válido.");
       return;
@@ -1454,10 +1639,10 @@ export default function PoolControllerPage() {
     const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
     let updated = [...registeredEquipments];
     if (!exists) {
-      updated.push({ id: trimmedId, model: selectedEquipmentModel });
+      updated.push({ id: trimmedId, model: finalModel });
     } else {
       // Update existing model for this ID
-      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, model: selectedEquipmentModel } : eq);
+      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, model: finalModel } : eq);
     }
     
     setRegisteredEquipments(updated);
@@ -1470,12 +1655,12 @@ export default function PoolControllerPage() {
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
       ...prev,
-      `[REGISTRO] Novo equipamento salvo: ${selectedEquipmentModel}`,
+      `[REGISTRO] Novo equipamento salvo: ${finalModel}`,
       `[REGISTRO] ID único: ${trimmedId}`,
       `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
     
-    alert(`Equipamento ${selectedEquipmentModel} com ID "${trimmedId}" salvo com sucesso e definido como ativo!`);
+    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e definido como ativo!`);
   };
 
   // Save Advanced Developer Config
@@ -1499,43 +1684,42 @@ export default function PoolControllerPage() {
 
   return (
     <div className="relative w-full max-w-[440px] h-[100dvh] sm:h-auto mx-auto p-0 sm:p-4 select-none overflow-hidden" id="pool-controller-app">
-      {/* Dynamic script injections */}
       <Script 
         src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" 
-        strategy="lazyOnload" 
+        strategy="afterInteractive" 
         onLoad={() => {
-          console.log('Paho MQTT Client injected');
+          console.log('Paho MQTT Client loaded');
           setPahoLoaded(true);
-        }} 
+        }}
       />
       <Script 
         src="https://cdn.jsdelivr.net/npm/@jaames/iro@5" 
-        strategy="lazyOnload" 
+        strategy="afterInteractive" 
         onLoad={() => {
-          console.log('Iro.js Color picker injected');
+          console.log('Iro.js Color picker loaded');
           setIroLoaded(true);
-        }} 
+        }}
       />
       <Script 
         src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"
-        strategy="lazyOnload"
+        strategy="afterInteractive"
         onLoad={() => {
           console.log('Firebase App Compat loaded');
-          if (typeof window !== 'undefined' && window.firebase && firebaseConfig.apiKey) {
-            initRealFirebase();
-          }
+          setFirebaseAppLoaded(true);
         }}
       />
-      <Script 
-        src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"
-        strategy="lazyOnload"
-        onLoad={() => {
-          console.log('Firebase Auth Compat loaded');
-          if (typeof window !== 'undefined' && window.firebase && firebaseConfig.apiKey) {
-            initRealFirebase();
-          }
-        }}
-      />
+      {firebaseAppLoaded && (
+        <Script 
+          src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"
+          strategy="afterInteractive"
+          onLoad={() => {
+            console.log('Firebase Auth Compat loaded');
+            if (typeof window !== 'undefined' && window.firebase && firebaseConfig.apiKey) {
+              initRealFirebase();
+            }
+          }}
+        />
+      )}
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
       <div className="w-full bg-white/5 backdrop-blur-xl border-0 sm:border border-white/10 rounded-none sm:rounded-[32px] overflow-hidden shadow-2xl flex flex-col h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh] relative z-20">
@@ -1581,6 +1765,7 @@ export default function PoolControllerPage() {
                     height={28}
                     className="object-contain rounded-md" 
                     referrerPolicy="no-referrer"
+                    priority
                   />
                   <div>
                     <h1 className="text-xs font-bold tracking-tight text-[#4398fa] m-1 leading-none">MASTER LAZER</h1>
@@ -2579,6 +2764,116 @@ export default function PoolControllerPage() {
                     </h3>
 
                     <div className="space-y-3.5">
+                      {/* QR Code Scan Controls */}
+                      {!isScanningQr && (
+                        <button
+                          type="button"
+                          onClick={startQrScanner}
+                          className="w-full py-2.5 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 hover:from-blue-600/35 hover:to-cyan-600/35 border border-cyan-500/20 hover:border-cyan-500/40 text-cyan-200 hover:text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <QrCode className="w-4 h-4 text-cyan-400 animate-pulse" />
+                          <span>Escanear QR Code do Equipamento</span>
+                        </button>
+                      )}
+
+                      {isScanningQr && (
+                        <div className="relative overflow-hidden bg-black/40 border border-cyan-500/30 rounded-xl p-3 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-400">
+                              <Camera className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                              <span>Escaneando QR Code...</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={stopQrScanner}
+                              className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-all cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="relative overflow-hidden rounded-lg bg-slate-950 aspect-square w-full max-w-[240px] mx-auto border border-white/5 shadow-inner flex items-center justify-center">
+                            <div id="qr-reader" className="w-full h-full overflow-hidden [&_video]:object-cover" />
+                            
+                            {/* Visual Scanner Guide Frame */}
+                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                              {/* Laser Line */}
+                              <div className="absolute w-[80%] h-[2px] bg-cyan-500 shadow-[0_0_12px_#22d3ee] animate-bounce" />
+                              
+                              {/* Glowing Corners */}
+                              <div className="absolute w-36 h-36 border border-cyan-500/15 rounded-xl flex items-center justify-center">
+                                <div className="absolute top-0 left-0 w-3.5 h-3.5 border-t-2 border-l-2 border-cyan-400" />
+                                <div className="absolute top-0 right-0 w-3.5 h-3.5 border-t-2 border-r-2 border-cyan-400" />
+                                <div className="absolute bottom-0 left-0 w-3.5 h-3.5 border-b-2 border-l-2 border-cyan-400" />
+                                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 border-b-2 border-r-2 border-cyan-400" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {qrScannerError && (
+                            <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-400 font-semibold text-center leading-normal">
+                              {qrScannerError}
+                            </div>
+                          )}
+
+                          <div className="text-[9px] text-slate-400 text-center font-medium leading-normal">
+                            Aponte a câmera para o QR Code impresso no equipamento
+                          </div>
+                        </div>
+                      )}
+
+                      {scannedData && (
+                        <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs space-y-2.5 animate-fadeIn text-left">
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-cyan-300 text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              Equipamento Detectado
+                            </span>
+                            <button 
+                              onClick={() => setScannedData(null)}
+                              className="text-[9px] text-slate-400 hover:text-white transition-all underline"
+                            >
+                              Limpar
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[10px] font-semibold bg-slate-950/45 p-2.5 rounded-lg border border-cyan-500/5">
+                            <div>
+                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">ID do Equipamento</span>
+                              <span className="text-cyan-200 font-mono">{scannedData.deviceId}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Modelo</span>
+                              <span className="text-cyan-200">{scannedData.model || 'Não especificado'}</span>
+                            </div>
+                            {scannedData.serial && (
+                              <div>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Número de Série</span>
+                                <span className="text-cyan-200 font-mono">{scannedData.serial}</span>
+                              </div>
+                            )}
+                            {scannedData.manufacturer && (
+                              <div>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Fabricante</span>
+                                <span className="text-cyan-200">{scannedData.manufacturer}</span>
+                              </div>
+                            )}
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleSaveEquipment(scannedData.deviceId, scannedData.model);
+                              setScannedData(null);
+                            }}
+                            className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>Confirmar e Ativar Equipamento</span>
+                          </button>
+                        </div>
+                      )}
+
                       {/* Form rows */}
 
                       <div className="grid grid-cols-2 gap-3">
@@ -2610,7 +2905,7 @@ export default function PoolControllerPage() {
                       <div>
                         <button
                           type="button"
-                          onClick={handleSaveEquipment}
+                          onClick={() => handleSaveEquipment()}
                           className="w-full py-2 bg-[#007AFF] hover:bg-[#0055CC] active:scale-[0.98] text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <Save className="w-3.5 h-3.5" />
