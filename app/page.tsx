@@ -43,6 +43,21 @@ const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
 const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
 const DEFAULT_DEVICE_ID = 'MM12TW-000123'; // Matches new dynamic hardware architecture prefix
 
+// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-000123-7c9ebd1a" -> "MM12TW-000123")
+function cleanDeviceId(id: string): string {
+  if (!id) return '';
+  const parts = id.trim().split('-');
+  // If there are 3 parts or more, the last part is the EfuseMac hex suffix
+  if (parts.length >= 3) {
+    return parts.slice(0, parts.length - 1).join('-');
+  }
+  return id;
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Official logo component using the exact image from the official Master Lazer website (scaled to 1.5x default):
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
@@ -341,6 +356,19 @@ export default function PoolControllerPage() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt, mqttConnected]);
+
+  // 1d. Reconnect MQTT whenever active deviceId changes to update subscriptions
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
+      console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
+      disconnectMQTT();
+      const t = setTimeout(() => {
+        connectMQTT();
+      }, 300);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceId]);
 
   // 2. Initialize Firebase SDK once scripts/config resolved
   const initRealFirebase = () => {
@@ -725,8 +753,47 @@ export default function PoolControllerPage() {
         const payload = (message.payloadString || '').trim();
         console.log('Received Message From Hardware:', dest, payload);
 
+        const cleanActiveId = cleanDeviceId(deviceId).toLowerCase();
+        const rawActiveId = (deviceId || '').toLowerCase().trim();
+
+        // Identify device and relative topic
+        let devicePartOfMessage = '';
+        let relativeTopic = dest;
+
+        if (dest.toUpperCase().startsWith('MASTERLAZER/')) {
+          const parts = dest.split('/');
+          if (parts.length >= 2) {
+            devicePartOfMessage = parts[1];
+            relativeTopic = parts.slice(2).join('/');
+          }
+        } else {
+          const parts = dest.split('/');
+          if (parts.length >= 1) {
+            devicePartOfMessage = parts[0];
+            relativeTopic = parts.slice(1).join('/');
+          }
+        }
+
+        const cleanMsgDeviceId = cleanDeviceId(devicePartOfMessage).toLowerCase();
+        const rawMsgDeviceId = devicePartOfMessage.toLowerCase().trim();
+
+        // Verify this message is indeed for our current active device context
+        const isTargetDevice = (
+          cleanMsgDeviceId === cleanActiveId || 
+          rawMsgDeviceId === rawActiveId || 
+          cleanMsgDeviceId === rawActiveId ||
+          rawMsgDeviceId === cleanActiveId
+        );
+
+        if (!isTargetDevice) {
+          // Message belongs to another device sequence, ignore
+          return;
+        }
+
+        const lowerRelative = relativeTopic.toLowerCase();
+
         // Listening to Alarms
-        if (dest === `${deviceId}/solar/erro`) {
+        if (lowerRelative === 'solar/erro') {
           setSolarErrorBanner(payload);
           return;
         }
@@ -804,43 +871,33 @@ export default function PoolControllerPage() {
           }
         }
 
-        // Individual topic parsed fallback
-        const mqttBase = `MASTERLAZER/${deviceId}`;
-        const lowerDest = dest.toLowerCase();
-        const basePref = mqttBase.toLowerCase();
-        const prevPref = `${deviceId.toLowerCase()}`;
-
         // 1. Listen for device status (online / offline)
-        if (
-          lowerDest === `${basePref}/status` || 
-          lowerDest === `${prevPref}/status` ||
-          dest === `${mqttBase}/status`
-        ) {
+        if (lowerRelative === 'status' || lowerRelative === 'state') {
           const isOnline = payload === 'online' || payload === '1' || payload.toUpperCase() === 'ON';
           setDeviceOnline(isOnline);
           return;
         }
 
         // 2. Listen for equipment info topics
-        if (lowerDest === `${basePref}/info/ip` || lowerDest === `${prevPref}/info/ip` || dest === `${mqttBase}/info/ip`) {
+        if (lowerRelative === 'info/ip') {
           setDeviceIp(payload);
           return;
         }
-        if (lowerDest === `${basePref}/info/mac` || lowerDest === `${prevPref}/info/mac` || dest === `${mqttBase}/info/mac`) {
+        if (lowerRelative === 'info/mac') {
           setDeviceMac(payload);
           return;
         }
-        if (lowerDest === `${basePref}/info/modelo` || lowerDest === `${prevPref}/info/modelo` || dest === `${mqttBase}/info/modelo`) {
+        if (lowerRelative === 'info/modelo') {
           setDeviceModelo(payload);
           return;
         }
-        if (lowerDest === `${basePref}/info/serial` || lowerDest === `${prevPref}/info/serial` || dest === `${mqttBase}/info/serial`) {
+        if (lowerRelative === 'info/serial') {
           setDeviceSerial(payload);
           return;
         }
         
         // 3. Listen for Filtration Timer config
-        if (lowerDest === `${basePref}/ft/cfg` || dest === `${mqttBase}/ft/cfg`) {
+        if (lowerRelative === 'ft/cfg') {
           try {
             const timerData = JSON.parse(payload);
             if (timerData.start) {
@@ -859,7 +916,7 @@ export default function PoolControllerPage() {
         }
 
         // 4. Listen for LED Timer config
-        if (lowerDest === `${basePref}/led/tmr/cfg` || dest === `${mqttBase}/led/tmr/cfg`) {
+        if (lowerRelative === 'led/tmr/cfg') {
           try {
             const ledTimerData = JSON.parse(payload);
             if (ledTimerData.start) {
@@ -879,35 +936,42 @@ export default function PoolControllerPage() {
           return;
         }
 
+        // 5. Listen for Hidro Timer config
+        if (lowerRelative === 'hidro/tmr/cfg') {
+          try {
+            const hidroTimerData = JSON.parse(payload);
+            if (hidroTimerData.hours !== undefined) {
+              setHidroTimerHours(String(hidroTimerData.hours));
+            }
+            if (hidroTimerData.enabled !== undefined) {
+              setHidroTimerEnabled(hidroTimerData.enabled);
+            }
+          } catch (err) {
+            console.warn('Erro ao decodificar hidro/tmr/cfg JSON:', err);
+          }
+          return;
+        }
+
         // Motor 1 / Hidro
-        if (
-          lowerDest === `${basePref}/mt1` ||
-          lowerDest === `${basePref}/mt1/state` ||
-          dest === `${mqttBase}/mt1` ||
-          dest === `${mqttBase}/mt1/state`
-        ) {
-          setMotorHidro(payload.toUpperCase() === 'ON' || 
-          payload.toUpperCase() === 'LIG' || 
-          payload.toUpperCase() === 'TRUE'||
-          payload === '1');
+        if (lowerRelative === 'mt1' || lowerRelative === 'mt1/state') {
+          setMotorHidro(
+            payload.toUpperCase() === 'ON' || 
+            payload.toUpperCase() === 'LIG' || 
+            payload.toUpperCase() === 'TRUE' ||
+            payload === '1'
+          );
         }
         // Motor 2 / Filtro
-        else if (
-          lowerDest === `${basePref}/mt2` ||
-          lowerDest === `${basePref}/mt2/state` ||
-          dest === `${mqttBase}/mt2` ||
-          dest === `${mqttBase}/mt2/state`
-        ) {
-          setMotorFiltro(payload.toUpperCase() === 'ON' || 
-          payload.toUpperCase() === 'LIG' || 
-          payload.toUpperCase() === 'TRUE'||
-          payload === '1');
+        else if (lowerRelative === 'mt2' || lowerRelative === 'mt2/state') {
+          setMotorFiltro(
+            payload.toUpperCase() === 'ON' || 
+            payload.toUpperCase() === 'LIG' || 
+            payload.toUpperCase() === 'TRUE' ||
+            payload === '1'
+          );
         }
         // LED program
-        else if (
-          lowerDest === `${basePref}/led/pg` ||
-          dest === `${mqttBase}/led/pg`
-        ) {
+        else if (lowerRelative === 'led/pg') {
           const pgVal = parseInt(payload);
           if (!isNaN(pgVal)) {
             setCurrentProgram(pgVal);
@@ -916,10 +980,7 @@ export default function PoolControllerPage() {
           }
         }
         // LED Control
-        else if (
-          lowerDest === `${basePref}/led/ctrl` ||
-          dest === `${mqttBase}/led/ctrl`
-        ) {
+        else if (lowerRelative === 'led/ctrl' || lowerRelative === 'led/state') {
           if (payload.toUpperCase() === 'DESL' || payload.toUpperCase() === 'OFF' || payload === '0') {
             setCurrentProgram('---');
           } else if (payload.toUpperCase() === 'LIG' || payload.toUpperCase() === 'ON' || payload === '1') {
@@ -929,11 +990,7 @@ export default function PoolControllerPage() {
           }
         }
         // LED RGB colors feedback
-        else if (
-          lowerDest === `${basePref}/pwm/r` ||
-          lowerDest === `${basePref}/led/r` ||
-          dest === `${mqttBase}/pwm/r`
-        ) {
+        else if (lowerRelative === 'pwm/r' || lowerRelative === 'led/r') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -945,11 +1002,7 @@ export default function PoolControllerPage() {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
-        } else if (
-          lowerDest === `${basePref}/pwm/g` ||
-          lowerDest === `${basePref}/led/g` ||
-          dest === `${mqttBase}/pwm/g`
-        ) {
+        } else if (lowerRelative === 'pwm/g' || lowerRelative === 'led/g') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -961,11 +1014,7 @@ export default function PoolControllerPage() {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
-        } else if (
-          lowerDest === `${basePref}/pwm/b` ||
-          lowerDest === `${basePref}/led/b` ||
-          dest === `${mqttBase}/pwm/b`
-        ) {
+        } else if (lowerRelative === 'pwm/b' || lowerRelative === 'led/b') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
@@ -994,8 +1043,31 @@ export default function PoolControllerPage() {
             reconnectTimeoutRef.current = null;
           }
           
+          const activeCleanId = cleanDeviceId(deviceId);
+
           // Subscribe to target topics to monitor LED and AUX hardware status
           const topicsToSubscribe = [
+            `MASTERLAZER/${activeCleanId}/status`,
+            `MASTERLAZER/${activeCleanId}/info/ip`,
+            `MASTERLAZER/${activeCleanId}/info/mac`,
+            `MASTERLAZER/${activeCleanId}/info/modelo`,
+            `MASTERLAZER/${activeCleanId}/info/serial`,
+            `MASTERLAZER/${activeCleanId}/mt1`,
+            `MASTERLAZER/${activeCleanId}/mt2`,
+            `MASTERLAZER/${activeCleanId}/mt1/state`,
+            `MASTERLAZER/${activeCleanId}/mt2/state`,
+            `MASTERLAZER/${activeCleanId}/led/pg`,
+            `MASTERLAZER/${activeCleanId}/led/ctrl`,
+            `MASTERLAZER/${activeCleanId}/led/state`,
+            `MASTERLAZER/${activeCleanId}/pwm/r`,
+            `MASTERLAZER/${activeCleanId}/pwm/g`,
+            `MASTERLAZER/${activeCleanId}/pwm/b`,
+            `MASTERLAZER/${activeCleanId}/solar/erro`,
+            `MASTERLAZER/${activeCleanId}/state`,
+            `MASTERLAZER/${activeCleanId}/ft/cfg`,
+            `MASTERLAZER/${activeCleanId}/led/tmr/cfg`,
+            `MASTERLAZER/${activeCleanId}/hidro/tmr/cfg`,
+
             `MASTERLAZER/${deviceId}/status`,
             `MASTERLAZER/${deviceId}/info/ip`,
             `MASTERLAZER/${deviceId}/info/mac`,
@@ -1005,8 +1077,6 @@ export default function PoolControllerPage() {
             `MASTERLAZER/${deviceId}/mt2`,
             `MASTERLAZER/${deviceId}/mt1/state`,
             `MASTERLAZER/${deviceId}/mt2/state`,
-            `MASTERLAZER/${deviceId}/ID/mt1`,
-            `MASTERLAZER/${deviceId}/ID/mt2`,
             `MASTERLAZER/${deviceId}/led/pg`,
             `MASTERLAZER/${deviceId}/led/ctrl`,
             `MASTERLAZER/${deviceId}/led/state`,
@@ -1014,36 +1084,10 @@ export default function PoolControllerPage() {
             `MASTERLAZER/${deviceId}/pwm/g`,
             `MASTERLAZER/${deviceId}/pwm/b`,
             `MASTERLAZER/${deviceId}/solar/erro`,
-            `${deviceId}/solar/erro`,
-            `${deviceId}/ID/mt1`,
-            `${deviceId}/ID/mt2`,
-            `${deviceId}/mt1`,
-            `${deviceId}/mt2`,
-            `${deviceId}/ID/mt1/state`,
-            `${deviceId}/ID/mt2/state`,
-            `${deviceId}/ID/mt1/status`,
-            `${deviceId}/ID/mt2/status`,
-            `${deviceId}/ID/led/pg`,
-            `${deviceId}/ID/led/ctrl`,
-            `${deviceId}/led/pg`,
-            `${deviceId}/led/ctrl`,
-            `${deviceId}/ID/led/state`,
-            `${deviceId}/led/state`,
-            `${deviceId}/ID/led/r`,
-            `${deviceId}/ID/led/g`,
-            `${deviceId}/ID/led/b`,
-            `${deviceId}/ID/pwm/r`,
-            `${deviceId}/ID/pwm/g`,
-            `${deviceId}/ID/pwm/b`,
-            `${deviceId}/pwm/r`,
-            `${deviceId}/pwm/g`,
-            `MASTERLAZER/${deviceId}/status`,
             `MASTERLAZER/${deviceId}/state`,
-            `${deviceId}/pwm/b`,
-            `${deviceId}/status`,
-            `${deviceId}/state`,
-            `${deviceId}/ID/status`,
-            `${deviceId}/ID/state`
+            `MASTERLAZER/${deviceId}/ft/cfg`,
+            `MASTERLAZER/${deviceId}/led/tmr/cfg`,
+            `MASTERLAZER/${deviceId}/hidro/tmr/cfg`
           ];
 
           topicsToSubscribe.forEach((t) => {
@@ -1057,18 +1101,12 @@ export default function PoolControllerPage() {
 
           // Send query commands to request immediate status update from hardware
           const queryTopics = [
+            `MASTERLAZER/${activeCleanId}/get`,
+            `MASTERLAZER/${activeCleanId}/cmd`,
+            `MASTERLAZER/${activeCleanId}/status/get`,
             `MASTERLAZER/${deviceId}/get`,
-            `MASTERLAZER/${deviceId}/ID/get`,
             `MASTERLAZER/${deviceId}/cmd`,
-            `MASTERLAZER/${deviceId}/status/get`,
-            `${deviceId}/ID/get`,
-            `${deviceId}/get`,
-            `${deviceId}/ID/cmd`,
-            `${deviceId}/cmd`,
-            `${deviceId}/ID/ctrl`,
-            `${deviceId}/ctrl`,
-            `${deviceId}/ID/status/get`,
-            `${deviceId}/status/get`
+            `MASTERLAZER/${deviceId}/status/get`
           ];
 
           queryTopics.forEach((qt) => {
@@ -1164,14 +1202,22 @@ export default function PoolControllerPage() {
   function publishTopic(subTopic: string, payload: string) {
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
-        const topicsToSend = new Set<string>();
-        topicsToSend.add(subTopic);
+        const activeCleanId = cleanDeviceId(deviceId);
+        
+        // Clean up raw deviceId with the hex suffix in the subtopic to match ESP32 deviceId topic expectations
+        let normalizedSubTopic = subTopic;
+        if (deviceId && activeCleanId && deviceId !== activeCleanId) {
+          normalizedSubTopic = subTopic.replace(new RegExp(escapeRegExp(deviceId), 'gi'), activeCleanId);
+        }
 
-        if (subTopic.startsWith('MASTERLAZER/')) {
-          const relativePart = subTopic.substring('MASTERLAZER/'.length);
+        const topicsToSend = new Set<string>();
+        topicsToSend.add(normalizedSubTopic);
+
+        if (normalizedSubTopic.startsWith('MASTERLAZER/')) {
+          const relativePart = normalizedSubTopic.substring('MASTERLAZER/'.length);
           topicsToSend.add(relativePart);
         } else {
-          topicsToSend.add(`MASTERLAZER/${subTopic}`);
+          topicsToSend.add(`MASTERLAZER/${normalizedSubTopic}`);
         }
 
         topicsToSend.forEach((t) => {
@@ -1230,8 +1276,6 @@ export default function PoolControllerPage() {
 
     // Fallbacks
     publishTopic(`${deviceId}/led/pg`, pgStr);
-    publishTopic(`MASTERLAZER/${deviceId}/ID/led/pg`, pgStr);
-    publishTopic(`${deviceId}/ID/led/pg`, pgStr);
   };
 
   const handleProgramDec = () => {
@@ -1251,8 +1295,6 @@ export default function PoolControllerPage() {
 
     // Fallbacks
     publishTopic(`${deviceId}/led/pg`, pgStr);
-    publishTopic(`MASTERLAZER/${deviceId}/ID/led/pg`, pgStr);
-    publishTopic(`${deviceId}/ID/led/pg`, pgStr);
   };
 
   const handleProgramOff = () => {
@@ -1263,8 +1305,6 @@ export default function PoolControllerPage() {
     
     // Fallbacks
     publishTopic(`${deviceId}/led/ctrl`, "OFF");
-    publishTopic(`MASTERLAZER/${deviceId}/ID/led/ctrl`, "OFF");
-    publishTopic(`${deviceId}/ID/led/ctrl`, "OFF");
   };
 
   const handleProgramSave = () => {
@@ -1273,8 +1313,6 @@ export default function PoolControllerPage() {
 
     // Fallbacks
     publishTopic(`${deviceId}/led/ctrl`, "SAVE");
-    publishTopic(`MASTERLAZER/${deviceId}/ID/led/ctrl`, "SAVE");
-    publishTopic(`${deviceId}/ID/led/ctrl`, "SAVE");
     alert('Configuração de LED persistida em memória interna!');
   };
 
@@ -1319,8 +1357,6 @@ export default function PoolControllerPage() {
 
     // 2. Publish compatibility formats
     publishTopic(`${deviceId}/ft/cfg`, JSON.stringify(extendedData));
-    publishTopic(`MASTERLAZER/${deviceId}/ID/ft/cfg`, JSON.stringify(extendedData));
-    publishTopic(`${deviceId}/ID/ft/cfg`, JSON.stringify(extendedData));
 
     // Individual topics publish
     publishTopic(`MASTERLAZER/${deviceId}/ft/start`, startingTime);
@@ -1354,8 +1390,6 @@ export default function PoolControllerPage() {
 
     // 2. Publish compatibility formats
     publishTopic(`${deviceId}/led/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`MASTERLAZER/${deviceId}/ID/led/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ID/led/tmr/cfg`, JSON.stringify(data));
 
     // Publish individual parameters to simplify Arduino / ESP logic
     
@@ -1396,8 +1430,6 @@ export default function PoolControllerPage() {
 
     // 2. Publish compatibility formats
     publishTopic(`${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`MASTERLAZER/${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/ID/hidro/tmr/cfg`, JSON.stringify(data));
 
     // Publish individual parameters
     publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
@@ -2601,6 +2633,68 @@ export default function PoolControllerPage() {
                                 {line}
                               </div>
                             ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* List of registered equipment if exists */}
+                      {registeredEquipments.length > 0 && (
+                        <div className="pt-2.5 border-t border-white/5 space-y-2">
+                          <label className="text-[10px] text-slate-300 font-extrabold block uppercase tracking-wider">Meus Equipamentos Cadastrados</label>
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                            {registeredEquipments.map((eq) => {
+                              const isActive = eq.id.toLowerCase() === deviceId.toLowerCase();
+                              return (
+                                <div 
+                                  key={eq.id} 
+                                  className={`flex items-center justify-between p-2 rounded-xl transition-all border ${
+                                    isActive 
+                                      ? 'bg-gradient-to-r from-[#007AFF]/10 to-[#4398fa]/10 border-[#007AFF]/30 shadow-sm' 
+                                      : 'bg-white/5 border-transparent hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono text-xs font-bold text-white truncate">{eq.id}</span>
+                                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-extrabold text-[#4398fa]">{eq.model}</span>
+                                    </div>
+                                    <p className="text-[9px] text-slate-400 font-semibold">
+                                      {isActive ? 'Equipamento selecionado' : 'Conexão offline/disponível'}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {!isActive && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDeviceId(eq.id);
+                                          localStorage.setItem('mqtt_device', eq.id);
+                                        }}
+                                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer"
+                                      >
+                                        Ativar
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const filtered = registeredEquipments.filter(item => item.id !== eq.id);
+                                        setRegisteredEquipments(filtered);
+                                        localStorage.setItem('registered_equipments', JSON.stringify(filtered));
+                                        if (isActive && filtered.length > 0) {
+                                          setDeviceId(filtered[0].id);
+                                          localStorage.setItem('mqtt_device', filtered[0].id);
+                                        }
+                                      }}
+                                      className="p-1 px-2 text-slate-400 hover:text-rose-400 transition-colors font-bold text-xs cursor-pointer"
+                                      title="Excluir equipamento"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
