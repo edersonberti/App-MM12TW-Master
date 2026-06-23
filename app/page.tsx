@@ -118,9 +118,18 @@ export default function PoolControllerPage() {
   const [bleDeviceId, setBleDeviceId] = useState('MM12TW-0001');
   const [bleLog, setBleLog] = useState<string[]>([]);
 
-  // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW)
-  const [registeredEquipments, setRegisteredEquipments] = useState<{ id: string; model: 'MM12TW' | 'MM03TW' | 'MM08TSW' }[]>([]);
-  const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<'MM12TW' | 'MM03TW' | 'MM08TSW'>('MM12TW');
+  // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW or custom from QR)
+  const [registeredEquipments, setRegisteredEquipments] = useState<{ 
+    id: string; 
+    model: string; 
+    serial?: string; 
+    manufacturer?: string; 
+    userEmail?: string; 
+    userPassword?: string;
+  }[]>([]);
+  const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
+  const [equipmentSerial, setEquipmentSerial] = useState<string>('');
+  const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
   
   // QR Code Scanner States
   const [isScanningQr, setIsScanningQr] = useState(false);
@@ -204,6 +213,7 @@ export default function PoolControllerPage() {
   const [firebaseAppLoaded, setFirebaseAppLoaded] = useState(false);
   const [userWantsMqtt, setUserWantsMqttState] = useState(true);
   const userWantsMqttRef = useRef(true);
+  const lastMessageTimeRef = useRef<number>(0);
   
   const setUserWantsMqtt = (val: boolean) => {
     userWantsMqttRef.current = val;
@@ -383,6 +393,16 @@ export default function PoolControllerPage() {
 
   // 1d. Reconnect MQTT whenever active deviceId changes to update subscriptions
   useEffect(() => {
+    // Reset device specific metrics on ID change to avoid showing old values wrapped in setTimeout to prevent cascading render error
+    setTimeout(() => {
+      setDeviceIp('---');
+      setDeviceMac('---');
+      setDeviceModelo('---');
+      setDeviceSerial('---');
+      setDeviceOnline(null);
+    }, 0);
+    lastMessageTimeRef.current = 0;
+
     if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
       console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
       disconnectMQTT();
@@ -393,6 +413,20 @@ export default function PoolControllerPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId]);
+
+  // 1e. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = setInterval(() => {
+      if (mqttConnected && deviceOnline === true && lastMessageTimeRef.current > 0) {
+        if (Date.now() - lastMessageTimeRef.current > 15000) {
+          console.log('No telemetry received from device in 15 seconds. Marking device as OFFLINE.');
+          setDeviceOnline(false);
+        }
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [mqttConnected, deviceOnline]);
 
   // 2. Initialize Firebase SDK once scripts/config resolved
   const initRealFirebase = () => {
@@ -634,7 +668,7 @@ export default function PoolControllerPage() {
         });
         
         if (matched || (cleanEmail === 'admin@admin.com' && cleanPassword === '12345678') || (cleanEmail === 'edersonbatistabertirs@gmail.com' && cleanPassword === '12345678')) { // default dev shortcuts
-          const loggedUser = { email: cleanEmail, uid: matched?.uid || 'sim-admin-id' };
+          const loggedUser = { email: cleanEmail, password: cleanPassword, uid: matched?.uid || 'sim-admin-id' };
           localStorage.setItem('sim_user', JSON.stringify(loggedUser));
           setCurrentUser(loggedUser);
           setActiveScreen('home');
@@ -650,8 +684,8 @@ export default function PoolControllerPage() {
           if (storedUsers[existingIdx].password === '12345678') {
             storedUsers[existingIdx].password = cleanPassword;
             localStorage.setItem('sim_users', JSON.stringify(storedUsers));
-            localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, uid: storedUsers[existingIdx].uid }));
-            setCurrentUser({ email: cleanEmail, uid: storedUsers[existingIdx].uid });
+            localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid }));
+            setCurrentUser({ email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid });
             alert('Sua conta pré-cadastrada foi personalizada e ativada com sucesso!');
             setActiveScreen('home');
             return;
@@ -663,8 +697,8 @@ export default function PoolControllerPage() {
         storedUsers.push(newUser);
         localStorage.setItem('sim_users', JSON.stringify(storedUsers));
         
-        localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, uid: newUser.uid }));
-        setCurrentUser({ email: cleanEmail, uid: newUser.uid });
+        localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, password: cleanPassword, uid: newUser.uid }));
+        setCurrentUser({ email: cleanEmail, password: cleanPassword, uid: newUser.uid });
         alert('Conta criada com sucesso no sistema local!');
         setActiveScreen('home');
       }
@@ -801,6 +835,12 @@ export default function PoolControllerPage() {
 
         const lowerRelative = relativeTopic.toLowerCase();
 
+        // Any telemetry received from the active device indicates it is powered on and sending data
+        lastMessageTimeRef.current = Date.now();
+        if (lowerRelative !== 'status' && lowerRelative !== 'state') {
+          setDeviceOnline(true);
+        }
+
         // Listening to Alarms
         if (lowerRelative === 'solar/erro') {
           setSolarErrorBanner(payload);
@@ -884,6 +924,9 @@ export default function PoolControllerPage() {
         if (lowerRelative === 'status' || lowerRelative === 'state') {
           const isOnline = payload === 'online' || payload === '1' || payload.toUpperCase() === 'ON';
           setDeviceOnline(isOnline);
+          if (!isOnline) {
+            lastMessageTimeRef.current = 0; // Device explicitly told us it is offline
+          }
           return;
         }
 
@@ -1569,22 +1612,29 @@ export default function PoolControllerPage() {
       // Auto-populate form
       setBleDeviceId(parsed.deviceId);
       
-      let finalModel: 'MM12TW' | 'MM03TW' | 'MM08TSW' = 'MM12TW';
+      let finalModel = 'MM12TW';
       if (parsed.model) {
-        const upperModel = parsed.model.toUpperCase();
-        if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
-          finalModel = upperModel as any;
-        }
+        finalModel = parsed.model;
       } else {
         const matchedModel = parsed.deviceId.match(/^(MM\d+T?S?W?)/i);
         if (matchedModel) {
-          const upperModel = matchedModel[1].toUpperCase();
-          if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
-            finalModel = upperModel as any;
-          }
+          finalModel = matchedModel[1].toUpperCase();
         }
       }
       setSelectedEquipmentModel(finalModel);
+      
+      if (parsed.serial) {
+        setEquipmentSerial(parsed.serial);
+      } else {
+        setEquipmentSerial('');
+      }
+      
+      if (parsed.manufacturer) {
+        setEquipmentManufacturer(parsed.manufacturer);
+      } else {
+        setEquipmentManufacturer('MASTERLAZER');
+      }
+
       stopQrScanner();
     } catch (err) {
       console.warn('O QR Code escaneado não é um JSON válido. Tentando texto puro...', err);
@@ -1594,10 +1644,10 @@ export default function PoolControllerPage() {
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
           navigator.vibrate(100);
         }
-        let finalModel: 'MM12TW' | 'MM03TW' | 'MM08TSW' = 'MM12TW';
-        const upperModel = matchedModel[1].toUpperCase();
-        if (upperModel === 'MM12TW' || upperModel === 'MM03TW' || upperModel === 'MM08TSW') {
-          finalModel = upperModel as any;
+        let finalModel = 'MM12TW';
+        const matched = text.match(/^(MM\d+T?S?W?)/i);
+        if (matched) {
+          finalModel = matched[1].toUpperCase();
         }
 
         const simulatedJson = {
@@ -1608,7 +1658,9 @@ export default function PoolControllerPage() {
         };
         setScannedData(simulatedJson);
         setBleDeviceId(simulatedJson.deviceId);
-        setSelectedEquipmentModel(simulatedJson.model as any);
+        setSelectedEquipmentModel(simulatedJson.model);
+        setEquipmentSerial(simulatedJson.serial);
+        setEquipmentManufacturer(simulatedJson.manufacturer);
         stopQrScanner();
       } else {
         setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento.');
@@ -1626,23 +1678,40 @@ export default function PoolControllerPage() {
   }, []);
 
   // Save specific equipment
-  const handleSaveEquipment = (idOverride?: string, modelOverride?: 'MM12TW' | 'MM03TW' | 'MM08TSW') => {
+  const handleSaveEquipment = (idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) => {
     const finalId = idOverride || bleDeviceId;
     const finalModel = modelOverride || selectedEquipmentModel;
+    const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
+    const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
+    
     const trimmedId = finalId.trim();
     if (!trimmedId) {
       alert("Por favor, digite um ID de equipamento válido.");
       return;
     }
     
+    // Retrieve currently logged-in user's email and password
+    const userEmail = currentUser?.email || '';
+    const userPassword = currentUser?.password || '';
+    
     // Check if equipment is already in registered list
     const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
     let updated = [...registeredEquipments];
+    
+    const newItem = {
+      id: trimmedId,
+      model: finalModel,
+      serial: finalSerial,
+      manufacturer: finalManufacturer,
+      userEmail,
+      userPassword
+    };
+    
     if (!exists) {
-      updated.push({ id: trimmedId, model: finalModel });
+      updated.push(newItem);
     } else {
-      // Update existing model for this ID
-      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, model: finalModel } : eq);
+      // Update existing entry for this ID
+      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, ...newItem } : eq);
     }
     
     setRegisteredEquipments(updated);
@@ -1655,12 +1724,15 @@ export default function PoolControllerPage() {
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
       ...prev,
-      `[REGISTRO] Novo equipamento salvo: ${finalModel}`,
+      `[REGISTRO] Equipamento salvo: ${finalModel}`,
       `[REGISTRO] ID único: ${trimmedId}`,
+      `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
+      `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
+      `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
       `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
     
-    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e definido como ativo!`);
+    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
   };
 
   // Save Advanced Developer Config
@@ -2863,7 +2935,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              handleSaveEquipment(scannedData.deviceId, scannedData.model);
+                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer);
                               setScannedData(null);
                             }}
                             className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -2874,44 +2946,7 @@ export default function PoolControllerPage() {
                         </div>
                       )}
 
-                      {/* Form rows */}
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">ID do Equipamento</label>
-                          <input
-                            type="text"
-                            placeholder="ex: MM12TW-0001"
-                            value={bleDeviceId}
-                            onChange={(e) => setBleDeviceId(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#007AFF] focus:bg-white/10 transition-all font-semibold"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Selecione o modelo</label>
-                          <select
-                            value={selectedEquipmentModel}
-                            onChange={(e) => setSelectedEquipmentModel(e.target.value as any)}
-                            className="w-full px-2 py-1.5 bg-[#1C1C1E] border border-white/10 rounded-lg text-xs font-semibold text-white focus:outline-none focus:border-[#007AFF] focus:bg-[#2C2C2E] transition-all cursor-pointer h-[34px]"
-                          >
-                            <option value="MM12TW" className="bg-[#1C1C1E] text-white">MM12TW</option>
-                            <option value="MM03TW" className="bg-[#1C1C1E] text-white">MM03TW</option>
-                            <option value="MM08TSW" className="bg-[#1C1C1E] text-white">MM08TSW</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Salvar Button (Incluir ainda um botão "Salvar" - Cada equipamento irá possuir um ID único quando for cadastrado) */}
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => handleSaveEquipment()}
-                          className="w-full py-2 bg-[#007AFF] hover:bg-[#0055CC] active:scale-[0.98] text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Salvar</span>
-                        </button>
-                      </div>
 
                       {/* Technical logging screen / Terminal output console */}
                       {bleLog.length > 0 && (
@@ -2949,13 +2984,27 @@ export default function PoolControllerPage() {
                                   }`}
                                 >
                                   <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-mono text-xs font-bold text-white truncate">{eq.id}</span>
                                       <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-extrabold text-[#4398fa]">{eq.model}</span>
                                     </div>
-                                    <p className="text-[9px] text-slate-400 font-semibold">
-                                      {isActive ? 'Equipamento selecionado' : 'Conexão offline/disponível'}
-                                    </p>
+                                    <div className="mt-1 flex flex-col gap-0.5 text-left">
+                                      {(eq.serial || eq.manufacturer) && (
+                                        <p className="text-[9px] text-slate-400 font-semibold">
+                                          Série: <span className="font-mono text-slate-300">{eq.serial || 'N/A'}</span> • Fab: <span className="text-slate-300">{eq.manufacturer || 'N/A'}</span>
+                                        </p>
+                                      )}
+                                      {eq.userEmail && (
+                                        <p className="text-[8.5px] text-cyan-400/90 font-semibold flex items-center gap-1">
+                                          <span className="inline-block w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                                          Usuário: <span className="font-mono text-cyan-300">{eq.userEmail}</span> 
+                                          {eq.userPassword ? ' (Credenciais OK)' : ''}
+                                        </p>
+                                      )}
+                                      <p className="text-[9px] text-slate-500 font-semibold mt-0.5">
+                                        {isActive ? 'Equipamento selecionado' : 'Conexão offline/disponível'}
+                                      </p>
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
                                     {!isActive && (
