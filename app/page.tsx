@@ -44,9 +44,9 @@ declare global {
 // Initial state and localStorage helpers
 const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
 const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
-const DEFAULT_DEVICE_ID = 'MM12TW-0001'; // Matches new dynamic hardware architecture prefix
+const DEFAULT_DEVICE_ID = 'MM03TW-1002'; // Matches new dynamic hardware architecture prefix
 
-// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-0001-7c9ebd1a" -> "MM12TW-0001")
+// Strips off any hex/efuse MAC suffix if present (e.g., "MM03TW-1002-7c9ebd1a" -> "MM03TW-1002")
 function cleanDeviceId(id: string): string {
   if (!id) return '';
   const parts = id.trim().split('-');
@@ -115,7 +115,7 @@ export default function PoolControllerPage() {
   const [mqttErrorMsg, setMqttErrorMsg] = useState('');
   
   // BLE & Equipment IDs and Logs
-  const [bleDeviceId, setBleDeviceId] = useState('MM12TW-0001');
+  const [bleDeviceId, setBleDeviceId] = useState('MM03TW-1002');
   const [bleLog, setBleLog] = useState<string[]>([]);
 
   // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW or custom from QR)
@@ -127,7 +127,7 @@ export default function PoolControllerPage() {
     userEmail?: string; 
     userPassword?: string;
   }[]>([]);
-  const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
+  const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM03TW');
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
   
@@ -227,6 +227,7 @@ export default function PoolControllerPage() {
       const storedBroker = localStorage.getItem('mqtt_broker') || DEFAULT_MQTT_BROKER;
       const storedPort = localStorage.getItem('mqtt_port') || DEFAULT_MQTT_PORT;
       let storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
+
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
       const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
@@ -250,8 +251,8 @@ export default function PoolControllerPage() {
         }
       } else {
         const initialEquips = [
+          { id: 'MM03TW-1002', model: 'MM03TW' as const },
           { id: 'MM12TW-0001', model: 'MM12TW' as const },
-          { id: 'MM03TW-100223', model: 'MM03TW' as const },
           { id: 'MM08TSW-20045', model: 'MM08TSW' as const }
         ];
         setRegisteredEquipments(initialEquips);
@@ -1845,7 +1846,9 @@ export default function PoolControllerPage() {
                   />
                   <div>
                     <h1 className="text-xs font-bold tracking-tight text-[#4398fa] m-1 leading-none">MASTER LAZER</h1>
-                    <p className="text-[8px] text-[#4398fa] font-mono tracking-widest uppercase mt-2 leading-none">AUTO • MM12TW</p>
+                    <p className="text-[8px] text-[#4398fa] font-mono tracking-widest uppercase mt-2 leading-none">
+                      AUTO • {registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase())?.model || 'MM03TW'}
+                    </p>
                   </div>
                 </div>
 
