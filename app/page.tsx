@@ -1694,6 +1694,9 @@ export default function PoolControllerPage() {
         setEquipmentManufacturer('MASTERLAZER');
       }
 
+      // Automatically save and activate the device immediately
+      handleSaveEquipment(parsed.deviceId, finalModel, parsed.serial || '', parsed.manufacturer || 'MASTERLAZER');
+
       stopQrScanner();
     } catch (err) {
       console.warn('O QR Code escaneado não é um JSON válido. Tentando texto puro...', err);
@@ -1720,6 +1723,10 @@ export default function PoolControllerPage() {
         setSelectedEquipmentModel(simulatedJson.model);
         setEquipmentSerial(simulatedJson.serial);
         setEquipmentManufacturer(simulatedJson.manufacturer);
+
+        // Automatically save and activate the device immediately
+        handleSaveEquipment(simulatedJson.deviceId, simulatedJson.model, simulatedJson.serial, simulatedJson.manufacturer);
+
         stopQrScanner();
       } else {
         setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento.');
@@ -1737,7 +1744,7 @@ export default function PoolControllerPage() {
   }, []);
 
   // Save specific equipment
-  const handleSaveEquipment = (idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) => {
+  function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
     const finalId = idOverride || bleDeviceId;
     const finalModel = modelOverride || selectedEquipmentModel;
     const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
