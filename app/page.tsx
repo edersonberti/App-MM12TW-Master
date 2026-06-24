@@ -140,10 +140,16 @@ export default function PoolControllerPage() {
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
   const [motorFiltro, setMotorFiltro] = useState(false);
+  const [motor3, setMotor3] = useState(false);
+  const [motor4, setMotor4] = useState(false);
   const [motor1Name, setMotor1Name] = useState('Motor 01');
   const [motor2Name, setMotor2Name] = useState('Motor 02');
+  const [motor3Name, setMotor3Name] = useState('Motor 03');
+  const [motor4Name, setMotor4Name] = useState('Motor 04');
   const [isEditingM1, setIsEditingM1] = useState(false);
   const [isEditingM2, setIsEditingM2] = useState(false);
+  const [isEditingM3, setIsEditingM3] = useState(false);
+  const [isEditingM4, setIsEditingM4] = useState(false);
   const [solarErrorBanner, setSolarErrorBanner] = useState<string | null>(null);
 
   // LED States
@@ -232,6 +238,8 @@ export default function PoolControllerPage() {
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
       const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
       const storedMotor2Name = localStorage.getItem('motor2_name') || 'Motor 02';
+      const storedMotor3Name = localStorage.getItem('motor3_name') || 'Motor 03';
+      const storedMotor4Name = localStorage.getItem('motor4_name') || 'Motor 04';
 
       setMqttBroker(storedBroker);
       setMqttPort(storedPort);
@@ -240,6 +248,8 @@ export default function PoolControllerPage() {
       setMqttPassword(storedMqttPass);
       setMotor1Name(storedMotor1Name);
       setMotor2Name(storedMotor2Name);
+      setMotor3Name(storedMotor3Name);
+      setMotor4Name(storedMotor4Name);
 
       const storedEquips = localStorage.getItem('registered_equipments');
       if (storedEquips) {
@@ -869,6 +879,20 @@ export default function PoolControllerPage() {
               setMotorFiltro(data.filtro === true || data.filtro === 'ON' || data.filtro === 1);
             }
 
+            // Motor 3 - AUX Screen Check
+            if (data.mt3 !== undefined) {
+              setMotor3(data.mt3 === 'ON' || data.mt3 === 'LIG' || data.mt3 === 1 || data.mt3 === true || String(data.mt3).toUpperCase() === 'ON');
+            } else if (data.motor3 !== undefined) {
+              setMotor3(data.motor3 === true || data.motor3 === 'ON' || data.motor3 === 1);
+            }
+
+            // Motor 4 - AUX Screen Check
+            if (data.mt4 !== undefined) {
+              setMotor4(data.mt4 === 'ON' || data.mt4 === 'LIG' || data.mt4 === 1 || data.mt4 === true || String(data.mt4).toUpperCase() === 'ON');
+            } else if (data.motor4 !== undefined) {
+              setMotor4(data.motor4 === true || data.motor4 === 'ON' || data.motor4 === 1);
+            }
+
             // LED program - LED Screen Check
             if (data.led_pg !== undefined) {
               const p = parseInt(data.led_pg);
@@ -1020,6 +1044,24 @@ export default function PoolControllerPage() {
             payload === '1'
           );
         }
+        // Motor 3
+        else if (lowerRelative === 'mt3' || lowerRelative === 'mt3/state') {
+          setMotor3(
+            payload.toUpperCase() === 'ON' || 
+            payload.toUpperCase() === 'LIG' || 
+            payload.toUpperCase() === 'TRUE' ||
+            payload === '1'
+          );
+        }
+        // Motor 4
+        else if (lowerRelative === 'mt4' || lowerRelative === 'mt4/state') {
+          setMotor4(
+            payload.toUpperCase() === 'ON' || 
+            payload.toUpperCase() === 'LIG' || 
+            payload.toUpperCase() === 'TRUE' ||
+            payload === '1'
+          );
+        }
         // LED program
         else if (lowerRelative === 'led/pg') {
           const pgVal = parseInt(payload);
@@ -1105,8 +1147,12 @@ export default function PoolControllerPage() {
             'info/serial',
             'mt1',
             'mt2',
+            'mt3',
+            'mt4',
             'mt1/state',
             'mt2/state',
+            'mt3/state',
+            'mt4/state',
             'led/pg',
             'led/ctrl',
             'led/state',
@@ -1308,12 +1354,20 @@ export default function PoolControllerPage() {
   }
 
   // 7. Interactive action button tasks
-  const handleMotorChange = (motorType: 'hidro' | 'filtro', checked: boolean) => {
-    const num = motorType === 'hidro' ? '1' : '2';
+  const handleMotorChange = (motorType: 'hidro' | 'filtro' | 'motor3' | 'motor4', checked: boolean) => {
+    let num = '1';
     if (motorType === 'hidro') {
+      num = '1';
       setMotorHidro(checked);
-    } else {
+    } else if (motorType === 'filtro') {
+      num = '2';
       setMotorFiltro(checked);
+    } else if (motorType === 'motor3') {
+      num = '3';
+      setMotor3(checked);
+    } else if (motorType === 'motor4') {
+      num = '4';
+      setMotor4(checked);
     }
 
     const payloadON_OFF = checked ? 'ON' : 'OFF';
@@ -2436,6 +2490,132 @@ export default function PoolControllerPage() {
                             className="sr-only peer"
                           />
                           <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4398fa] peer-checked:border-[#4398fa] shadow-[0_0_10px_rgba(6,182,212,0)] peer-checked:shadow-[0_0_12px_rgba(6,182,212,0.4)]"></div>
+                        </label>
+                      </div>
+
+                      {/* Motor 3 */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motor3 ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                            <Power className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col">
+                            {isEditingM3 ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={motor3Name}
+                                  onChange={(e) => {
+                                    setMotor3Name(e.target.value);
+                                    localStorage.setItem('motor3_name', e.target.value);
+                                  }}
+                                  onBlur={() => setIsEditingM3(false)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') setIsEditingM3(false);
+                                  }}
+                                  autoFocus
+                                  maxLength={30}
+                                  className="text-xs font-bold text-white bg-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#4398fa] w-32 border border-white/20"
+                                />
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM3(false);
+                                  }} 
+                                  className="text-emerald-400 hover:text-emerald-300 p-0.5"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <p className="text-xs font-bold text-white">{motor3Name}</p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM3(true);
+                                  }}
+                                  title="Editar nome"
+                                  className="text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={motor3}
+                            disabled={!mqttConnected}
+                            onChange={(e) => handleMotorChange('motor3', e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4398fa] peer-checked:border-[#4398fa] shadow-[0_0_10px_rgba(0,102,221,0)] peer-checked:shadow-[0_0_12px_rgba(0,102,221,0.4)]"></div>
+                        </label>
+                      </div>
+
+                      {/* Motor 4 */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${motor4 ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                            <Power className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col">
+                            {isEditingM4 ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={motor4Name}
+                                  onChange={(e) => {
+                                    setMotor4Name(e.target.value);
+                                    localStorage.setItem('motor4_name', e.target.value);
+                                  }}
+                                  onBlur={() => setIsEditingM4(false)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') setIsEditingM4(false);
+                                  }}
+                                  autoFocus
+                                  maxLength={30}
+                                  className="text-xs font-bold text-white bg-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#4398fa] w-32 border border-white/20"
+                                />
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM4(false);
+                                  }} 
+                                  className="text-emerald-400 hover:text-emerald-300 p-0.5"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <p className="text-xs font-bold text-white">{motor4Name}</p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsEditingM4(true);
+                                  }}
+                                  title="Editar nome"
+                                  className="text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={motor4}
+                            disabled={!mqttConnected}
+                            onChange={(e) => handleMotorChange('motor4', e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-10 h-6 bg-white/10 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:height-4 after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4398fa] peer-checked:border-[#4398fa] shadow-[0_0_10px_rgba(0,102,221,0)] peer-checked:shadow-[0_0_12px_rgba(0,102,221,0.4)]"></div>
                         </label>
                       </div>
                     </div>
