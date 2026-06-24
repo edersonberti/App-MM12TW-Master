@@ -227,10 +227,6 @@ export default function PoolControllerPage() {
       const storedBroker = localStorage.getItem('mqtt_broker') || DEFAULT_MQTT_BROKER;
       const storedPort = localStorage.getItem('mqtt_port') || DEFAULT_MQTT_PORT;
       let storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
-      if (storedDevice === 'MM12TW-000123') {
-        storedDevice = 'MM12TW-0001';
-        localStorage.setItem('mqtt_device', 'MM12TW-0001');
-      }
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
       const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
@@ -248,14 +244,7 @@ export default function PoolControllerPage() {
       if (storedEquips) {
         try {
           const parsed = JSON.parse(storedEquips);
-          const migrated = parsed.map((eq: any) => {
-            if (eq.id === 'MM12TW-000123') {
-              return { ...eq, id: 'MM12TW-0001' };
-            }
-            return eq;
-          });
-          setRegisteredEquipments(migrated);
-          localStorage.setItem('registered_equipments', JSON.stringify(migrated));
+          setRegisteredEquipments(parsed);
         } catch (e) {
           console.error(e);
         }
@@ -397,8 +386,14 @@ export default function PoolControllerPage() {
     setTimeout(() => {
       setDeviceIp('---');
       setDeviceMac('---');
-      setDeviceModelo('---');
-      setDeviceSerial('---');
+      const matched = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+      if (matched) {
+        setDeviceModelo(matched.model || '---');
+        setDeviceSerial(matched.serial || '---');
+      } else {
+        setDeviceModelo('---');
+        setDeviceSerial('---');
+      }
       setDeviceOnline(null);
     }, 0);
     lastMessageTimeRef.current = 0;
@@ -412,7 +407,7 @@ export default function PoolControllerPage() {
       return () => clearTimeout(t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId]);
+  }, [deviceId, registeredEquipments]);
 
   // 1e. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline
   useEffect(() => {
@@ -803,14 +798,16 @@ export default function PoolControllerPage() {
         let devicePartOfMessage = '';
         let relativeTopic = dest;
 
-        if (dest.toUpperCase().startsWith('MASTERLAZER/')) {
-          const parts = dest.split('/');
-          if (parts.length >= 2) {
-            devicePartOfMessage = parts[1];
-            relativeTopic = parts.slice(2).join('/');
-          }
+        const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+        const parts = dest.split('/');
+        
+        if (parts.length >= 2 && (
+          parts[0].toUpperCase() === 'MASTERLAZER' || 
+          (activeEquipment?.manufacturer && parts[0].toUpperCase() === activeEquipment.manufacturer.toUpperCase())
+        )) {
+          devicePartOfMessage = parts[1];
+          relativeTopic = parts.slice(2).join('/');
         } else {
-          const parts = dest.split('/');
           if (parts.length >= 1) {
             devicePartOfMessage = parts[0];
             relativeTopic = parts.slice(1).join('/');
@@ -1096,51 +1093,45 @@ export default function PoolControllerPage() {
           }
           
           const activeCleanId = cleanDeviceId(deviceId);
+          const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
 
           // Subscribe to target topics to monitor LED and AUX hardware status
-          const topicsToSubscribe = [
-            `MASTERLAZER/${activeCleanId}/status`,
-            `MASTERLAZER/${activeCleanId}/info/ip`,
-            `MASTERLAZER/${activeCleanId}/info/mac`,
-            `MASTERLAZER/${activeCleanId}/info/modelo`,
-            `MASTERLAZER/${activeCleanId}/info/serial`,
-            `MASTERLAZER/${activeCleanId}/mt1`,
-            `MASTERLAZER/${activeCleanId}/mt2`,
-            `MASTERLAZER/${activeCleanId}/mt1/state`,
-            `MASTERLAZER/${activeCleanId}/mt2/state`,
-            `MASTERLAZER/${activeCleanId}/led/pg`,
-            `MASTERLAZER/${activeCleanId}/led/ctrl`,
-            `MASTERLAZER/${activeCleanId}/led/state`,
-            `MASTERLAZER/${activeCleanId}/pwm/r`,
-            `MASTERLAZER/${activeCleanId}/pwm/g`,
-            `MASTERLAZER/${activeCleanId}/pwm/b`,
-            `MASTERLAZER/${activeCleanId}/solar/erro`,
-            `MASTERLAZER/${activeCleanId}/state`,
-            `MASTERLAZER/${activeCleanId}/ft/cfg`,
-            `MASTERLAZER/${activeCleanId}/led/tmr/cfg`,
-            `MASTERLAZER/${activeCleanId}/hidro/tmr/cfg`,
-
-            `MASTERLAZER/${deviceId}/status`,
-            `MASTERLAZER/${deviceId}/info/ip`,
-            `MASTERLAZER/${deviceId}/info/mac`,
-            `MASTERLAZER/${deviceId}/info/modelo`,
-            `MASTERLAZER/${deviceId}/info/serial`,
-            `MASTERLAZER/${deviceId}/mt1`,
-            `MASTERLAZER/${deviceId}/mt2`,
-            `MASTERLAZER/${deviceId}/mt1/state`,
-            `MASTERLAZER/${deviceId}/mt2/state`,
-            `MASTERLAZER/${deviceId}/led/pg`,
-            `MASTERLAZER/${deviceId}/led/ctrl`,
-            `MASTERLAZER/${deviceId}/led/state`,
-            `MASTERLAZER/${deviceId}/pwm/r`,
-            `MASTERLAZER/${deviceId}/pwm/g`,
-            `MASTERLAZER/${deviceId}/pwm/b`,
-            `MASTERLAZER/${deviceId}/solar/erro`,
-            `MASTERLAZER/${deviceId}/state`,
-            `MASTERLAZER/${deviceId}/ft/cfg`,
-            `MASTERLAZER/${deviceId}/led/tmr/cfg`,
-            `MASTERLAZER/${deviceId}/hidro/tmr/cfg`
+          const relativePaths = [
+            'status',
+            'info/ip',
+            'info/mac',
+            'info/modelo',
+            'info/serial',
+            'mt1',
+            'mt2',
+            'mt1/state',
+            'mt2/state',
+            'led/pg',
+            'led/ctrl',
+            'led/state',
+            'pwm/r',
+            'pwm/g',
+            'pwm/b',
+            'solar/erro',
+            'state',
+            'ft/cfg',
+            'led/tmr/cfg',
+            'hidro/tmr/cfg'
           ];
+
+          const topicsToSubscribeSet = new Set<string>();
+          [activeCleanId, deviceId].forEach((id) => {
+            if (!id) return;
+            relativePaths.forEach((path) => {
+              topicsToSubscribeSet.add(`${id}/${path}`);
+              topicsToSubscribeSet.add(`MASTERLAZER/${id}/${path}`);
+              if (activeEquipment?.manufacturer) {
+                topicsToSubscribeSet.add(`${activeEquipment.manufacturer}/${id}/${path}`);
+              }
+            });
+          });
+
+          const topicsToSubscribe = Array.from(topicsToSubscribeSet);
 
           topicsToSubscribe.forEach((t) => {
             try {
@@ -1152,14 +1143,19 @@ export default function PoolControllerPage() {
           });
 
           // Send query commands to request immediate status update from hardware
-          const queryTopics = [
-            `MASTERLAZER/${activeCleanId}/get`,
-            `MASTERLAZER/${activeCleanId}/cmd`,
-            `MASTERLAZER/${activeCleanId}/status/get`,
-            `MASTERLAZER/${deviceId}/get`,
-            `MASTERLAZER/${deviceId}/cmd`,
-            `MASTERLAZER/${deviceId}/status/get`
-          ];
+          const queryTopicsSet = new Set<string>();
+          [activeCleanId, deviceId].forEach((id) => {
+            if (!id) return;
+            ['get', 'cmd', 'status/get'].forEach((cmdPath) => {
+              queryTopicsSet.add(`${id}/${cmdPath}`);
+              queryTopicsSet.add(`MASTERLAZER/${id}/${cmdPath}`);
+              if (activeEquipment?.manufacturer) {
+                queryTopicsSet.add(`${activeEquipment.manufacturer}/${id}/${cmdPath}`);
+              }
+            });
+          });
+
+          const queryTopics = Array.from(queryTopicsSet);
 
           queryTopics.forEach((qt) => {
             try {
@@ -1271,15 +1267,23 @@ export default function PoolControllerPage() {
           uniqueTopics.add(replacedWithRaw);
         }
 
-        // 3. To be absolutely sure, for each topic, ensure we send both with and without "MASTERLAZER/" prefix
+        // 3. For each topic, ensure we send with standard, custom manufacturer, and no prefix
+        const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
         const topicsToSend = new Set<string>();
         uniqueTopics.forEach((t) => {
           topicsToSend.add(t);
+          
+          let relativePart = t;
           if (t.startsWith('MASTERLAZER/')) {
-            const relativePart = t.substring('MASTERLAZER/'.length);
-            topicsToSend.add(relativePart);
-          } else {
-            topicsToSend.add(`MASTERLAZER/${t}`);
+            relativePart = t.substring('MASTERLAZER/'.length);
+          } else if (activeEquipment?.manufacturer && t.toUpperCase().startsWith(activeEquipment.manufacturer.toUpperCase() + '/')) {
+            relativePart = t.substring(activeEquipment.manufacturer.length + 1);
+          }
+          
+          topicsToSend.add(relativePart);
+          topicsToSend.add(`MASTERLAZER/${relativePart}`);
+          if (activeEquipment?.manufacturer) {
+            topicsToSend.add(`${activeEquipment.manufacturer}/${relativePart}`);
           }
         });
 
