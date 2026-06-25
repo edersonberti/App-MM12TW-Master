@@ -503,10 +503,12 @@ export default function PoolControllerPage() {
           
           try {
             pickerEl.innerHTML = ''; // Prevent dynamic duplicated elements
-            const initialVal = currentProgram === '---' ? 100 : ledVal;
+            const initialVal = 100; // Always start the value/lightness slider at 100%
             setLedVal(initialVal);
+            setSatMultiplier(100);
+            setBrightMultiplier(100);
             const picker = new window.iro.ColorPicker(`#${pickerContainerId}`, {
-              width: 230,
+              width: 210,
               color: `hsv(${ledHue}, ${ledSat}, ${initialVal})`,
               borderWidth: 0,
               borderColor: 'transparent',
@@ -3375,7 +3377,7 @@ export default function PoolControllerPage() {
 
 
           {/* Subheader / Copyright Info (matches copyright requirements) */}
-          <div className="py-2.5 text-center bg-black/10 border-t border-white/5">
+          <div className="py-2.0 text-center bg-black/10 border-t border-white/2">
             <span className="text-[8px] tracking-widest text-slate-400 font-sans uppercase">
               Copyright 2026 • Master Lazer Systems
             </span>
