@@ -1397,21 +1397,9 @@ export default function PoolControllerPage() {
       }
     }
     setCurrentProgram(nextProg);
-    const pgStr = String(nextProg);
     
-    // 1. Direct Numeric Program Selection
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, pgStr);
-
-    // 2. Incremental Command triggers
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "INC");
+    // Única publicação necessária
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "INC");
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "INC");
-
-    // Case fallbacks
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "inc");
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "inc");
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "inc");
   };
 
   const handleProgramDec = () => {
@@ -1427,21 +1415,16 @@ export default function PoolControllerPage() {
       }
     }
     setCurrentProgram(prevProg);
-    const pgStr = String(prevProg);
     
-    // 1. Direct Numeric Program Selection
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, pgStr);
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, pgStr);
-
-    // 2. Decremental Command triggers
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "DEC");
+    // Única publicação necessária
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DEC");
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "DEC");
+  };
 
-    // Case fallbacks
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "dec");
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "dec");
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "dec");
+  const handleDirectProgramSelect = (progNum: number) => {
+    setCurrentProgram(progNum);
+    
+    // Única publicação necessária
+    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, String(progNum));
   };
 
   const handleProgramOff = () => {
@@ -2697,11 +2680,30 @@ export default function PoolControllerPage() {
 
                   {/* Program selection block */}
                   <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-2">
-                    <div className="flex items-center justify-start gap-1 px-1 py-0.5">
-                      <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL:</p>
-                      <span className="text-[12px] font-black text-[#4398fa] font-mono">
-                        {currentProgram === '---' ? '---' : currentProgram}
-                      </span>
+                    <div className="flex items-center justify-between px-1 py-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL:</p>
+                        <span className="text-[12px] font-black text-[#4398fa] font-mono">
+                          {currentProgram === '---' ? '---' : currentProgram}
+                        </span>
+                      </div>
+                      <select
+                        value={currentProgram === '---' ? '---' : String(currentProgram)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '---') {
+                            handleProgramOff();
+                          } else {
+                            handleDirectProgramSelect(parseInt(val, 10));
+                          }
+                        }}
+                        className="bg-slate-950/65 hover:bg-slate-900/80 transition-colors border border-white/10 text-[#4398fa] text-[11px] font-bold rounded-lg px-2 py-1 focus:outline-none"
+                      >
+                        <option value="---">---</option>
+                        {Array.from({ length: 25 }, (_, i) => String(i + 1)).map((p) => (
+                          <option key={p} value={p}>Prog {p}</option>
+                        ))}
+                      </select>
                     </div>
 
                     {/* Led Buttons control action rail - in a line (voltar, avançar, salvar, desligar) */}
