@@ -188,7 +188,15 @@ export default function PoolControllerPage() {
     setBrightMultiplierState(val);
   };
 
-  const [currentProgram, setCurrentProgram] = useState<number | '---'>('---');
+  const [currentProgram, setCurrentProgramState] = useState<number | '---'>('---');
+  const currentProgramRef = useRef<number | '---'>('---');
+  const setCurrentProgram = (val: number | '---') => {
+    currentProgramRef.current = val;
+    setCurrentProgramState(val);
+  };
+
+  const currentRgbRef = useRef({ r: 0, g: 0, b: 0 });
+  const lastUserColorInteractionRef = useRef<number>(0);
   const [iroLoaded, setIroLoaded] = useState(false);
 
   // Timers States
@@ -542,9 +550,17 @@ export default function PoolControllerPage() {
             });
 
             picker.on('input:change', (c: any) => {
+              lastUserColorInteractionRef.current = Date.now();
               const h = Math.round(c.hsv.h);
               const s = Math.round(c.hsv.s);
               const v = Math.round(c.hsv.v);
+              
+              if (currentProgramRef.current === '---') {
+                setCurrentProgram(1);
+                publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+              }
+
               if (mqttConnected) {
                 publishColor(h, s, v, satMultiplierRef.current, brightMultiplierRef.current);
               }
@@ -926,11 +942,15 @@ export default function PoolControllerPage() {
             const bVal = data.b !== undefined ? data.b : (data.blue !== undefined ? data.blue : (data.pwm_b !== undefined ? data.pwm_b : null));
 
             if (rVal !== null && gVal !== null && bVal !== null) {
-              const hsv = rgbToHsv(Number(rVal), Number(gVal), Number(bVal));
+              const rNum = Number(rVal);
+              const gNum = Number(gVal);
+              const bNum = Number(bVal);
+              currentRgbRef.current = { r: rNum, g: gNum, b: bNum };
+              const hsv = rgbToHsv(rNum, gNum, bNum);
               setLedHue(hsv.h);
               setLedSat(hsv.s);
               setLedVal(hsv.v);
-              if (iroPickerRef.current) {
+              if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
                 iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
               }
             }
@@ -1087,36 +1107,36 @@ export default function PoolControllerPage() {
         else if (lowerRelative === 'pwm/r' || lowerRelative === 'led/r') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
-            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
-            const hsv = rgbToHsv(num, rgb.g, rgb.b);
+            currentRgbRef.current.r = num;
+            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
             setLedHue(hsv.h);
             setLedSat(hsv.s);
             setLedVal(hsv.v);
-            if (iroPickerRef.current) {
+            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
         } else if (lowerRelative === 'pwm/g' || lowerRelative === 'led/g') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
-            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
-            const hsv = rgbToHsv(rgb.r, num, rgb.b);
+            currentRgbRef.current.g = num;
+            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
             setLedHue(hsv.h);
             setLedSat(hsv.s);
             setLedVal(hsv.v);
-            if (iroPickerRef.current) {
+            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
         } else if (lowerRelative === 'pwm/b' || lowerRelative === 'led/b') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
-            const rgb = hsvToRgb(ledHueRef.current, ledSatRef.current, ledValRef.current);
-            const hsv = rgbToHsv(rgb.r, rgb.g, num);
+            currentRgbRef.current.b = num;
+            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
             setLedHue(hsv.h);
             setLedSat(hsv.s);
             setLedVal(hsv.v);
-            if (iroPickerRef.current) {
+            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
               iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
             }
           }
@@ -2651,7 +2671,13 @@ export default function PoolControllerPage() {
                         value={satMultiplier}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
+                          lastUserColorInteractionRef.current = Date.now();
                           setSatMultiplier(val);
+                          if (currentProgramRef.current === '---') {
+                            setCurrentProgram(1);
+                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                          }
                           if (mqttConnected) {
                             publishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
                           }
@@ -2669,7 +2695,13 @@ export default function PoolControllerPage() {
                         value={brightMultiplier}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
+                          lastUserColorInteractionRef.current = Date.now();
                           setBrightMultiplier(val);
+                          if (currentProgramRef.current === '---') {
+                            setCurrentProgram(1);
+                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                          }
                           if (mqttConnected) {
                             publishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
                           }
