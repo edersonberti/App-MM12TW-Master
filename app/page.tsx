@@ -222,7 +222,7 @@ export default function PoolControllerPage() {
   const [ledProgram, setLedProgram] = useState('0');
 
   const [hidroTimerEnabled, setHidroTimerEnabled] = useState(false);
-  const [hidroTimerHours, setHidroTimerHours] = useState('off');
+  const [hidroTimerHours, setHidroTimerHours] = useState('D');
 
   // MQTT instance reference
   const mqttClientRef = useRef<any>(null);
@@ -327,7 +327,7 @@ export default function PoolControllerPage() {
       const storedHidroEnabled = localStorage.getItem('hidro_timer_enabled') === 'true';
       const storedHidroHours = localStorage.getItem('hidro_timer_hours') || '1';
       setHidroTimerEnabled(storedHidroEnabled);
-      setHidroTimerHours(storedHidroEnabled ? storedHidroHours : 'off');
+      setHidroTimerHours(storedHidroEnabled ? (storedHidroHours === 'off' ? 'D' : storedHidroHours) : 'D');
 
       // Load Filtration states
       const storedFilterInit1 = localStorage.getItem('filter_init1') || localStorage.getItem('filter_start_hour') || '08';
@@ -1086,11 +1086,12 @@ export default function PoolControllerPage() {
         if (lowerRelative === 'hidro/tmr/cfg') {
           try {
             const hidroTimerData = JSON.parse(payload);
-            if (hidroTimerData.hours !== undefined) {
-              setHidroTimerHours(String(hidroTimerData.hours));
-            }
-            if (hidroTimerData.enabled !== undefined) {
-              setHidroTimerEnabled(hidroTimerData.enabled);
+            const isEnabled = hidroTimerData.enabled === true || (hidroTimerData.enabled !== false && hidroTimerData.hours !== 0 && hidroTimerData.hours !== 'D');
+            setHidroTimerEnabled(isEnabled);
+            if (!isEnabled) {
+              setHidroTimerHours('D');
+            } else if (hidroTimerData.hours !== undefined) {
+              setHidroTimerHours(String(hidroTimerData.hours) === 'off' ? 'D' : String(hidroTimerData.hours));
             }
           } catch (err) {
             console.warn('Erro ao decodificar hidro/tmr/cfg JSON:', err);
@@ -1655,16 +1656,21 @@ export default function PoolControllerPage() {
     
     // Hour/Start Topics
     publishTopic(`MASTERLAZER/${deviceId}/led/tmr/start`, startingTime);
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/start_hour`, ledStartHour);
     publishTopic(`${deviceId}/led/tmr/start`, startingTime);
+    publishTopic(`${deviceId}/led/tmr/start_hour`, ledStartHour);
 
     // Duration/Hours Topics
     publishTopic(`MASTERLAZER/${deviceId}/led/tmr/hours`, String(ledDuration));
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/duration`, String(ledDuration));
     publishTopic(`${deviceId}/led/tmr/hours`, String(ledDuration));
-
+    publishTopic(`${deviceId}/led/tmr/duration`, String(ledDuration));
 
     // Program Topics
     publishTopic(`MASTERLAZER/${deviceId}/led/tmr/program`, String(ledProgram));
+    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/prog`, String(ledProgram));
     publishTopic(`${deviceId}/led/tmr/program`, String(ledProgram));
+    publishTopic(`${deviceId}/led/tmr/prog`, String(ledProgram));
 
 
 
@@ -1672,8 +1678,8 @@ export default function PoolControllerPage() {
   };
 
   const handleSaveHidroTimer = () => {
-    const isEnabled = hidroTimerHours !== 'off';
-    const hoursVal = isEnabled ? hidroTimerHours : '1';
+    const isEnabled = hidroTimerHours !== 'D' && hidroTimerHours !== 'off';
+    const hoursVal = isEnabled ? hidroTimerHours : 'D';
 
     setHidroTimerEnabled(isEnabled);
 
@@ -1682,24 +1688,38 @@ export default function PoolControllerPage() {
 
     const data = {
       enabled: isEnabled,
-      hours: parseInt(hoursVal) || 1
+      hours: isEnabled ? parseInt(hoursVal, 10) || 1 : 0,
+      bomba: 'mt1'
     };
 
-    // 1. Publish core brand style
+    // 1. Publish core brand style config
     publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
-
-    // 2. Publish compatibility formats
     publishTopic(`${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
 
-    // Publish individual parameters
-    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
-    publishTopic(`${deviceId}/hidro/tmr/active`, isEnabled ? '1' : '0');
+    // mt1 direct timer config
+    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/cfg`, JSON.stringify(data));
+    publishTopic(`${deviceId}/mt1/timer/cfg`, JSON.stringify(data));
 
+    // 2. Publish individual parameter topics (active/status and hours/duration)
+    const activePayload = isEnabled ? '1' : '0';
+    
+    // hidro tmr paths
+    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/active`, activePayload);
+    publishTopic(`${deviceId}/hidro/tmr/active`, activePayload);
     publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/hours`, String(hoursVal));
     publishTopic(`${deviceId}/hidro/tmr/hours`, String(hoursVal));
+    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/duration`, String(hoursVal));
+    publishTopic(`${deviceId}/hidro/tmr/duration`, String(hoursVal));
 
+    // mt1 direct paths
+    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/active`, activePayload);
+    publishTopic(`${deviceId}/mt1/timer/active`, activePayload);
+    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/hours`, String(hoursVal));
+    publishTopic(`${deviceId}/mt1/timer/hours`, String(hoursVal));
+    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/duration`, String(hoursVal));
+    publishTopic(`${deviceId}/mt1/timer/duration`, String(hoursVal));
 
-    alert(`Programação do Timer ${motor1Name} enviada!\nHabilitado: ${isEnabled ? 'Sim' : 'Não'}${isEnabled ? `\nDuração: ${hoursVal} horas.` : ''}`);
+    alert(`Programação do Timer ${motor1Name} enviada!\nStatus: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado (D)'}`);
   };
 
   // Start the QR Code Scanner camera
@@ -2388,7 +2408,7 @@ export default function PoolControllerPage() {
                             <Clock className="w-3.5 h-3.5 text-cyan-400" />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TIMERS</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' || (hidroTimerHours !== 'D' && hidroTimerHours !== 'off') ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -2399,10 +2419,14 @@ export default function PoolControllerPage() {
                               `${activeModel === 'MM12TW' ? motor2Name : motor4Name}: Inativo`
                             )}
                           </p>
-                          <p className="text-[9px] text-slate-400 font-medium truncate">
-                            LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>
-                              {ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}
-                            </span>
+                          <p className="text-[9px] text-slate-400 font-medium truncate flex items-center gap-1.5">
+                            <span>LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>{ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}</span></span>
+                            {hidroTimerHours !== 'D' && hidroTimerHours !== 'off' && (
+                              <>
+                                <span className="text-slate-600">|</span>
+                                <span className="truncate">{motor1Name}: <span className="text-cyan-400 font-bold">{hidroTimerHours}h</span></span>
+                              </>
+                            )}
                           </p>
                         </div>
                       </button>
@@ -3125,11 +3149,11 @@ export default function PoolControllerPage() {
                       <div className="flex items-center justify-between py-1">
                         <label className="text-xs font-medium text-slate-300">Tempo de Duração</label>
                         <select
-                          value={hidroTimerHours || 'off'}
+                          value={hidroTimerHours || 'D'}
                           onChange={(e) => setHidroTimerHours(e.target.value)}
                           className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none"
                         >
-                          <option value="off" className="bg-slate-950 text-slate-300 font-bold">Desligado</option>
+                          <option value="D" className="bg-slate-950 text-slate-300 font-bold">D (Desligado)</option>
                           {Array.from({ length: 23 }, (_, i) => i + 1).map(h => (
                             <option key={h} value={String(h)} className="bg-slate-950 text-[#4398fa] font-bold">{h} {h === 1 ? 'Hora' : 'Horas'}</option>
                           ))}
