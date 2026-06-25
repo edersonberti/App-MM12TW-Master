@@ -128,6 +128,8 @@ export default function PoolControllerPage() {
     userPassword?: string;
   }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
+  const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+  const activeModel = activeEquipment?.model || 'MM12TW';
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
   
@@ -197,6 +199,10 @@ export default function PoolControllerPage() {
 
   const currentRgbRef = useRef({ r: 0, g: 0, b: 0 });
   const lastUserColorInteractionRef = useRef<number>(0);
+  const lastPublishTimeRef = useRef<number>(0);
+  const publishThrottleTimeoutRef = useRef<any>(null);
+  const pendingPublishRef = useRef<{ h: number; s: number; v: number; satMult: number; brightMult: number } | null>(null);
+  const rgbUpdateTimeoutRef = useRef<any>(null);
   const [iroLoaded, setIroLoaded] = useState(false);
 
   // Timers States
@@ -204,8 +210,9 @@ export default function PoolControllerPage() {
   const [filterStartHour, setFilterStartHour] = useState('08');
   const [filterStartMinute, setFilterStartMinute] = useState('00');
   const [filterInit1, setFilterInit1] = useState('08');
+  const [filterHours1, setFilterHours1] = useState('4');
   const [filterInit2, setFilterInit2] = useState('D');
-  const [filterInit3, setFilterInit3] = useState('D');
+  const [filterHours2, setFilterHours2] = useState('4');
   const [filterHours, setFilterHours] = useState('4');
   const [filterDays, setFilterDays] = useState<boolean[]>([true, true, true, true, true, true, true]);
   
@@ -323,17 +330,21 @@ export default function PoolControllerPage() {
       setHidroTimerHours(storedHidroEnabled ? storedHidroHours : 'off');
 
       // Load Filtration states
-      const storedFilterStartHour = localStorage.getItem('filter_start_hour') || '08';
-      const storedFilterStartMinute = localStorage.getItem('filter_start_minute') || '00';
-      setFilterStartHour(storedFilterStartHour);
-      setFilterStartMinute(storedFilterStartMinute);
-      setFilterInit(`${storedFilterStartHour}:${storedFilterStartMinute}`);
+      const storedFilterInit1 = localStorage.getItem('filter_init1') || localStorage.getItem('filter_start_hour') || '08';
+      const storedFilterHours1 = localStorage.getItem('filter_hours1') || localStorage.getItem('filter_hours') || '4';
+      const storedFilterInit2 = localStorage.getItem('filter_init2') || 'D';
+      const storedFilterHours2 = localStorage.getItem('filter_hours2') || '4';
 
-      setFilterInit1(storedFilterStartHour);
-      setFilterInit2('D');
-      setFilterInit3('D');
-      const storedFilterHours = localStorage.getItem('filter_hours') || '4';
-      setFilterHours(storedFilterHours);
+      setFilterInit1(storedFilterInit1);
+      setFilterHours1(storedFilterHours1);
+      setFilterInit2(storedFilterInit2);
+      setFilterHours2(storedFilterHours2);
+
+      // Keep backup state synchronized for legacy readers
+      setFilterStartHour(storedFilterInit1 === 'D' ? '08' : storedFilterInit1);
+      setFilterHours(storedFilterHours1);
+      setFilterInit(`${storedFilterInit1 === 'D' ? '08' : storedFilterInit1}:00`);
+
       const storedFilterDays = localStorage.getItem('filter_days');
       if (storedFilterDays) {
         try {
@@ -562,7 +573,7 @@ export default function PoolControllerPage() {
               }
 
               if (mqttConnected) {
-                publishColor(h, s, v, satMultiplierRef.current, brightMultiplierRef.current);
+                throttledPublishColor(h, s, v, satMultiplierRef.current, brightMultiplierRef.current);
               }
             });
           } catch (e) {
@@ -649,6 +660,35 @@ export default function PoolControllerPage() {
     publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
     publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
     publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
+  }
+
+  function throttledPublishColor(h: number, s: number, v: number, satMult: number, brightMult: number) {
+    const now = Date.now();
+    const limit = 120; // 120ms throttle limit is perfect for high responsiveness without overloading the MQTT broker
+    
+    pendingPublishRef.current = { h, s, v, satMult, brightMult };
+
+    const runPublish = () => {
+      if (pendingPublishRef.current) {
+        const { h, s, v, satMult, brightMult } = pendingPublishRef.current;
+        publishColor(h, s, v, satMult, brightMult);
+        lastPublishTimeRef.current = Date.now();
+        pendingPublishRef.current = null;
+      }
+      publishThrottleTimeoutRef.current = null;
+    };
+
+    if (now - lastPublishTimeRef.current >= limit) {
+      if (publishThrottleTimeoutRef.current) {
+        clearTimeout(publishThrottleTimeoutRef.current);
+        publishThrottleTimeoutRef.current = null;
+      }
+      runPublish();
+    } else {
+      if (!publishThrottleTimeoutRef.current) {
+        publishThrottleTimeoutRef.current = setTimeout(runPublish, limit - (now - lastPublishTimeRef.current));
+      }
+    }
   }
 
   // 5. Authenticator handler
@@ -996,14 +1036,24 @@ export default function PoolControllerPage() {
         if (lowerRelative === 'ft/cfg') {
           try {
             const timerData = JSON.parse(payload);
-            if (timerData.start) {
-              setFilterInit(timerData.start);
-              const parts = timerData.start.split(':');
-              if (parts.length >= 1) setFilterStartHour(parts[0]);
-              if (parts.length >= 2) setFilterStartMinute(parts[1]);
+            if (timerData.t1_start !== undefined) {
+              setFilterInit1(timerData.t1_start);
+            } else if (timerData.start) {
+              const startPart = timerData.start.split(':')[0] || '08';
+              setFilterInit1(startPart === 'D' ? 'D' : startPart);
             }
-            if (timerData.hours !== undefined) {
-              setFilterHours(String(timerData.hours));
+
+            if (timerData.t1_hours !== undefined) {
+              setFilterHours1(String(timerData.t1_hours));
+            } else if (timerData.hours !== undefined) {
+              setFilterHours1(String(timerData.hours));
+            }
+
+            if (timerData.t2_start !== undefined) {
+              setFilterInit2(timerData.t2_start);
+            }
+            if (timerData.t2_hours !== undefined) {
+              setFilterHours2(String(timerData.t2_hours));
             }
           } catch (err) {
             console.warn('Erro ao decodificar ft/cfg JSON:', err);
@@ -1108,37 +1158,46 @@ export default function PoolControllerPage() {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             currentRgbRef.current.r = num;
-            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
-            setLedHue(hsv.h);
-            setLedSat(hsv.s);
-            setLedVal(hsv.v);
-            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
-              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
-            }
+            if (rgbUpdateTimeoutRef.current) clearTimeout(rgbUpdateTimeoutRef.current);
+            rgbUpdateTimeoutRef.current = setTimeout(() => {
+              const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
+              setLedHue(hsv.h);
+              setLedSat(hsv.s);
+              setLedVal(hsv.v);
+              if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
+                iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+              }
+            }, 60);
           }
         } else if (lowerRelative === 'pwm/g' || lowerRelative === 'led/g') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             currentRgbRef.current.g = num;
-            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
-            setLedHue(hsv.h);
-            setLedSat(hsv.s);
-            setLedVal(hsv.v);
-            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
-              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
-            }
+            if (rgbUpdateTimeoutRef.current) clearTimeout(rgbUpdateTimeoutRef.current);
+            rgbUpdateTimeoutRef.current = setTimeout(() => {
+              const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
+              setLedHue(hsv.h);
+              setLedSat(hsv.s);
+              setLedVal(hsv.v);
+              if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
+                iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+              }
+            }, 60);
           }
         } else if (lowerRelative === 'pwm/b' || lowerRelative === 'led/b') {
           const num = parseInt(payload);
           if (!isNaN(num)) {
             currentRgbRef.current.b = num;
-            const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
-            setLedHue(hsv.h);
-            setLedSat(hsv.s);
-            setLedVal(hsv.v);
-            if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
-              iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
-            }
+            if (rgbUpdateTimeoutRef.current) clearTimeout(rgbUpdateTimeoutRef.current);
+            rgbUpdateTimeoutRef.current = setTimeout(() => {
+              const hsv = rgbToHsv(currentRgbRef.current.r, currentRgbRef.current.g, currentRgbRef.current.b);
+              setLedHue(hsv.h);
+              setLedSat(hsv.s);
+              setLedVal(hsv.v);
+              if (iroPickerRef.current && Date.now() - lastUserColorInteractionRef.current > 2000) {
+                iroPickerRef.current.color.set({ h: hsv.h, s: hsv.s, v: hsv.v });
+              }
+            }, 60);
           }
         }
       };
@@ -1468,23 +1527,31 @@ export default function PoolControllerPage() {
 
   // Save Timers
   const handleSaveFilter = () => {
-    localStorage.setItem('filter_start_hour', filterStartHour);
-    localStorage.setItem('filter_start_minute', filterStartMinute);
-    localStorage.setItem('filter_hours', filterHours);
+    localStorage.setItem('filter_init1', filterInit1);
+    localStorage.setItem('filter_hours1', filterHours1);
+    localStorage.setItem('filter_init2', filterInit2);
+    localStorage.setItem('filter_hours2', filterHours2);
     localStorage.setItem('filter_days', JSON.stringify(filterDays));
 
-    const formattedHour = filterStartHour.padStart(2, '0');
-    const formattedMinute = filterStartMinute.padStart(2, '0');
-    const startingTime = `${formattedHour}:${formattedMinute}`;
-    setFilterInit(startingTime);
+    // For legacy/backward compatibility:
+    localStorage.setItem('filter_start_hour', filterInit1 === 'D' ? '08' : filterInit1);
+    localStorage.setItem('filter_hours', filterHours1);
 
-    // Exact requested JSON payload format: { start: "HH:MM", hours: num }
+    const isModelMM12TW = activeModel === 'MM12TW';
+    const targetMotor = isModelMM12TW ? 'mt2' : 'mt4';
+    const activeMotorName = isModelMM12TW ? motor2Name : motor4Name;
+
+    // Build core JSON with Timer 1 & Timer 2 parameters
     const coreJson = {
-      start: startingTime,
-      hours: parseInt(filterHours) || 4
+      t1_start: filterInit1,
+      t1_hours: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
+      t2_start: filterInit2,
+      t2_hours: filterInit2 === 'D' ? 0 : parseInt(filterHours2) || 4,
+      start: filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`,
+      hours: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
+      target_motor: targetMotor
     };
 
-    // Extended JSON payload for backward compatibility
     const dayLabels = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
     const selectedDaysList = filterDays
       .map((active, index) => (active ? dayLabels[index] : ''))
@@ -1494,28 +1561,71 @@ export default function PoolControllerPage() {
 
     const extendedData = {
       ...coreJson,
-      inicio: startingTime,
-      horas: parseInt(filterHours) || 4,
-      duration: parseInt(filterHours) || 4,
+      inicio: filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`,
+      horas: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
+      duration: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
       days: filterDays,
       days_binary: daysBinary,
       active_days_str: selectedDaysList
     };
 
-    // 1. Publish precise requested topic style
+    // 1. General FT (Filtration Timer) topics
     publishTopic(`MASTERLAZER/${deviceId}/ft/cfg`, JSON.stringify(coreJson));
-
-    // 2. Publish compatibility formats
     publishTopic(`${deviceId}/ft/cfg`, JSON.stringify(extendedData));
 
-    // Individual topics publish
-    publishTopic(`MASTERLAZER/${deviceId}/ft/start`, startingTime);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/hours`, String(filterHours));
-    publishTopic(`${deviceId}/ft/start`, startingTime);
-    publishTopic(`${deviceId}/ft/hours`, String(filterHours));
+    // Individual standard topics for T1 and T2
+    publishTopic(`MASTERLAZER/${deviceId}/ft/t1/start`, filterInit1);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/t1/hours`, filterHours1);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/t2/start`, filterInit2);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/t2/hours`, filterHours2);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/days/binary`, daysBinary);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/days/str`, selectedDaysList);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/days`, daysBinary);
+
+    publishTopic(`${deviceId}/ft/t1/start`, filterInit1);
+    publishTopic(`${deviceId}/ft/t1/hours`, filterHours1);
+    publishTopic(`${deviceId}/ft/t2/start`, filterInit2);
+    publishTopic(`${deviceId}/ft/t2/hours`, filterHours2);
+    publishTopic(`${deviceId}/ft/days/binary`, daysBinary);
+    publishTopic(`${deviceId}/ft/days/str`, selectedDaysList);
+    publishTopic(`${deviceId}/ft/days`, daysBinary);
+
+    // Keep legacy single-timer topics for backward-compatible devices
+    const legacyStart = filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`;
+    publishTopic(`MASTERLAZER/${deviceId}/ft/start`, legacyStart);
+    publishTopic(`MASTERLAZER/${deviceId}/ft/hours`, filterHours1);
+    publishTopic(`${deviceId}/ft/start`, legacyStart);
+    publishTopic(`${deviceId}/ft/hours`, filterHours1);
+
+    // 2. Motor-specific direct timer topics
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/cfg`, JSON.stringify(coreJson));
+    publishTopic(`${deviceId}/${targetMotor}/timer/cfg`, JSON.stringify(extendedData));
+
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t1/start`, filterInit1);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t1/hours`, filterHours1);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t2/start`, filterInit2);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t2/hours`, filterHours2);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days/binary`, daysBinary);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days/str`, selectedDaysList);
+    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days`, daysBinary);
+
+    publishTopic(`${deviceId}/${targetMotor}/timer/t1/start`, filterInit1);
+    publishTopic(`${deviceId}/${targetMotor}/timer/t1/hours`, filterHours1);
+    publishTopic(`${deviceId}/${targetMotor}/timer/t2/start`, filterInit2);
+    publishTopic(`${deviceId}/${targetMotor}/timer/t2/hours`, filterHours2);
+    publishTopic(`${deviceId}/${targetMotor}/timer/days/binary`, daysBinary);
+    publishTopic(`${deviceId}/${targetMotor}/timer/days/str`, selectedDaysList);
+    publishTopic(`${deviceId}/${targetMotor}/timer/days`, daysBinary);
+
+    // Also update current legacy state for reactivity in other components
+    setFilterInit(legacyStart);
+    setFilterHours(filterHours1);
 
     const activeText = selectedDaysList ? `\nDias: [ ${selectedDaysList} ]` : `\nDias: Nenhum selecionado`;
-    alert(`Programação de filtragem enviada!\nHorário de Início: ${startingTime}\nDuração: ${filterHours} horas.${activeText}`);
+    const t1Text = filterInit1 === 'D' ? 'Timer 1: Desligado' : `Timer 1: ${filterInit1}h (Ativo por ${filterHours1}h)`;
+    const t2Text = filterInit2 === 'D' ? 'Timer 2: Desligado' : `Timer 2: ${filterInit2}h (Ativo por ${filterHours2}h)`;
+    
+    alert(`Programação de filtragem enviada para ${activeMotorName} (${targetMotor.toUpperCase()})!\n\n${t1Text}\n${t2Text}${activeText}`);
   };
 
   const handleSaveLedTimer = () => {
@@ -2278,12 +2388,16 @@ export default function PoolControllerPage() {
                             <Clock className="w-3.5 h-3.5 text-cyan-400" />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TIMERS</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${filterHours !== '0' || ledDuration !== '0' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         
                         <div className="mt-1">
                           <p className="text-[11px] text-white font-bold truncate">
-                            {filterHours !== '0' ? `${motor2Name}: ${filterInit} (${filterHours}h)` : `${motor2Name}: Inativo`}
+                            {filterInit1 !== 'D' || filterInit2 !== 'D' ? (
+                              `${activeModel === 'MM12TW' ? motor2Name : motor4Name}: ${filterInit1 !== 'D' ? `T1 ${filterInit1}h(${filterHours1}h)` : ''}${filterInit1 !== 'D' && filterInit2 !== 'D' ? ' / ' : ''}${filterInit2 !== 'D' ? `T2 ${filterInit2}h(${filterHours2}h)` : ''}`
+                            ) : (
+                              `${activeModel === 'MM12TW' ? motor2Name : motor4Name}: Inativo`
+                            )}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium truncate">
                             LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>
@@ -2661,56 +2775,58 @@ export default function PoolControllerPage() {
                     <div id={pickerContainerId} className="flex justify-center my-0.5" />
                   </div>
 
-                  <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-sm space-y-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Saturação</div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={satMultiplier}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value);
-                          lastUserColorInteractionRef.current = Date.now();
-                          setSatMultiplier(val);
-                          if (currentProgramRef.current === '---') {
-                            setCurrentProgram(1);
-                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
-                          }
-                          if (mqttConnected) {
-                            publishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
-                          }
-                        }}
-                        className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="w-10 text-right font-mono text-[11px] text-blue-400">{satMultiplier}%</span>
-                    </div>
+                  {activeModel !== 'MM12TW' && (
+                    <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-sm space-y-1.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Saturação</div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={satMultiplier}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            lastUserColorInteractionRef.current = Date.now();
+                            setSatMultiplier(val);
+                            if (currentProgramRef.current === '---') {
+                              setCurrentProgram(1);
+                              publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                              publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                            }
+                            if (mqttConnected) {
+                              throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
+                            }
+                          }}
+                          className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="w-10 text-right font-mono text-[11px] text-blue-400">{satMultiplier}%</span>
+                      </div>
 
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Brilho</div>
-                      <input  type="range"
-                        min="0"
-                        max="100"
-                        value={brightMultiplier}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value);
-                          lastUserColorInteractionRef.current = Date.now();
-                          setBrightMultiplier(val);
-                          if (currentProgramRef.current === '---') {
-                            setCurrentProgram(1);
-                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
-                          }
-                          if (mqttConnected) {
-                            publishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
-                          }
-                        }}
-                        className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="w-10 text-right font-mono text-[11px] text-blue-400">{brightMultiplier}%</span>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Brilho</div>
+                        <input  type="range"
+                          min="0"
+                          max="100"
+                          value={brightMultiplier}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            lastUserColorInteractionRef.current = Date.now();
+                            setBrightMultiplier(val);
+                            if (currentProgramRef.current === '---') {
+                              setCurrentProgram(1);
+                              publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                              publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                            }
+                            if (mqttConnected) {
+                              throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
+                            }
+                          }}
+                          className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="w-10 text-right font-mono text-[11px] text-blue-400">{brightMultiplier}%</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Program selection block */}
                   <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-2">
@@ -2785,75 +2901,87 @@ export default function PoolControllerPage() {
                   className="space-y-4"
                 >
                   {/* FILTRAGEM Card */}
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
+                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-4">
                     <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> {motor2Name.toUpperCase()}
+                      <Clock className="w-3.5 h-3.5" /> {activeModel === 'MM12TW' ? motor2Name.toUpperCase() : motor4Name.toUpperCase()}
                     </h3>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-1.5 border-b border-white/5 pb-2.5">
-                      <div className="space-y-0.5">
-                        <label className="text-xs font-bold text-slate-300">Horas Iniciais</label>
-                        <span className="text-[9.5px] text-slate-400 block">Até 3 horários</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 self-start sm:self-auto">
-                        {/* 1º Horário */}
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-[8.5px] text-slate-400 font-extrabold uppercase tracking-wider">1º</span>
-                          <select
-                            value={filterInit1}
-                            onChange={(e) => setFilterInit1(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
-                          >
-                            <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
-                            ))}
-                          </select>
+                    <div className="space-y-4">
+                      {/* TIMER 1 CONFIG */}
+                      <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-[#4398fa] uppercase tracking-wider">Timer 1</span>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${filterInit1 !== 'D' ? 'bg-[#4398fa]/20 text-[#4398fa]' : 'bg-slate-500/20 text-slate-400'}`}>
+                            {filterInit1 !== 'D' ? 'Ativo' : 'Inativo'}
+                          </span>
                         </div>
-
-                        {/* 2º Horário */}
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-[8.5px] text-slate-400 font-extrabold uppercase tracking-wider">2º</span>
-                          <select
-                            value={filterInit2}
-                            onChange={(e) => setFilterInit2(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
-                          >
-                            <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* 3º Horário */}
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-[8.5px] text-slate-400 font-extrabold uppercase tracking-wider">3º</span>
-                          <select
-                            value={filterInit3}
-                            onChange={(e) => setFilterInit3(e.target.value)}
-                            className="bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
-                          >
-                            <option value="D" className="bg-slate-950 text-slate-400 font-bold">D</option>
-                            {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
-                              <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
-                            ))}
-                          </select>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">Início</label>
+                            <select
+                              value={filterInit1}
+                              onChange={(e) => setFilterInit1(e.target.value)}
+                              className="w-full bg-slate-900/80 border border-white/10 text-[#4398fa] text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#4398fa]"
+                            >
+                              <option value="D" className="bg-slate-950 text-slate-400 font-bold">D (Desligado)</option>
+                              {Array.from({ length: 24 }, (_, i) => String(i)).map(h => (
+                                <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">Qtd Horas</label>
+                            <select
+                              value={filterHours1}
+                              onChange={(e) => setFilterHours1(e.target.value)}
+                              disabled={filterInit1 === 'D'}
+                              className={`w-full bg-slate-900/80 border border-white/10 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#4398fa] ${filterInit1 === 'D' ? 'opacity-40 cursor-not-allowed text-slate-505' : 'text-[#4398fa]'}`}
+                            >
+                              {Array.from({ length: 12 }, (_, i) => String(i + 1)).map(h => (
+                                <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <label className="text-xs font-medium text-slate-300">Qtd Horas</label>
-                      <select
-                        value={filterHours}
-                        onChange={(e) => setFilterHours(e.target.value)}
-                        className="bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-lg border border-white/10 text-[#4398fa] text-xs font-bold focus:outline-none focus:border-[#4398fa] focus:bg-white/10"
-                      >
-                        {Array.from({ length: 8 }, (_, i) => String(i)).map(h => (
-                          <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
-                        ))}
-                      </select>
+                      {/* TIMER 2 CONFIG */}
+                      <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-[#4398fa] uppercase tracking-wider">Timer 2</span>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${filterInit2 !== 'D' ? 'bg-[#4398fa]/20 text-[#4398fa]' : 'bg-slate-500/20 text-slate-400'}`}>
+                            {filterInit2 !== 'D' ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">Início</label>
+                            <select
+                              value={filterInit2}
+                              onChange={(e) => setFilterInit2(e.target.value)}
+                              className="w-full bg-slate-900/80 border border-white/10 text-[#4398fa] text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#4398fa]"
+                            >
+                              <option value="D" className="bg-slate-950 text-slate-400 font-bold">D (Desligado)</option>
+                              {Array.from({ length: 24 }, (_, i) => String(i)).map(h => (
+                                <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-bold block">Qtd Horas</label>
+                            <select
+                              value={filterHours2}
+                              onChange={(e) => setFilterHours2(e.target.value)}
+                              disabled={filterInit2 === 'D'}
+                              className={`w-full bg-slate-900/80 border border-white/10 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#4398fa] ${filterInit2 === 'D' ? 'opacity-40 cursor-not-allowed text-slate-505' : 'text-[#4398fa]'}`}
+                            >
+                              {Array.from({ length: 12 }, (_, i) => String(i + 1)).map(h => (
+                                <option key={h} value={h} className="bg-slate-950 text-[#4398fa] font-bold">{h}h</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Seleção de Dias da Semana (DSTQQSS) */}
@@ -2919,7 +3047,7 @@ export default function PoolControllerPage() {
                       onClick={handleSaveFilter}
                       className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                     >
-                      Salvar {motor2Name}
+                      Salvar {activeModel === 'MM12TW' ? motor2Name : motor4Name}
                     </button>
                   </div>
 
