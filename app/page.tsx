@@ -3149,7 +3149,7 @@ export default function PoolControllerPage() {
                     </div>
 
                     {!mqttConnected && (
-                      <p className="text-[10px] text-[#4398fa]/90 leading-snug mt-3 flex items-start gap-1 bg-[#4398fa]/10 p-2 rounded-xl border border-[#4398fa]/25">
+                      <p className="text-[10px] text-[#e8fa00]/90 leading-snug mt-3 flex items-start gap-1 bg-[#e8fa00]/10 p-2 rounded-xl border border-[#e8fa00]/25">
                         <Info className="w-3.5 h-3.5 shrink-0" />
                         Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba HOME.
                       </p>
