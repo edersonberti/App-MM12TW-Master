@@ -13,6 +13,7 @@ import {
   Clock,
   LogOut,
   Sliders,
+  Home,
   Check,
   AlertTriangle,
   Wifi,
@@ -29,7 +30,16 @@ import {
   Edit2,
   QrCode,
   Camera,
-  X
+  X,
+  Users,
+  Database,
+  Activity,
+  Shield,
+  Plus,
+  Trash2,
+  Search,
+  MapPin,
+  Compass
 } from 'lucide-react';
 
 // TypeScript declarations for browser-loaded scripts
@@ -78,9 +88,96 @@ const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: st
 
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup'>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
+
+  // Admin & Owner Dashboard states
+  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba2' | 'aba3' | 'aba4'>('home');
+  const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
+
+  const handleBackToHome = () => {
+    if (currentUser?.role === 'owner') {
+      setActiveScreen('admin');
+      setAdminTab('home');
+    } else {
+      setActiveScreen('home');
+    }
+  };
+
+  const [simUsers, setSimUsers] = useState<any[]>([]);
+  const [adminSearchUser, setAdminSearchUser] = useState('');
+  const [adminSearchEquip, setAdminSearchEquip] = useState('');
+  const [userModalOpen, setUserModalOpen] = useState<'add' | 'edit' | null>(null);
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any | null>(null);
+  const [userFormEmail, setUserFormEmail] = useState('');
+  const [userFormPassword, setUserFormPassword] = useState('');
+  const [userFormRole, setUserFormRole] = useState<'owner' | 'operator'>('operator');
+  const [userLogs, setUserLogs] = useState<any[]>([]);
+  const [showConfirmClearLogs, setShowConfirmClearLogs] = useState(false);
+
+  // Sensors simulator (Aba 2)
+  const [sensorCollectorTemp, setSensorCollectorTemp] = useState<number>(45);
+  const [sensorPoolTemp, setSensorPoolTemp] = useState<number>(28);
+  const [sensorErrorActive, setSensorErrorActive] = useState<boolean>(false);
+  const [flowErrorActive, setFlowErrorActive] = useState<boolean>(false);
+
+  // Individual telemetry search & data state
+  const [telemetrySearchId, setTelemetrySearchId] = useState('');
+  const [deviceTelemetryMap, setDeviceTelemetryMap] = useState<Record<string, {
+    mostUsedLedProgram: string;
+    maxFilteringTime: number;
+    minFilteringTime: number;
+    hydroTimerUsageMinutes: number;
+    latitude: number;
+    longitude: number;
+  }>>({});
+
+  const getDeviceTelemetry = (id: string) => {
+    const key = id.toUpperCase();
+    if (deviceTelemetryMap[key]) {
+      return deviceTelemetryMap[key];
+    }
+    // Return deterministic stable defaults based on the key to prevent blank states
+    const latBase = -23.5505;
+    const lngBase = -46.6333;
+    let charSum = 0;
+    for (let i = 0; i < key.length; i++) {
+      charSum += key.charCodeAt(i);
+    }
+    const offsetLat = ((charSum % 100) - 50) / 200; // between -0.25 and +0.25
+    const offsetLng = (((charSum * 3) % 100) - 50) / 200;
+    
+    const ledPrograms = ['Arco-Íris Dinâmico', 'Azul Real Fixo', 'Verde Relax', 'Cromoterapia Suave', 'Festa Estroboscópica', 'Lilás Zen'];
+    const chosenLed = ledPrograms[charSum % ledPrograms.length];
+    
+    return {
+      mostUsedLedProgram: chosenLed,
+      maxFilteringTime: 4 + (charSum % 7), // 4h to 10h
+      minFilteringTime: 1 + (charSum % 3), // 1h to 3h
+      hydroTimerUsageMinutes: 15 * (1 + (charSum % 4)), // 15, 30, 45, 60
+      latitude: Number((latBase + offsetLat).toFixed(4)),
+      longitude: Number((lngBase + offsetLng).toFixed(4))
+    };
+  };
+
+  const updateDeviceTelemetry = (id: string, updatedFields: Partial<{
+    mostUsedLedProgram: string;
+    maxFilteringTime: number;
+    minFilteringTime: number;
+    hydroTimerUsageMinutes: number;
+    latitude: number;
+    longitude: number;
+  }>) => {
+    const key = id.toUpperCase();
+    const current = getDeviceTelemetry(id);
+    const newMap = {
+      ...deviceTelemetryMap,
+      [key]: { ...current, ...updatedFields }
+    };
+    setDeviceTelemetryMap(newMap);
+    localStorage.setItem('device_telemetry_map', JSON.stringify(newMap));
+  };
   
   // Auth inputs
   const [emailInput, setEmailInput] = useState('');
@@ -130,6 +227,8 @@ export default function PoolControllerPage() {
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
   const activeModel = activeEquipment?.model || 'MM12TW';
+  const searchedEquip = registeredEquipments.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
+  const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
   
@@ -270,18 +369,72 @@ export default function PoolControllerPage() {
       if (storedEquips) {
         try {
           const parsed = JSON.parse(storedEquips);
-          setRegisteredEquipments(parsed);
+          const hasOp1 = parsed.some((e: any) => e.userEmail === 'operador.suporte@lazer.com');
+          const hasOp2 = parsed.some((e: any) => e.userEmail === 'visitante.pool@lazer.com');
+          if (!hasOp1 || !hasOp2) {
+            const updatedParsed = parsed.map((e: any) => {
+              if (e.id === 'MM12TW-000123' && !e.userEmail) {
+                return { ...e, userEmail: 'operador.suporte@lazer.com', userPassword: '12345678' };
+              }
+              if (e.id === 'MM03TW-1002' && !e.userEmail) {
+                return { ...e, userEmail: 'visitante.pool@lazer.com', userPassword: '12345678' };
+              }
+              return e;
+            });
+            setRegisteredEquipments(updatedParsed);
+            localStorage.setItem('registered_equipments', JSON.stringify(updatedParsed));
+          } else {
+            setRegisteredEquipments(parsed);
+          }
         } catch (e) {
           console.error(e);
         }
       } else {
         const initialEquips = [
-          { id: 'MM12TW-000123', model: 'MM12TW' as const },
-          { id: 'MM03TW-1002', model: 'MM03TW' as const },
+          { id: 'MM12TW-000123', model: 'MM12TW' as const, userEmail: 'operador.suporte@lazer.com', userPassword: '12345678' },
+          { id: 'MM03TW-1002', model: 'MM03TW' as const, userEmail: 'visitante.pool@lazer.com', userPassword: '12345678' },
           { id: 'MM08TSW-20045', model: 'MM08TSW' as const }
         ];
         setRegisteredEquipments(initialEquips);
         localStorage.setItem('registered_equipments', JSON.stringify(initialEquips));
+      }
+
+      const storedTelemetry = localStorage.getItem('device_telemetry_map');
+      if (storedTelemetry) {
+        try {
+          setDeviceTelemetryMap(JSON.parse(storedTelemetry));
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        const initialTelemetry = {
+          'MM12TW-000123': {
+            mostUsedLedProgram: 'Arco-Íris Dinâmico',
+            maxFilteringTime: 6,
+            minFilteringTime: 2,
+            hydroTimerUsageMinutes: 30,
+            latitude: -23.5505,
+            longitude: -46.6333
+          },
+          'MM03TW-1002': {
+            mostUsedLedProgram: 'Azul Fixo',
+            maxFilteringTime: 4,
+            minFilteringTime: 1,
+            hydroTimerUsageMinutes: 15,
+            latitude: -22.9068,
+            longitude: -43.1729
+          },
+          'MM08TSW-20045': {
+            mostUsedLedProgram: 'Cromoterapia Relax',
+            maxFilteringTime: 8,
+            minFilteringTime: 3,
+            hydroTimerUsageMinutes: 45,
+            latitude: -30.0346,
+            longitude: -51.2177
+          }
+        };
+        setDeviceTelemetryMap(initialTelemetry);
+        localStorage.setItem('device_telemetry_map', JSON.stringify(initialTelemetry));
       }
 
       const conf = {
@@ -298,19 +451,53 @@ export default function PoolControllerPage() {
       try {
         const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
         const defaultUsers = [
-          { email: 'admin@admin.com', password: '12345678', uid: 'sim-admin-id' },
-          { email: 'edersonbatistabertirs@gmail.com', password: '12345678', uid: 'sim-user-id' }
+          { email: 'admin@admin.com', password: '12345678', uid: 'sim-admin-id', role: 'owner' },
+          { email: 'edersonbatistabertirs@gmail.com', password: '12345678', uid: 'sim-user-id', role: 'owner' },
+          { email: 'operador.suporte@lazer.com', password: '12345678', uid: 'sim-op-id', role: 'operator' },
+          { email: 'visitante.pool@lazer.com', password: '12345678', uid: 'sim-visit-id', role: 'operator' }
         ];
         
         let updatedUsersList = [...storedUsers];
         defaultUsers.forEach(defUser => {
-          if (!updatedUsersList.some(u => (u.email || '').toLowerCase().trim() === defUser.email)) {
+          const exists = updatedUsersList.find(u => (u.email || '').toLowerCase().trim() === defUser.email);
+          if (!exists) {
             updatedUsersList.push(defUser);
+          } else if (!exists.role) {
+            exists.role = defUser.role;
           }
         });
         localStorage.setItem('sim_users', JSON.stringify(updatedUsersList));
+        setSimUsers(updatedUsersList);
       } catch (e) {
         console.error("Error pre-seeding users:", e);
+      }
+
+      // Pre-seed logs for beautiful stats graphs
+      try {
+        if (!localStorage.getItem('sim_user_logs')) {
+          const dummyLogs = [
+            { id: 'log-1', timestamp: new Date(Date.now() - 5 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Ligou Motor Hidro (M1)', deviceId: 'MM12TW-000123' },
+            { id: 'log-2', timestamp: new Date(Date.now() - 25 * 60000).toISOString(), email: 'admin@admin.com', action: 'Configurou Timer do LED', deviceId: 'MM12TW-000123' },
+            { id: 'log-3', timestamp: new Date(Date.now() - 40 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Alterou Cor do LED (H:240, S:100, V:100)', deviceId: 'MM12TW-000123' },
+            { id: 'log-4', timestamp: new Date(Date.now() - 120 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Salvou Configuração de Filtração', deviceId: 'MM12TW-000123' },
+            { id: 'log-5', timestamp: new Date(Date.now() - 180 * 60000).toISOString(), email: 'visitante.pool@lazer.com', action: 'Ligou Motor de Filtro (M2)', deviceId: 'MM03TW-1002' },
+            { id: 'log-6', timestamp: new Date(Date.now() - 300 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Desligou Motor Hidro (M1)', deviceId: 'MM12TW-000123' },
+            { id: 'log-7', timestamp: new Date(Date.now() - 420 * 60000).toISOString(), email: 'admin@admin.com', action: 'Ligou Motor 3 (M3)', deviceId: 'MM08TSW-20045' },
+            { id: 'log-8', timestamp: new Date(Date.now() - 600 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Configurou Timer de Hidro', deviceId: 'MM12TW-000123' },
+            { id: 'log-9', timestamp: new Date(Date.now() - 820 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Alterou Cor do LED (H:120, S:100, V:100)', deviceId: 'MM12TW-000123' },
+            { id: 'log-10', timestamp: new Date(Date.now() - 1000 * 60000).toISOString(), email: 'admin@admin.com', action: 'Salvou Configurações do Broker MQTT', deviceId: 'MM12TW-000123' },
+            { id: 'log-11', timestamp: new Date(Date.now() - 1200 * 60000).toISOString(), email: 'visitante.pool@lazer.com', action: 'Ligou Motor 4 (M4)', deviceId: 'MM12TW-000123' },
+            { id: 'log-12', timestamp: new Date(Date.now() - 1500 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Configurou Timer de Hidro', deviceId: 'MM12TW-000123' },
+            { id: 'log-13', timestamp: new Date(Date.now() - 1800 * 60000).toISOString(), email: 'admin@admin.com', action: 'Ligou Motor Hidro (M1)', deviceId: 'MM03TW-1002' },
+            { id: 'log-14', timestamp: new Date(Date.now() - 2200 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Desligou Motor 3 (M3)', deviceId: 'MM08TSW-20045' },
+            { id: 'log-15', timestamp: new Date(Date.now() - 2800 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Ligou Motor de Filtro (M2)', deviceId: 'MM12TW-000123' }
+          ];
+          localStorage.setItem('sim_user_logs', JSON.stringify(dummyLogs));
+        }
+        const logs = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
+        setUserLogs(logs);
+      } catch (e) {
+        console.error("Error pre-seeding logs:", e);
       }
 
       const simUser = localStorage.getItem('sim_user');
@@ -318,7 +505,13 @@ export default function PoolControllerPage() {
         try {
           const parsed = JSON.parse(simUser);
           setCurrentUser(parsed);
-          setActiveScreen('home');
+          const emailLower = (parsed.email || '').toLowerCase().trim();
+          const isOwner = emailLower === 'admin@admin.com' || emailLower === 'edersonbatistabertirs@gmail.com' || parsed.role === 'owner';
+          if (isOwner) {
+            setActiveScreen('admin');
+          } else {
+            setActiveScreen('home');
+          }
         } catch (e) {
           // ignore
         }
@@ -731,11 +924,22 @@ export default function PoolControllerPage() {
           return uEmail === cleanEmail && u.password === cleanPassword;
         });
         
+        const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com' || matched?.role === 'owner';
+        
         if (matched || (cleanEmail === 'admin@admin.com' && cleanPassword === '12345678') || (cleanEmail === 'edersonbatistabertirs@gmail.com' && cleanPassword === '12345678')) { // default dev shortcuts
-          const loggedUser = { email: cleanEmail, password: cleanPassword, uid: matched?.uid || 'sim-admin-id' };
+          const loggedUser = { 
+            email: cleanEmail, 
+            password: cleanPassword, 
+            uid: matched?.uid || (cleanEmail === 'admin@admin.com' ? 'sim-admin-id' : 'sim-user-id'),
+            role: isOwner ? 'owner' : (matched?.role || 'operator')
+          };
           localStorage.setItem('sim_user', JSON.stringify(loggedUser));
           setCurrentUser(loggedUser);
-          setActiveScreen('home');
+          if (isOwner) {
+            setActiveScreen('admin');
+          } else {
+            setActiveScreen('home');
+          }
         } else {
           setAuthErrorMessage('Senha incorreta ou e-mail não cadastrado neste navegador.');
         }
@@ -743,28 +947,42 @@ export default function PoolControllerPage() {
         const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
         const existingIdx = storedUsers.findIndex((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
         
+        const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com';
+        const role = isOwner ? 'owner' : 'operator';
+
         if (existingIdx !== -1) {
           // If the profile matches a default preseeded user profile with '12345678', we'll allow registering over it with a custom password!
           if (storedUsers[existingIdx].password === '12345678') {
             storedUsers[existingIdx].password = cleanPassword;
+            storedUsers[existingIdx].role = role;
             localStorage.setItem('sim_users', JSON.stringify(storedUsers));
-            localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid }));
-            setCurrentUser({ email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid });
+            const loggedUser = { email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid, role };
+            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+            setCurrentUser(loggedUser);
             alert('Sua conta pré-cadastrada foi personalizada e ativada com sucesso!');
-            setActiveScreen('home');
+            if (isOwner) {
+              setActiveScreen('admin');
+            } else {
+              setActiveScreen('home');
+            }
             return;
           }
           setAuthErrorMessage('E-mail já cadastrado.');
           return;
         }
-        const newUser = { email: cleanEmail, password: cleanPassword, uid: 'sim-' + Math.random().toString(36).substr(2, 9) };
+        const newUser = { email: cleanEmail, password: cleanPassword, role, uid: 'sim-' + Math.random().toString(36).substr(2, 9) };
         storedUsers.push(newUser);
         localStorage.setItem('sim_users', JSON.stringify(storedUsers));
         
-        localStorage.setItem('sim_user', JSON.stringify({ email: cleanEmail, password: cleanPassword, uid: newUser.uid }));
-        setCurrentUser({ email: cleanEmail, password: cleanPassword, uid: newUser.uid });
+        const loggedUser = { email: cleanEmail, password: cleanPassword, role, uid: newUser.uid };
+        localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+        setCurrentUser(loggedUser);
         alert('Conta criada com sucesso no sistema local!');
-        setActiveScreen('home');
+        if (isOwner) {
+          setActiveScreen('admin');
+        } else {
+          setActiveScreen('home');
+        }
       }
     }, 800);
   };
@@ -1435,6 +1653,140 @@ export default function PoolControllerPage() {
     }
   }
 
+  const logUserAction = (actionName: string) => {
+    try {
+      const email = currentUser?.email || 'anonimo@pool.com';
+      const storedLogs = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
+      const newLog = {
+        id: Math.random().toString(36).substr(2, 9),
+        timestamp: new Date().toISOString(),
+        email,
+        action: actionName,
+        deviceId: deviceId || 'MASTERLAZER'
+      };
+      const updated = [newLog, ...storedLogs].slice(0, 200);
+      localStorage.setItem('sim_user_logs', JSON.stringify(updated));
+      setUserLogs(updated);
+    } catch (e) {
+      console.error("Error logging action:", e);
+    }
+  };
+
+  const handleAddUserAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = userFormEmail.trim().toLowerCase();
+    const password = userFormPassword;
+    const role = userFormRole;
+
+    if (!email || password.length < 8) {
+      alert('Preencha um e-mail válido e senha com no mínimo 8 caracteres.');
+      return;
+    }
+
+    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
+    if (currentUsersList.some((u: any) => (u.email || '').trim().toLowerCase() === email)) {
+      alert('Usuário com este e-mail já existe!');
+      return;
+    }
+
+    const newUser = {
+      email,
+      password,
+      role,
+      uid: 'sim-' + Math.random().toString(36).substr(2, 9)
+    };
+
+    const updated = [...currentUsersList, newUser];
+    localStorage.setItem('sim_users', JSON.stringify(updated));
+    setSimUsers(updated);
+    logUserAction(`Criou usuário: ${email} (${role === 'owner' ? 'Proprietário' : 'Operador'})`);
+
+    // Reset Form
+    setUserFormEmail('');
+    setUserFormPassword('');
+    setUserFormRole('operator');
+    setUserModalOpen(null);
+    alert('Usuário cadastrado com sucesso!');
+  };
+
+  const handleUpdateUserAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUserForEdit) return;
+
+    const email = userFormEmail.trim().toLowerCase();
+    const password = userFormPassword;
+    const role = userFormRole;
+
+    if (!email || password.length < 8) {
+      alert('Preencha um e-mail válido e senha com no mínimo 8 caracteres.');
+      return;
+    }
+
+    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
+    const idx = currentUsersList.findIndex((u: any) => u.uid === selectedUserForEdit.uid);
+    if (idx === -1) {
+      alert('Usuário não encontrado!');
+      return;
+    }
+
+    // Check email uniqueness if changed
+    if (currentUsersList[idx].email.toLowerCase().trim() !== email) {
+      if (currentUsersList.some((u: any) => (u.email || '').trim().toLowerCase() === email)) {
+        alert('E-mail já está sendo usado por outro usuário!');
+        return;
+      }
+    }
+
+    currentUsersList[idx].email = email;
+    currentUsersList[idx].password = password;
+    currentUsersList[idx].role = role;
+
+    localStorage.setItem('sim_users', JSON.stringify(currentUsersList));
+    setSimUsers(currentUsersList);
+    logUserAction(`Editou usuário: ${email} (${role === 'owner' ? 'Proprietário' : 'Operador'})`);
+
+    // If edited self, update currentUser state
+    if (currentUser && currentUser.uid === selectedUserForEdit.uid) {
+      const updatedSelf = { ...currentUser, email, password, role };
+      localStorage.setItem('sim_user', JSON.stringify(updatedSelf));
+      setCurrentUser(updatedSelf);
+    }
+
+    // Reset Form
+    setSelectedUserForEdit(null);
+    setUserFormEmail('');
+    setUserFormPassword('');
+    setUserFormRole('operator');
+    setUserModalOpen(null);
+    alert('Usuário atualizado com sucesso!');
+  };
+
+  const handleDeleteUserAdmin = (uid: string) => {
+    if (currentUser && currentUser.uid === uid) {
+      alert('Você não pode excluir a si mesmo enquanto estiver logado!');
+      return;
+    }
+
+    const targetUser = simUsers.find(u => u.uid === uid);
+    if (!targetUser) return;
+
+    if (targetUser.email === 'admin@admin.com' || targetUser.email === 'edersonbatistabertirs@gmail.com') {
+      alert('Estes usuários de sistema padrão (proprietários raiz) não podem ser excluídos!');
+      return;
+    }
+
+    if (!confirm(`Tem certeza que deseja excluir o usuário ${targetUser.email}?`)) {
+      return;
+    }
+
+    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
+    const updated = currentUsersList.filter((u: any) => u.uid !== uid);
+    localStorage.setItem('sim_users', JSON.stringify(updated));
+    setSimUsers(updated);
+    logUserAction(`Excluiu usuário: ${targetUser.email}`);
+    alert('Usuário excluído!');
+  };
+
   // 7. Interactive action button tasks
   const handleMotorChange = (motorType: 'hidro' | 'filtro' | 'motor3' | 'motor4', checked: boolean) => {
     let num = '1';
@@ -1453,6 +1805,9 @@ export default function PoolControllerPage() {
     }
 
     const payloadON_OFF = checked ? 'ON' : 'OFF';
+
+    const labelName = motorType === 'hidro' ? motor1Name : motorType === 'filtro' ? motor2Name : motorType === 'motor3' ? motor3Name : motor4Name;
+    logUserAction(`Togglou ${labelName} para ${checked ? 'LIGADO' : 'DESLIGADO'}`);
 
     // Core brand commands
     publishTopic(`MASTERLAZER/${deviceId}/mt${num}`, payloadON_OFF);
@@ -1626,6 +1981,7 @@ export default function PoolControllerPage() {
     const t1Text = filterInit1 === 'D' ? 'Timer 1: Desligado' : `Timer 1: ${filterInit1}h (Ativo por ${filterHours1}h)`;
     const t2Text = filterInit2 === 'D' ? 'Timer 2: Desligado' : `Timer 2: ${filterInit2}h (Ativo por ${filterHours2}h)`;
     
+    logUserAction(`Configurou Filtração: T1: ${filterInit1}h(${filterHours1}h), T2: ${filterInit2}h(${filterHours2}h), Dias: ${selectedDaysList || 'Nenhum'}`);
     alert(`Programação de filtragem enviada para ${activeMotorName} (${targetMotor.toUpperCase()})!\n\n${t1Text}\n${t2Text}${activeText}`);
   };
 
@@ -1674,6 +2030,7 @@ export default function PoolControllerPage() {
 
 
 
+    logUserAction(`Configurou Timer LED: Início ${startingTime}, Duração: ${ledDuration}h, Programa: ${ledProgram}`);
     alert(`Programação do Timer LED enviada!\nInício: ${startingTime}\nDuração: ${ledDuration} horas\nPrograma: ${ledProgram}.`);
   };
 
@@ -1719,6 +2076,7 @@ export default function PoolControllerPage() {
     publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/duration`, String(hoursVal));
     publishTopic(`${deviceId}/mt1/timer/duration`, String(hoursVal));
 
+    logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
     alert(`Programação do Timer ${motor1Name} enviada!\nStatus: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado (D)'}`);
   };
 
@@ -1960,8 +2318,10 @@ export default function PoolControllerPage() {
     setActiveScreen('home');
   };
 
+  const isCurrentlyAdmin = activeScreen === 'admin';
+
   return (
-    <div className="relative w-full max-w-[440px] h-[100dvh] sm:h-auto mx-auto p-0 sm:p-4 select-none overflow-hidden" id="pool-controller-app">
+    <div className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-[100dvh] sm:h-auto'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`} id="pool-controller-app">
       <Script 
         src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" 
         strategy="afterInteractive" 
@@ -2000,14 +2360,15 @@ export default function PoolControllerPage() {
       )}
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
-      <div className="w-full bg-white/5 backdrop-blur-xl border-0 sm:border border-white/10 rounded-none sm:rounded-[32px] overflow-hidden shadow-2xl flex flex-col h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh] relative z-20">
+      <div className={`w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
         
         {/* Notch & Status Indicators */}
-        <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
-          <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">{currentTime}</span>
-          {/* Virtual Notch - Hidden on mobile, shown on desktop */}
-          <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
-          <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-sans text-slate-300">
+        {!isCurrentlyAdmin && (
+          <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
+            <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">{currentTime}</span>
+            {/* Virtual Notch - Hidden on mobile, shown on desktop */}
+            <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
+            <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-sans text-slate-300">
             {mqttConnected ? (
               <span className="flex items-center gap-1 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25 text-emerald-400 font-extrabold text-[9px] scale-90">
                 <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
@@ -2026,12 +2387,13 @@ export default function PoolControllerPage() {
             )}
           </div>
         </div>
+        )}
 
         {/* Master App Screen Display Frame */}
-        <div className="flex-1 bg-transparent flex flex-col relative overflow-hidden">
+        <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup sheets) */}
-          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && (
+          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'admin' && (
             <header className="border-b border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-40">
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
@@ -2078,13 +2440,24 @@ export default function PoolControllerPage() {
                   </span>
                 </div>
 
-                <button 
-                  onClick={() => setActiveScreen('setup')} 
-                  className="w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all hover:bg-white/10"
-                  title="Configurações Avançadas"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {currentUser && (currentUser.email === 'admin@admin.com' || currentUser.email === 'edersonbatistabertirs@gmail.com' || currentUser.role === 'owner') && (
+                    <button 
+                      onClick={() => setActiveScreen('admin')} 
+                      className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
+                      title="Painel de Administração (Proprietário)"
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => setActiveScreen('setup')} 
+                    className="w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all hover:bg-white/10"
+                    title="Configurações Avançadas"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS */}
@@ -3539,7 +3912,7 @@ export default function PoolControllerPage() {
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => setActiveScreen('home')}
+                      onClick={handleBackToHome}
                       className="flex-1 py-2.5 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-xs font-semibold rounded-xl transition-all"
                     >
                       Voltar
@@ -3551,6 +3924,1697 @@ export default function PoolControllerPage() {
                       Salvar Tudo
                     </button>
                   </div>
+                </motion.div>
+              )}
+
+              {/* Screen: PC Administration & Owner Dashboard */}
+              {activeScreen === 'admin' && (
+                <motion.div
+                  key="admin-screen"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="flex-1 flex flex-col space-y-6 text-left"
+                >
+                  {/* Dashboard Header Panel */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400">
+                        <Shield className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-white tracking-tight">Painel Administrativo do Proprietário</h2>
+                        <p className="text-xs text-slate-400">Acesso restrito para gerenciamento de usuários, equipamentos e telemetria.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          if (adminTab === 'home') {
+                            setActiveScreen('home');
+                          } else {
+                            setAdminTab('home');
+                          }
+                        }}
+                        className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/5"
+                      >
+                        {adminTab === 'home' ? (
+                          <>
+                            <Sliders className="w-4 h-4" />
+                            Voltar para o App
+                          </>
+                        ) : (
+                          <>
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para Home Admin
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          localStorage.removeItem('sim_user');
+                          setCurrentUser(null);
+                          setActiveScreen('login');
+                        }}
+                        className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/20 text-rose-400 rounded-xl text-xs font-bold transition-all active:scale-95"
+                      >
+                        Sair do App
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tab Selector bar */}
+                  <div className="flex border-b border-white/10 overflow-x-auto pb-px gap-1">
+                    <button
+                      onClick={() => setAdminTab('home')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'home'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Home className="w-4 h-4" />
+                      Home Admin
+                    </button>
+                    <button
+                      onClick={() => setAdminTab('aba1')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'aba1'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      Usuários & Equipamentos
+                    </button>
+                    <button
+                      onClick={() => setAdminTab('aba2')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'aba2'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Terminal className="w-4 h-4" />
+                      Simulador & Telemetria
+                    </button>
+                    <button
+                      onClick={() => setAdminTab('aba3')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'aba3'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Activity className="w-4 h-4" />
+                      Estatísticas de Uso
+                    </button>
+                    <button
+                      onClick={() => setAdminTab('aba4')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'aba4'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Database className="w-4 h-4" />
+                      Info Técnica & MQTT
+                    </button>
+                  </div>
+
+                  {/* Tab Body Contents */}
+                  <div className="flex-1 min-h-[400px]">
+                    
+                    {/* Tab Home: Admin Panel Hub */}
+                    {adminTab === 'home' && (
+                      <div className="space-y-6">
+                        {/* Welcome banner & Stats Overview */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div className="p-5 bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-2xl flex flex-col justify-between">
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
+                            <div className="flex items-baseline gap-2 mt-2">
+                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator').length}</span>
+                              <span className="text-xs text-amber-400 font-semibold">Ativos</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
+                          </div>
+
+                          <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
+                            <div className="flex items-baseline gap-2 mt-2">
+                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
+                              <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
+                          </div>
+
+                          <div className="p-5 bg-gradient-to-br from-purple-500/10 to-pink-500/5 border border-purple-500/20 rounded-2xl flex flex-col justify-between">
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Histórico de Eventos</span>
+                            <div className="flex items-baseline gap-2 mt-2">
+                              <span className="text-3xl font-extrabold text-white">{userLogs.length}</span>
+                              <span className="text-xs text-purple-400 font-semibold">Logs</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Ações de comando e auditoria registradas.</p>
+                          </div>
+
+                          <div className="p-5 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl flex flex-col justify-between">
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Conexão MQTT Broker</span>
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className={`inline-block w-2.5 h-2.5 rounded-full ${mqttConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                              <span className="text-base font-bold text-white truncate max-w-full font-mono">{mqttBroker || 'broker.hivemq.com'}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Porta de escuta configurada em {mqttPort || '8000'}.</p>
+                          </div>
+                        </div>
+
+                        {/* Quick Access Grid */}
+                        <div className="space-y-4">
+                          <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest text-left">Navegação Administrativa</h3>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Card 1 */}
+                            <button
+                              onClick={() => setAdminTab('aba1')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Users className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Controle de Usuários & Equipamentos</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Cadastre e edite operadores, vincule e gerencie equipamentos residenciais em tempo real.</p>
+                              </div>
+                            </button>
+
+                            {/* Card 2 */}
+                            <button
+                              onClick={() => setAdminTab('aba2')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Terminal className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Simulador de Telemetria</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Injete telemetrias de sensores e simule cenários de erro para testar a robustez do painel.</p>
+                              </div>
+                            </button>
+
+                            {/* Card 3 */}
+                            <button
+                              onClick={() => setAdminTab('aba3')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Activity className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Logs & Auditoria</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Monitore as ações dos operadores, com filtros de busca avançada e limpeza de histórico.</p>
+                              </div>
+                            </button>
+
+                            {/* Card 4 */}
+                            <button
+                              onClick={() => setAdminTab('aba4')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Database className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Configurações de Conexão MQTT</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Configure endereços do broker, portas, tópicos customizados, credenciais e info técnica.</p>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Operator View CTA Section */}
+                        <div className="p-6 bg-gradient-to-r from-amber-500/10 to-[#007AFF]/10 border border-white/10 rounded-2xl text-left flex flex-col md:flex-row justify-between items-center gap-4">
+                          <div className="space-y-1.5 max-w-xl">
+                            <h4 className="text-sm font-bold text-white font-sans">Interface de Operação de Piscinas</h4>
+                            <p className="text-xs text-slate-400 leading-relaxed">Deseja simular ou testar a interface de uso final (controle de bombas, LED, temporizadores e aquecimento) que o operador vê no celular?</p>
+                          </div>
+                          <button
+                            onClick={() => setActiveScreen('home')}
+                            className="px-5 py-3 bg-amber-400 hover:bg-amber-500 text-black rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-400/10 whitespace-nowrap font-sans"
+                          >
+                            <Sliders className="w-4 h-4" />
+                            Acessar o App
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Tab 1: Users & Equipments */}
+                    {adminTab === 'aba1' && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                          
+                          {/* Users panel */}
+                          <div className="lg:col-span-7 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h3 className="text-sm font-bold text-white">Usuários Cadastrados</h3>
+                                <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários registrados neste navegador</p>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setSelectedUserForEdit(null);
+                                  setUserFormEmail('');
+                                  setUserFormPassword('');
+                                  setUserFormRole('operator');
+                                  setUserModalOpen('add');
+                                }}
+                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-lg transition-all flex items-center gap-1"
+                              >
+                                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                                Novo Usuário
+                              </button>
+                            </div>
+
+                            {/* Inline Modal Form Container (Avoid overlays, stays inside layout) */}
+                            {userModalOpen && (
+                              <form
+                                onSubmit={userModalOpen === 'add' ? handleAddUserAdmin : handleUpdateUserAdmin}
+                                className="p-4 rounded-xl bg-white/10 border border-amber-500/20 space-y-3"
+                              >
+                                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                                  {userModalOpen === 'add' ? 'Cadastrar Novo Usuário' : 'Editar Usuário'}
+                                </h4>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-300">E-mail</label>
+                                    <input
+                                      type="email"
+                                      required
+                                      placeholder="usuario@email.com"
+                                      value={userFormEmail}
+                                      onChange={(e) => setUserFormEmail(e.target.value)}
+                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-300">Senha</label>
+                                    <input
+                                      type="text"
+                                      required
+                                      placeholder="min. 8 caracteres"
+                                      value={userFormPassword}
+                                      onChange={(e) => setUserFormPassword(e.target.value)}
+                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-300">Acesso</label>
+                                    <select
+                                      value={userFormRole}
+                                      onChange={(e: any) => setUserFormRole(e.target.value)}
+                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors"
+                                    >
+                                      <option value="operator" className="bg-[#121824]">Operador (Básico)</option>
+                                      <option value="owner" className="bg-[#121824]">Proprietário (Admin)</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div className="flex justify-end gap-2 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setUserModalOpen(null)}
+                                    className="px-3 py-1.5 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-semibold rounded-lg"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="submit"
+                                    className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-lg shadow-lg shadow-amber-400/10"
+                                  >
+                                    {userModalOpen === 'add' ? 'Salvar Usuário' : 'Atualizar'}
+                                  </button>
+                                </div>
+                              </form>
+                            )}
+
+                            {/* Users Search */}
+                            <div className="relative">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                              <input
+                                type="text"
+                                placeholder="Filtrar usuários por e-mail..."
+                                value={adminSearchUser}
+                                onChange={(e) => setAdminSearchUser(e.target.value)}
+                                className="w-full pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+
+                            {/* Users List Data Table */}
+                            <div className="overflow-x-auto rounded-xl border border-white/10">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-black/20 text-slate-400 border-b border-white/10 text-left">
+                                    <th className="p-3">E-mail</th>
+                                    <th className="p-3">Senha</th>
+                                    <th className="p-3">Acesso</th>
+                                    <th className="p-3 text-right">Ações</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {simUsers
+                                    .filter(u => (u.email || '').toLowerCase().includes(adminSearchUser.toLowerCase()))
+                                    .map((u) => {
+                                      const isRoot = u.email === 'admin@admin.com' || u.email === 'edersonbatistabertirs@gmail.com';
+                                      const isSelf = currentUser && currentUser.email === u.email;
+                                      const isSelected = selectedUserForEquip === u.email;
+                                      return (
+                                        <tr 
+                                          key={u.uid || u.email} 
+                                          onClick={() => {
+                                            if (u.role === 'operator') {
+                                              const emailLower = (u.email || '').toLowerCase().trim();
+                                              if (selectedUserForEquip === u.email) {
+                                                setSelectedUserForEquip(null);
+                                                setAdminSearchEquip('');
+                                              } else {
+                                                setSelectedUserForEquip(u.email);
+                                                const associatedEquip = registeredEquipments.find(
+                                                  eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
+                                                );
+                                                if (associatedEquip) {
+                                                  setAdminSearchEquip(associatedEquip.id);
+                                                } else {
+                                                  setAdminSearchEquip('');
+                                                }
+                                              }
+                                            } else {
+                                              setSelectedUserForEquip(null);
+                                              setAdminSearchEquip('');
+                                            }
+                                          }}
+                                          className={`border-b border-white/5 transition-colors cursor-pointer ${
+                                            u.role === 'operator' ? 'hover:bg-amber-400/5' : 'hover:bg-white/2'
+                                          } ${isSelected ? 'bg-amber-400/10 border-l-2 border-l-amber-400' : ''}`}
+                                        >
+                                          <td className="p-3 font-semibold text-white">
+                                            <div className="flex items-center gap-1.5 font-sans">
+                                              <span>{u.email}</span>
+                                              {isSelf && (
+                                                <span className="text-[8px] bg-sky-500/15 text-sky-400 px-1 py-0.2 rounded border border-sky-500/20 font-bold">VOCÊ</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="p-3 font-mono text-slate-400">{u.password}</td>
+                                          <td className="p-3">
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              u.role === 'owner' 
+                                                ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' 
+                                                : 'bg-slate-400/15 text-slate-300 border border-white/5'
+                                            }`}>
+                                              {u.role === 'owner' ? 'Proprietário' : 'Operador'}
+                                            </span>
+                                          </td>
+                                          <td className="p-3 text-right">
+                                            <div className="flex justify-end gap-1.5">
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setSelectedUserForEdit(u);
+                                                  setUserFormEmail(u.email);
+                                                  setUserFormPassword(u.password);
+                                                  setUserFormRole(u.role || 'operator');
+                                                  setUserModalOpen('edit');
+                                                }}
+                                                title="Editar Usuário"
+                                                className="p-1.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-colors"
+                                              >
+                                                <Edit2 className="w-3.5 h-3.5" />
+                                              </button>
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDeleteUserAdmin(u.uid);
+                                                }}
+                                                disabled={isRoot || isSelf}
+                                                title={isRoot ? 'Usuário padrão raiz não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
+                                                className={`p-1.5 rounded-lg border transition-colors ${
+                                                  isRoot || isSelf
+                                                    ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
+                                                    : 'bg-rose-500/10 border-rose-500/20 hover:bg-rose-500/25 text-rose-400'
+                                                }`}
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* Equipments Panel */}
+                          <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                            <div>
+                              <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
+                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
+                            </div>
+
+                            <div className="relative">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                              <input
+                                type="text"
+                                placeholder="Buscar por ID ou modelo..."
+                                value={adminSearchEquip}
+                                onChange={(e) => setAdminSearchEquip(e.target.value)}
+                                className="w-full pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+
+                             <div className="space-y-2.5">
+                              {registeredEquipments
+                                .filter(eq => 
+                                  eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
+                                  eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
+                                  (eq.userEmail || '').toLowerCase().includes(adminSearchEquip.toLowerCase())
+                                )
+                                .map((eq) => {
+                                  const isActive = deviceId.toLowerCase() === eq.id.toLowerCase();
+                                  const isUserEquip = selectedUserForEquip && (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
+                                  return (
+                                    <div
+                                      key={eq.id}
+                                      className={`p-4 rounded-xl border transition-all text-left flex justify-between items-center ${
+                                        isUserEquip
+                                          ? 'bg-amber-500/10 border-amber-400 shadow-lg shadow-amber-500/10'
+                                          : isActive
+                                          ? 'bg-[#4398fa]/10 border-[#4398fa] shadow-lg shadow-[#4398fa]/5'
+                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
+                                      }`}
+                                    >
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5 font-sans">
+                                          <span className="font-mono text-xs font-bold text-white">{eq.id}</span>
+                                          {isUserEquip && (
+                                            <span className="text-[8px] bg-amber-400 text-black px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">🏠 DO OPERADOR SELECIONADO</span>
+                                          )}
+                                          {isActive && !isUserEquip && (
+                                            <span className="text-[8px] bg-[#4398fa]/20 text-[#4398fa] border border-[#4398fa]/30 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">ATIVO</span>
+                                          )}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">
+                                          Modelo: <span className="text-slate-200 font-semibold">{eq.model}</span>
+                                        </div>
+                                        {eq.userEmail && (
+                                          <div className="text-[9px] text-cyan-400 font-semibold">
+                                            Vinculado: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {!isActive && (
+                                        <button
+                                          onClick={() => {
+                                            setDeviceId(eq.id);
+                                            localStorage.setItem('mqtt_device', eq.id);
+                                            logUserAction(`Ativou equipamento ID: ${eq.id}`);
+                                            alert(`Dispositivo ${eq.id} ativado com sucesso!`);
+                                          }}
+                                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
+                                        >
+                                          Ativar
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+
+                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
+                                <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
+                                  <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
+                                  <div className="flex flex-col gap-1.5 pt-1">
+                                    <span className="text-[10px] text-slate-400 font-bold">Vincular equipamento disponível:</span>
+                                    <select 
+                                      onChange={(e) => {
+                                        const eqId = e.target.value;
+                                        if (!eqId) return;
+                                        const updated = registeredEquipments.map(eq => 
+                                          eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip, userPassword: '12345678' } : eq
+                                        );
+                                        setRegisteredEquipments(updated);
+                                        localStorage.setItem('registered_equipments', JSON.stringify(updated));
+                                        setAdminSearchEquip(eqId);
+                                        alert(`Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip} com sucesso!`);
+                                      }}
+                                      className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
+                                    >
+                                      <option value="">Selecione um equipamento...</option>
+                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
+                                        <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tab 2: Sensors Simulator / Telemetry Search */}
+                    {adminTab === 'aba2' && !searchedEquip && (
+                      <div className="space-y-6 max-w-xl mx-auto py-8">
+                        <div className="text-center space-y-2">
+                          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/5">
+                            <Compass className="w-8 h-8 text-amber-400" />
+                          </div>
+                          <h3 className="text-lg font-bold text-white mt-4">Consulta de Telemetria por Dispositivo</h3>
+                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                            Insira um Device ID cadastrado para visualizar relatórios individuais de hardware, localização e tempos de uso.
+                          </p>
+                        </div>
+
+                        {/* Search Input Box */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4 shadow-xl">
+                          <div className="relative">
+                            <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
+                            <input
+                              type="text"
+                              placeholder="Insira o ID do Equipamento (Ex: MM12TW-000123)"
+                              value={telemetrySearchId}
+                              onChange={(e) => setTelemetrySearchId(e.target.value)}
+                              className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
+                            />
+                            {telemetrySearchId && (
+                              <button 
+                                onClick={() => setTelemetrySearchId('')}
+                                className="absolute right-3 top-3.5 text-slate-400 hover:text-white"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                const found = registeredEquipments.find(
+                                  eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase()
+                                );
+                                if (found) {
+                                  setTelemetrySearchId(found.id);
+                                } else {
+                                  alert('Nenhum dispositivo cadastrado com este ID. Selecione um dos atalhos abaixo para carregar rapidamente.');
+                                }
+                              }}
+                              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-xl transition-colors active:scale-95 shadow-lg shadow-amber-500/20"
+                            >
+                              Consultar Telemetria
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Suggestions List */}
+                        <div className="space-y-3">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-center">
+                            Dispositivos Cadastrados (Clique para Consultar)
+                          </span>
+                          <div className="grid grid-cols-1 gap-2.5">
+                            {registeredEquipments.map((eq) => {
+                              const isSelected = telemetrySearchId.trim().toLowerCase() === eq.id.toLowerCase();
+                              return (
+                                <button
+                                  key={eq.id}
+                                  onClick={() => {
+                                    setTelemetrySearchId(eq.id);
+                                    setDeviceId(eq.id);
+                                    localStorage.setItem('mqtt_device', eq.id);
+                                  }}
+                                  className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                    isSelected
+                                      ? 'bg-amber-500/10 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/5'
+                                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="text-xs font-bold font-mono">{eq.id}</div>
+                                    <div className="text-[10px] opacity-70">Modelo: {eq.model} • Fabricante: MASTERLAZER</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase">Online</span>
+                                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                                  </div>
+                                </button>
+                              );
+                            })}
+                            {registeredEquipments.length === 0 && (
+                              <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
+                                Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-4">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Validated Telemetry & Simulator View */}
+                    {adminTab === 'aba2' && searchedEquip && telemetry && (
+                      <div className="space-y-6">
+                        {/* Header banner */}
+                        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">
+                          <div className="flex items-center gap-3 text-left">
+                            <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400">
+                              <Compass className="w-5 h-5 animate-spin" style={{ animationDuration: '6s' }} />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-sm font-bold text-white font-mono">{searchedEquip.id}</h3>
+                                <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded font-black tracking-wider uppercase">VALIDADO</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                Modelo: <span className="text-slate-200 font-semibold">{searchedEquip.model}</span> • 
+                                Fabricante: <span className="text-slate-200 font-semibold">MASTERLAZER</span> • 
+                                Simulador de hardware sincronizado.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setTelemetrySearchId('')}
+                            className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5"
+                          >
+                            <Search className="w-3.5 h-3.5" />
+                            Consultar Outro ID
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                          
+                          {/* LEFT COLUMN: INDIVIDUAL TELEMETRY DETAILS */}
+                          <div className="lg:col-span-6 space-y-6">
+                            
+                            {/* Most Used LED Program */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Programa de LED Mais Utilizado</h4>
+                                  <p className="text-[10px] text-slate-400">Padrão de iluminação com maior tempo acumulado de ativação no dispositivo.</p>
+                                </div>
+                                <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400">
+                                  <Tv className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
+                                <div className="space-y-1">
+                                  <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Programa Atual de Pico</div>
+                                  <div className="text-sm font-black text-amber-400 flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-rose-500 via-green-500 to-blue-500 animate-pulse"></span>
+                                    {telemetry.mostUsedLedProgram}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-xs font-mono font-bold text-emerald-400">58% das ativações</span>
+                                  <div className="text-[8px] text-slate-500">Total: 184 ativações</div>
+                                </div>
+                              </div>
+
+                              {/* Selector to change simulated most used program */}
+                              <div className="space-y-2">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                                  Alterar Programa de Pico (Simulação)
+                                </label>
+                                <select
+                                  value={telemetry.mostUsedLedProgram}
+                                  onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { mostUsedLedProgram: e.target.value })}
+                                  className="w-full bg-black/40 border border-white/10 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-amber-400"
+                                >
+                                  <option value="Arco-Íris Dinâmico">Arco-Íris Dinâmico</option>
+                                  <option value="Azul Real Fixo">Azul Real Fixo</option>
+                                  <option value="Verde Relax">Verde Relax</option>
+                                  <option value="Cromoterapia Suave">Cromoterapia Suave</option>
+                                  <option value="Festa Estroboscópica">Festa Estroboscópica</option>
+                                  <option value="Lilás Zen">Lilás Zen</option>
+                                </select>
+                              </div>
+
+                              {/* Simulated progress breakdown */}
+                              <div className="space-y-2 pt-1">
+                                <div className="flex justify-between text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                                  <span>Distribuição Histórica</span>
+                                  <span>Tempo de Uso (%)</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>{telemetry.mostUsedLedProgram}</span>
+                                      <span>58%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-amber-400 h-full rounded-full" style={{ width: '58%' }}></div>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>Azul Clássico</span>
+                                      <span>24%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-blue-400 h-full rounded-full" style={{ width: '24%' }}></div>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>Vermelho Festivo</span>
+                                      <span>18%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-rose-400 h-full rounded-full" style={{ width: '18%' }}></div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Min and Max Filtration Times */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Configuração de Filtragem Individual</h4>
+                                  <p className="text-[10px] text-slate-400">Tempos limites de segurança e preservação ambiental para este equipamento.</p>
+                                </div>
+                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
+                                  <Droplet className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                {/* Min filtration card */}
+                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
+                                  <span className="text-[9px] text-[#4398fa] font-bold uppercase tracking-wider block">Tempo Mínimo</span>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-mono font-black text-white">{telemetry.minFilteringTime}</span>
+                                    <span className="text-xs text-slate-400">horas/dia</span>
+                                  </div>
+                                  <p className="text-[8px] text-slate-400">Evita estagnação da água e acúmulo de microrganismos.</p>
+                                  
+                                  <div className="flex gap-1.5 pt-1">
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.max(1, telemetry.minFilteringTime - 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      -
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.min(telemetry.maxFilteringTime, telemetry.minFilteringTime + 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Max filtration card */}
+                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
+                                  <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider block">Tempo Máximo</span>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-mono font-black text-white">{telemetry.maxFilteringTime}</span>
+                                    <span className="text-xs text-slate-400">horas/dia</span>
+                                  </div>
+                                  <p className="text-[8px] text-slate-400">Previsão contra desgaste do motor da bomba por sobrecarga.</p>
+
+                                  <div className="flex gap-1.5 pt-1">
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.max(telemetry.minFilteringTime, telemetry.maxFilteringTime - 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      -
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.min(24, telemetry.maxFilteringTime + 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Hydro Massage Timer usage */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Timer de Hidromassagem Recorrente</h4>
+                                  <p className="text-[10px] text-slate-400">Histórico e configuração do temporizador de segurança da hidromassagem.</p>
+                                </div>
+                                <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400">
+                                  <Clock className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
+                                <div className="space-y-1">
+                                  <span className="text-[9px] text-slate-400 uppercase tracking-wider font-semibold block">Duração de Uso por Ciclo</span>
+                                  <div className="text-lg font-black text-emerald-400 font-mono">
+                                    {telemetry.hydroTimerUsageMinutes} minutos
+                                  </div>
+                                  <p className="text-[8px] text-slate-500">O motor desliga sozinho após este intervalo.</p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-1 max-w-[150px]">
+                                  {[15, 30, 45, 60].map((mins) => {
+                                    const isActive = telemetry.hydroTimerUsageMinutes === mins;
+                                    return (
+                                      <button
+                                        key={mins}
+                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { hydroTimerUsageMinutes: mins })}
+                                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-colors ${
+                                          isActive
+                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                                        }`}
+                                      >
+                                        {mins}m
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="flex justify-between items-center text-[10px] text-slate-400 px-1 pt-1">
+                                <span>Uso Total Acumulado:</span>
+                                <span className="text-slate-200 font-mono font-bold">128 ciclos (64 horas de funcionamento)</span>
+                              </div>
+                            </div>
+
+                            {/* Device Location & Map Coordinates */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Localização Geográfica do Equipamento</h4>
+                                  <p className="text-[10px] text-slate-400">Visualização de coordenadas GPS e rastreamento de instalação ativa.</p>
+                                </div>
+                                <div className="p-2 bg-rose-500/10 rounded-xl text-rose-400">
+                                  <MapPin className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              {/* Coordinate Inputs */}
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Latitude</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    value={telemetry.latitude}
+                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { latitude: parseFloat(e.target.value) || -23.5505 })}
+                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Longitude</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    value={telemetry.longitude}
+                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { longitude: parseFloat(e.target.value) || -46.6333 })}
+                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Quick Teleport buttons */}
+                              <div className="space-y-1.5">
+                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Simular Locais de Instalação:</span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {[
+                                    { name: 'São Paulo - SP', lat: -23.5505, lng: -46.6333 },
+                                    { name: 'Rio de Janeiro - RJ', lat: -22.9068, lng: -43.1729 },
+                                    { name: 'Porto Alegre - RS', lat: -30.0346, lng: -51.2177 },
+                                    { name: 'Belo Horizonte - MG', lat: -19.9173, lng: -43.9345 },
+                                  ].map((loc) => {
+                                    const isActive = Math.abs(telemetry.latitude - loc.lat) < 0.01 && Math.abs(telemetry.longitude - loc.lng) < 0.01;
+                                    return (
+                                      <button
+                                        key={loc.name}
+                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { latitude: loc.lat, longitude: loc.lng })}
+                                        className={`px-2.5 py-1 text-[9px] rounded-lg border transition-all ${
+                                          isActive
+                                            ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        {loc.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Map Embed Frame */}
+                              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40 h-[200px] relative">
+                                <iframe
+                                  title="Google Maps Coordinates"
+                                  width="100%"
+                                  height="200"
+                                  style={{ border: 0, filter: 'grayscale(0.6) invert(0.9) contrast(1.2)' }}
+                                  src={`https://maps.google.com/maps?q=${telemetry.latitude},${telemetry.longitude}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
+                                  allowFullScreen
+                                  referrerPolicy="no-referrer"
+                                />
+                              </div>
+
+                              <div className="flex justify-end pt-1">
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${telemetry.latitude},${telemetry.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                                >
+                                  <Compass className="w-3.5 h-3.5" />
+                                  Ver no Google Maps Real
+                                </a>
+                              </div>
+                            </div>
+
+                          </div>
+
+                          {/* RIGHT COLUMN: HARDWARE SIMULATOR & MQTT LOGS */}
+                          <div className="lg:col-span-6 space-y-6">
+                            
+                            {/* Hardware Simulation Panel */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-6 text-left">
+                              <div>
+                                <h3 className="text-sm font-bold text-white">Central de Simulação de Hardware</h3>
+                                <p className="text-[10px] text-slate-400">Altere os parâmetros abaixo para testar as reações do aplicativo e das proteções em tempo real para este dispositivo.</p>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                
+                                {/* Temp Collector */}
+                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-300">Sensor Coletor Solar</span>
+                                    <span className="text-sm font-mono font-black text-rose-400">{sensorErrorActive ? '---' : `${sensorCollectorTemp}°C`}</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    disabled={sensorErrorActive}
+                                    value={sensorCollectorTemp}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      setSensorCollectorTemp(val);
+                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_collector`, String(val));
+                                    }}
+                                    className="w-full accent-rose-500 cursor-pointer disabled:opacity-30"
+                                  />
+                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
+                                    <span>0°C</span>
+                                    <span>50°C</span>
+                                    <span>100°C</span>
+                                  </div>
+                                </div>
+
+                                {/* Temp Pool */}
+                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-300">Sensor Piscina</span>
+                                    <span className="text-sm font-mono font-black text-[#4398fa]">{sensorPoolTemp}°C</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="50"
+                                    value={sensorPoolTemp}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      setSensorPoolTemp(val);
+                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_pool`, String(val));
+                                    }}
+                                    className="w-full accent-[#4398fa] cursor-pointer"
+                                  />
+                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
+                                    <span>0°C</span>
+                                    <span>25°C</span>
+                                    <span>50°C</span>
+                                  </div>
+                                </div>
+
+                              </div>
+
+                              {/* Simulated Delta calculation */}
+                              <div className="p-4 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Delta Diferencial (T1 - T2)</span>
+                                  <div className="text-xs text-slate-300">Diferença de temperatura para circulação solar</div>
+                                </div>
+                                <div className="text-right">
+                                  <span className={`text-xl font-mono font-black ${sensorCollectorTemp - sensorPoolTemp >= 8 ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`}>
+                                    {sensorErrorActive ? 'Erro Sensor' : `${(sensorCollectorTemp - sensorPoolTemp).toFixed(0)}°C`}
+                                  </span>
+                                  <div className="text-[8px] text-slate-400 uppercase tracking-widest mt-1">
+                                    {sensorCollectorTemp - sensorPoolTemp >= 8 ? 'Circulação Ativa' : 'Aguardando Delta'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Fault Injection */}
+                              <div className="space-y-3">
+                                <span className="text-xs font-bold text-slate-300 block">Simulação de Falhas & Diagnósticos</span>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <button
+                                    onClick={() => {
+                                      const newVal = !sensorErrorActive;
+                                      setSensorErrorActive(newVal);
+                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
+                                      logUserAction(`Simulou Erro de Sensor Coletor Solar para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
+                                    }}
+                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                      sensorErrorActive
+                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
+                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs font-bold">Erro no Sensor Coletor</div>
+                                      <div className="text-[9px] opacity-70">Sensor de temperatura aberto</div>
+                                    </div>
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() => {
+                                      const newVal = !flowErrorActive;
+                                      setFlowErrorActive(newVal);
+                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
+                                      logUserAction(`Simulou Erro de Fluxo de Água para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
+                                    }}
+                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                      flowErrorActive
+                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
+                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs font-bold">Sem Fluxo de Água</div>
+                                      <div className="text-[9px] opacity-70">Bomba ligada sem vazão</div>
+                                    </div>
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                            </div>
+
+                            {/* Telemetry Log panel */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 flex flex-col justify-between text-left">
+                              <div className="space-y-4">
+                                <div>
+                                  <h3 className="text-sm font-bold text-white">Central de Logs Mqtt</h3>
+                                  <p className="text-[10px] text-slate-400">Mensagens enviadas em formato bruto para depuração técnica do dispositivo selecionado.</p>
+                                </div>
+
+                                <div className="space-y-2.5 font-mono text-[10px]">
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div className="text-amber-400 font-bold">{"// Tópicos Publicados Recorrentes:"}</div>
+                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/temp_coll</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{sensorErrorActive ? 'ERR' : sensorCollectorTemp}</span></div>
+                                  </div>
+
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/temp_pool</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{sensorPoolTemp}</span></div>
+                                  </div>
+
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/flow_state</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{flowErrorActive ? 'FAIL' : 'OK'}</span></div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2 pt-2">
+                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Seeding de Testes</span>
+                                <button
+                                  onClick={() => {
+                                    try {
+                                      const list = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
+                                      const actions = [
+                                        'Ligou Motor 3 (M3)', 'Desligou Motor 3 (M3)', 
+                                        `Alterou LED para ${telemetry.mostUsedLedProgram}`, 
+                                        'Desligou Motor de Filtro (M2)', 'Ligou Motor Hidro (M1)', 
+                                        'Configurou Timer do LED'
+                                      ];
+                                      const emails = ['edersonbatistabertirs@gmail.com', 'admin@admin.com', 'operador.suporte@lazer.com', 'visitante.pool@lazer.com'];
+                                      
+                                      const generated: any[] = [];
+                                      for (let i = 0; i < 5; i++) {
+                                        generated.push({
+                                          id: 'seeded-' + Math.random().toString(36).substr(2, 9),
+                                          timestamp: new Date(Date.now() - (Math.random() * 24 * 60 * 60 * 1000)).toISOString(),
+                                          email: emails[Math.floor(Math.random() * emails.length)],
+                                          action: actions[Math.floor(Math.random() * actions.length)],
+                                          deviceId: searchedEquip.id
+                                        });
+                                      }
+
+                                      const combined = [...generated, ...list].slice(0, 200);
+                                      localStorage.setItem('sim_user_logs', JSON.stringify(combined));
+                                      setUserLogs(combined);
+                                      alert(`5 Logs de teste inseridos para o dispositivo ${searchedEquip.id}!`);
+                                    } catch (e) {}
+                                  }}
+                                  className="w-full py-2 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors"
+                                >
+                                  Inserir Logs de Uso Fictícios para este Dispositivo
+                                </button>
+                              </div>
+
+                            </div>
+
+                          </div>
+
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tab 3: Usage Statistics */}
+                    {adminTab === 'aba3' && (
+                      <div className="space-y-6">
+                        
+                        {/* KPI Block */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          
+                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ações Gravadas</span>
+                            <div className="text-2xl font-black text-[#4398fa] font-mono">{userLogs.length}</div>
+                            <span className="text-[9px] text-slate-500">Histórico de ações neste navegador</span>
+                          </div>
+
+                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Usuário Mais Ativo</span>
+                            <div className="text-sm font-bold text-emerald-400 truncate mt-1">
+                              {(() => {
+                                if (userLogs.length === 0) return 'Nenhum';
+                                const counts: any = {};
+                                userLogs.forEach(l => { counts[l.email] = (counts[l.email] || 0) + 1; });
+                                let maxUser = 'Nenhum';
+                                let maxVal = 0;
+                                Object.keys(counts).forEach(k => {
+                                  if (counts[k] > maxVal) { maxVal = counts[k]; maxUser = k; }
+                                });
+                                return `${maxUser} (${maxVal})`;
+                              })()}
+                            </div>
+                            <span className="text-[9px] text-slate-500">Com maior número de disparos</span>
+                          </div>
+
+                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Comando Predominante</span>
+                            <div className="text-sm font-bold text-amber-400 mt-1">
+                              {(() => {
+                                if (userLogs.length === 0) return 'Nenhum';
+                                let motors = 0, led = 0, timer = 0;
+                                userLogs.forEach(l => {
+                                  const act = l.action.toLowerCase();
+                                  if (act.includes('motor') || act.includes('togglou')) motors++;
+                                  else if (act.includes('led') || act.includes('cor')) led++;
+                                  else if (act.includes('timer') || act.includes('configurou')) timer++;
+                                });
+                                const max = Math.max(motors, led, timer);
+                                if (max === motors) return `Motores & Bombas (${motors})`;
+                                if (max === led) return `LED Iluminação (${led})`;
+                                return `Configuração de Timers (${timer})`;
+                              })()}
+                            </div>
+                            <span className="text-[9px] text-slate-500">Grupo mais comandado</span>
+                          </div>
+
+                        </div>
+
+                        {/* Interactive Responsive SVG Charts */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          
+                          {/* Bar chart panel */}
+                          <div className="p-5 bg-white/5 border border-white/10 rounded-2xl space-y-4 text-left">
+                            <div>
+                              <h4 className="text-xs font-black text-white uppercase tracking-wider">Ações por Usuário</h4>
+                              <p className="text-[10px] text-slate-400">Total de disparos efetuados por e-mail de usuário</p>
+                            </div>
+
+                            <div className="h-44 flex items-end justify-between gap-2 border-b border-white/10 pb-2 relative z-10 pt-4">
+                              {(() => {
+                                const counts: any = {};
+                                userLogs.forEach(l => { counts[l.email] = (counts[l.email] || 0) + 1; });
+                                const users = Object.keys(counts).slice(0, 5);
+                                if (users.length === 0) {
+                                  return <div className="text-xs text-slate-500 m-auto">Sem dados de telemetria suficientes</div>;
+                                }
+                                const maxVal = Math.max(...users.map(u => counts[u]));
+                                return users.map((u, i) => {
+                                  const val = counts[u];
+                                  const pct = maxVal > 0 ? (val / maxVal) * 100 : 0;
+                                  const emailPrefix = u.split('@')[0];
+                                  return (
+                                    <div key={u} className="flex-1 flex flex-col items-center group relative cursor-pointer">
+                                      {/* Bar trigger tooltip */}
+                                      <div className="absolute -top-7 scale-0 group-hover:scale-100 bg-[#4398fa] text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg transition-transform pointer-events-none whitespace-nowrap z-30">
+                                        {val} ações
+                                      </div>
+                                      <div
+                                        style={{ height: `${Math.max(pct, 12)}%` }}
+                                        className={`w-8 rounded-t-md transition-all duration-500 group-hover:brightness-125 ${
+                                          i === 0 ? 'bg-gradient-to-t from-[#0055CC] to-[#4398fa]' :
+                                          i === 1 ? 'bg-gradient-to-t from-amber-600 to-amber-400' :
+                                          i === 2 ? 'bg-gradient-to-t from-emerald-600 to-emerald-400' :
+                                          'bg-gradient-to-t from-slate-600 to-slate-400'
+                                        }`}
+                                      />
+                                      <span className="text-[8px] font-mono font-medium text-slate-400 truncate w-full text-center mt-2" title={u}>
+                                        {emailPrefix}
+                                      </span>
+                                    </div>
+                                  );
+                                });
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* Pie chart / Donut Breakdown */}
+                          <div className="p-5 bg-white/5 border border-white/10 rounded-2xl space-y-4 text-left">
+                            <div>
+                              <h4 className="text-xs font-black text-white uppercase tracking-wider">Breakdown de Comandos</h4>
+                              <p className="text-[10px] text-slate-400">Classificação percentual das interações registradas</p>
+                            </div>
+
+                            <div className="h-44 flex items-center justify-around gap-2">
+                              {(() => {
+                                let m = 0, l = 0, t = 0;
+                                userLogs.forEach(log => {
+                                  const act = log.action.toLowerCase();
+                                  if (act.includes('motor') || act.includes('togglou')) m++;
+                                  else if (act.includes('led') || act.includes('cor')) l++;
+                                  else if (act.includes('timer') || act.includes('configurou')) t++;
+                                });
+                                const total = m + l + t;
+                                if (total === 0) {
+                                  return <div className="text-xs text-slate-500">Sem logs suficientes para cálculo</div>;
+                                }
+                                const mPct = ((m / total) * 100).toFixed(0);
+                                const lPct = ((l / total) * 100).toFixed(0);
+                                const tPct = ((t / total) * 100).toFixed(0);
+
+                                return (
+                                  <>
+                                    {/* Simulated Circular Donut Layout using SVG */}
+                                    <div className="w-24 h-24 relative flex items-center justify-center">
+                                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                                        <path
+                                          className="text-white/5"
+                                          strokeWidth="3.5"
+                                          stroke="currentColor"
+                                          fill="none"
+                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                        <path
+                                          className="text-[#4398fa]"
+                                          strokeDasharray={`${mPct}, 100`}
+                                          strokeWidth="3.8"
+                                          strokeLinecap="round"
+                                          stroke="currentColor"
+                                          fill="none"
+                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                        <path
+                                          className="text-amber-400"
+                                          strokeDasharray={`${lPct}, 100`}
+                                          strokeDashoffset={`-${mPct}`}
+                                          strokeWidth="3.8"
+                                          strokeLinecap="round"
+                                          stroke="currentColor"
+                                          fill="none"
+                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                        <path
+                                          className="text-emerald-400"
+                                          strokeDasharray={`${tPct}, 100`}
+                                          strokeDashoffset={`-${parseInt(mPct) + parseInt(lPct)}`}
+                                          strokeWidth="3.8"
+                                          strokeLinecap="round"
+                                          stroke="currentColor"
+                                          fill="none"
+                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                        />
+                                      </svg>
+                                      <div className="absolute flex flex-col text-center">
+                                        <span className="text-xs font-mono font-black text-white">{total}</span>
+                                        <span className="text-[7px] text-slate-400 font-bold uppercase tracking-widest leading-none">AÇÕES</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Custom legend */}
+                                    <div className="space-y-1.5 text-[10px] font-semibold text-slate-300">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-2.5 h-2.5 rounded bg-[#4398fa] inline-block"></span>
+                                        <span>Motores: {mPct}%</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block"></span>
+                                        <span>Iluminação: {lPct}%</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-2.5 h-2.5 rounded bg-emerald-400 inline-block"></span>
+                                        <span>Timers/Filtr.: {tPct}%</span>
+                                      </div>
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+
+                        </div>
+
+                        {/* Search and logs history */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div>
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Histórico Detalhado de Operações</h4>
+                              <p className="text-[10px] text-slate-400">Relação completa de todos os gatilhos gerados</p>
+                            </div>
+                            {!showConfirmClearLogs ? (
+                              <button
+                                onClick={() => setShowConfirmClearLogs(true)}
+                                className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 text-xs font-bold rounded-lg transition-colors text-center"
+                              >
+                                Limpar Todos os Logs
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5 animate-fadeIn">
+                                <span className="text-[10px] text-rose-300 font-medium px-1">Confirmar limpeza?</span>
+                                <button
+                                  onClick={() => {
+                                    localStorage.setItem('sim_user_logs', '[]');
+                                    setUserLogs([]);
+                                    setShowConfirmClearLogs(false);
+                                  }}
+                                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded transition-colors"
+                                >
+                                  Sim
+                                </button>
+                                <button
+                                  onClick={() => setShowConfirmClearLogs(false)}
+                                  className="px-2.5 py-1 bg-white/10 text-slate-300 hover:text-white text-[10px] font-bold rounded transition-colors"
+                                >
+                                  Não
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="overflow-x-auto rounded-xl border border-white/10">
+                            <table className="w-full text-xs text-left">
+                              <thead>
+                                <tr className="bg-black/20 text-slate-400 border-b border-white/10">
+                                  <th className="p-3">Data & Hora</th>
+                                  <th className="p-3">Usuário</th>
+                                  <th className="p-3">Equipamento</th>
+                                  <th className="p-3">Comando Executado</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {userLogs.slice(0, 45).map((log) => (
+                                  <tr key={log.id} className="border-b border-white/5 hover:bg-white/2 text-[11px]">
+                                    <td className="p-3 font-mono text-slate-400">
+                                      {new Date(log.timestamp).toLocaleString('pt-BR')}
+                                    </td>
+                                    <td className="p-3 font-semibold text-white">{log.email}</td>
+                                    <td className="p-3 font-mono text-slate-400">{log.deviceId}</td>
+                                    <td className="p-3">
+                                      <span className="px-2 py-0.5 bg-white/5 border border-white/5 rounded text-slate-200">
+                                        {log.action}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {userLogs.length === 0 && (
+                                  <tr>
+                                    <td colSpan={4} className="p-8 text-center text-slate-500">Nenhum comando disparado ainda. Use o app e alterne os motores para popular os registros!</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+
+                      </div>
+                    )}
+
+                    {/* Tab 4: Technical Info & MQTT Config */}
+                    {adminTab === 'aba4' && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                        
+                        {/* MQTT Broker Config */}
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveDevConfig();
+                            logUserAction('Editou configurações de conexão MQTT via painel Admin');
+                          }}
+                          className="md:col-span-6 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left"
+                        >
+                          <div>
+                            <h3 className="text-sm font-bold text-white">Servidor Mqtt (Broker)</h3>
+                            <p className="text-[10px] text-slate-400">Defina os parâmetros do Broker para onde os comandos são encaminhados.</p>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="col-span-2 space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Host Broker</label>
+                              <input
+                                type="text"
+                                required
+                                value={mqttBroker}
+                                onChange={(e) => setMqttBroker(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Porta (WSS)</label>
+                              <input
+                                type="text"
+                                required
+                                value={mqttPort}
+                                onChange={(e) => setMqttPort(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Usuário Mqtt (Opcional)</label>
+                              <input
+                                type="text"
+                                placeholder="sem usuário"
+                                value={mqttUser}
+                                onChange={(e) => setMqttUser(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Senha Mqtt (Opcional)</label>
+                              <input
+                                type="password"
+                                placeholder="sem senha"
+                                value={mqttPassword}
+                                onChange={(e) => setMqttPassword(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-between text-xs">
+                            <span className="text-slate-400">Estado da Conexão</span>
+                            <span className={`font-bold transition-all px-2.5 py-0.5 rounded text-[10px] ${
+                              mqttConnected 
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' 
+                                : mqttStatusMessage === 'Conectando...'
+                                  ? 'text-amber-400 bg-amber-500/10 border border-amber-500/20'
+                                  : 'text-slate-400 bg-white/5 border border-white/5'
+                            }`}>
+                              {mqttConnected ? 'CONECTADO' : mqttStatusMessage === 'Conectando...' ? 'CONECTANDO' : 'OFFLINE'}
+                            </span>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2">
+                            {mqttConnected ? (
+                              <button
+                                type="button"
+                                onClick={disconnectMQTT}
+                                className="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 rounded-xl text-xs font-bold transition-all"
+                              >
+                                Desconectar Broker
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={connectMQTT}
+                                className="px-3.5 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs font-bold transition-all"
+                              >
+                                Forçar Conexão
+                              </button>
+                            )}
+
+                            <button
+                              type="submit"
+                              className="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-xl transition-all shadow-md shadow-amber-400/10"
+                            >
+                              Salvar Conexão
+                            </button>
+                          </div>
+                        </form>
+
+                        {/* Database Sandboxing & Firebase Config info */}
+                        <div className="md:col-span-6 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                          <div>
+                            <h3 className="text-sm font-bold text-white">Banco de Dados & Autenticação</h3>
+                            <p className="text-[10px] text-slate-400">Informações técnicas sobre o barramento persistente do aplicativo.</p>
+                          </div>
+
+                          <div className="p-4 rounded-xl bg-black/20 border border-white/10 space-y-3">
+                            <div className="flex justify-between items-center text-xs pb-2 border-b border-white/5">
+                              <span className="text-slate-400 font-semibold">Motor de Persistência</span>
+                              <span className="font-mono text-white">LocalStorage Sandbox + Firebase Auth</span>
+                            </div>
+                            
+                            <div className="flex justify-between items-center text-xs pb-2 border-b border-white/5">
+                              <span className="text-slate-400 font-semibold">Tamanho Ocupado no Banco</span>
+                              <span className="font-mono text-emerald-400 font-bold">
+                                {(() => {
+                                  try {
+                                    let totalChars = 0;
+                                    for (let x in localStorage) {
+                                      if (localStorage.hasOwnProperty(x)) {
+                                        totalChars += (localStorage[x] || '').length + x.length;
+                                      }
+                                    }
+                                    return `${(totalChars / 1024).toFixed(2)} KB`;
+                                  } catch (e) {
+                                    return '0.00 KB';
+                                  }
+                                })()}
+                              </span>
+                            </div>
+
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-slate-400 font-semibold">Conexão Firebase Real</span>
+                              <span className={`font-black uppercase text-[9px] px-2 py-0.5 rounded ${
+                                firebaseInitialized 
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              }`}>
+                                {firebaseInitialized ? 'Ativo (Real)' : 'Simulado (Nativo)'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="p-3.5 bg-white/5 border border-white/10 rounded-xl text-[11px] text-slate-300 leading-relaxed font-sans">
+                            <strong className="text-white block mb-1">Notas do Projeto:</strong>
+                            Este painel simula totalmente a comunicação serial Modbus do hardware através de barramentos JSON estruturados via MQTT. 
+                            Quando as credenciais Firebase são preenchidas nas Configurações Avançadas, as coleções de dados são sincronizadas de forma distribuída na nuvem.
+                          </div>
+                        </div>
+
+                      </div>
+
+                      {/* Back to main screen button */}
+                      <div className="flex justify-center pt-2">
+                        <button
+                          onClick={() => setAdminTab('home')}
+                          className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                        >
+                          <ChevronRight className="w-4 h-4 rotate-180" />
+                          Voltar para a Tela Inicial
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  </div>
+
+                  {/* Copyright and signature inside dashboard */}
+                  <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center text-[10px] text-slate-500">
+                    <span>Master Lazer App Administration Suite v1.5.0</span>
+                    <span>Copyright 2026 • Todos os direitos reservados</span>
+                  </div>
+
                 </motion.div>
               )}
 

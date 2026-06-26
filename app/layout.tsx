@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="pt-BR" className="w-full h-[100dvh] min-h-[100dvh] overflow-hidden overscroll-behavior-none select-none">
+    <html lang="pt-BR" className="w-full min-h-screen overflow-y-auto overscroll-behavior-none select-none">
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -29,13 +29,13 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
           }}
         />
       </head>
-      <body suppressHydrationWarning className="bg-slate-950 w-full h-[100dvh] min-h-[100dvh] text-slate-100 flex items-center justify-center relative overflow-hidden overscroll-behavior-none font-sans antialiased">
+      <body suppressHydrationWarning className="bg-slate-950 w-full min-h-screen text-slate-100 flex items-center justify-center relative overflow-y-auto overscroll-behavior-none font-sans antialiased">
         {/* Background Mesh Gradients */}
         <div className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none"></div>
         <div className="absolute bottom-[-100px] right-[-100px] w-[600px] h-[600px] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none"></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-indigo-900/10 rounded-full blur-[150px] pointer-events-none"></div>
         
-        <div className="relative z-10 w-full h-[100dvh] flex items-center justify-center overflow-hidden">
+        <div className="relative z-10 w-full min-h-screen flex items-center justify-center overflow-y-auto">
           {children}
         </div>
       </body>
