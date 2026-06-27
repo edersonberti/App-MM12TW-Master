@@ -10,6 +10,11 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html lang="pt-BR" className="w-full min-h-screen overflow-y-auto overscroll-behavior-none select-none">
       <head>
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#020617" />
+        <link rel="apple-touch-icon" href="/180x180.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -25,6 +30,16 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
                   e.preventDefault();
                 }
               }, true);
+
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                    console.log('PWA Service Worker registered successfully:', reg.scope);
+                  }).catch(function(err) {
+                    console.warn('PWA Service Worker registration failed:', err);
+                  });
+                });
+              }
             `,
           }}
         />
