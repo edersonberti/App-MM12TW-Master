@@ -2754,7 +2754,7 @@ export default function PoolControllerPage() {
                             <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-[#4398fa]' : 'text-slate-500'}`} />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LED</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-[#4398fa] animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -2781,7 +2781,7 @@ export default function PoolControllerPage() {
                             <Clock className="w-3.5 h-3.5 text-cyan-400" />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TIMERS</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' || (hidroTimerHours !== 'D' && hidroTimerHours !== 'off') ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' || (hidroTimerHours !== 'D' && hidroTimerHours !== 'off') ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -2815,7 +2815,7 @@ export default function PoolControllerPage() {
                       >
                         <div className="flex items-center justify-between w-full">
                           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor1Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorHidro ? 'bg-[#4398fa] animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorHidro ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         <div className="mt-1">
                           <p className={`text-xs font-bold ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
@@ -2831,11 +2831,43 @@ export default function PoolControllerPage() {
                       >
                         <div className="flex items-center justify-between w-full">
                           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor2Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorFiltro ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorFiltro ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         <div className="mt-1">
                           <p className={`text-xs font-bold ${motorFiltro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
                             {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        id="home-status-motor3"
+                        onClick={() => setActiveScreen('aux')}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                        title={`Ver controle: ${motor3Name}`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor3Name}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motor3 ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                        </div>
+                        <div className="mt-1">
+                          <p className={`text-xs font-bold ${motor3 ? 'text-[#4398fa]' : 'text-slate-500'}`}>
+                            {motor3 ? 'LIGADO' : 'DESLIGADO'}
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        id="home-status-motor4"
+                        onClick={() => setActiveScreen('aux')}
+                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                        title={`Ver controle: ${motor4Name}`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor4Name}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motor4 ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                        </div>
+                        <div className="mt-1">
+                          <p className={`text-xs font-bold ${motor4 ? 'text-[#4398fa]' : 'text-slate-500'}`}>
+                            {motor4 ? 'LIGADO' : 'DESLIGADO'}
                           </p>
                         </div>
                       </button>
@@ -3172,61 +3204,59 @@ export default function PoolControllerPage() {
                     <div id={pickerContainerId} className="flex justify-center my-0.5" />
                   </div>
 
-                  {activeModel !== 'MM12TW' && (
-                    <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-sm space-y-1.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Saturação</div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={satMultiplier}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value);
-                            lastUserColorInteractionRef.current = Date.now();
-                            setSatMultiplier(val);
-                            if (currentProgramRef.current === '---') {
-                              setCurrentProgram(1);
-                              publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                              publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
-                            }
-                            if (mqttConnected) {
-                              throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
-                            }
-                          }}
-                          className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <span className="w-10 text-right font-mono text-[11px] text-blue-400">{satMultiplier}%</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Brilho</div>
-                        <input  type="range"
-                          min="0"
-                          max="100"
-                          value={brightMultiplier}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value);
-                            lastUserColorInteractionRef.current = Date.now();
-                            setBrightMultiplier(val);
-                            if (currentProgramRef.current === '---') {
-                              setCurrentProgram(1);
-                              publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                              publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
-                            }
-                            if (mqttConnected) {
-                              throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
-                            }
-                          }}
-                          className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <span className="w-10 text-right font-mono text-[11px] text-blue-400">{brightMultiplier}%</span>
-                      </div>
+                  <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-sm space-y-1.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Saturação</div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={satMultiplier}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          lastUserColorInteractionRef.current = Date.now();
+                          setSatMultiplier(val);
+                          if (currentProgramRef.current === '---') {
+                            setCurrentProgram(1);
+                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                          }
+                          if (mqttConnected) {
+                            throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
+                          }
+                        }}
+                        className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="w-10 text-right font-mono text-[11px] text-blue-400">{satMultiplier}%</span>
                     </div>
-                  )}
+
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="w-[70px] text-[11px] font-bold text-slate-300 whitespace-nowrap">Brilho</div>
+                      <input  type="range"
+                        min="0"
+                        max="100"
+                        value={brightMultiplier}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          lastUserColorInteractionRef.current = Date.now();
+                          setBrightMultiplier(val);
+                          if (currentProgramRef.current === '---') {
+                            setCurrentProgram(1);
+                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
+                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                          }
+                          if (mqttConnected) {
+                            throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
+                          }
+                        }}
+                        className="flex-1 accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="w-10 text-right font-mono text-[11px] text-blue-400">{brightMultiplier}%</span>
+                    </div>
+                  </div>
 
                   {/* Program selection block */}
-                  <div className="p-2.5 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-2">
+                  <div className="p-3 sm:p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3 -mx-3 sm:mx-0">
                     <div className="flex items-center justify-between px-1 py-0.5">
                       <div className="flex items-center gap-1.5">
                         <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL:</p>
@@ -3258,32 +3288,34 @@ export default function PoolControllerPage() {
                       <button
                         id="led-btn-voltar"
                         onClick={handleProgramDec}
-                        className="py-2 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2.5 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 text-center px-1 w-full"
                       >
                         Voltar
                       </button>
                       <button
                         id="led-btn-avancar"
                         onClick={handleProgramInc}
-                        className="py-2 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2.5 bg-[#007AFF] hover:bg-[#4398fa] text-white rounded-xl text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 text-center px-1 w-full"
                       >
                         Avançar
                       </button>
                       <button
                         id="led-btn-salvar"
                         onClick={handleProgramSave}
-                        className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 text-center px-1 w-full"
                       >
                         Salvar
                       </button>
                       <button
                         id="led-btn-desligar"
                         onClick={handleProgramOff}
-                        className="py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 text-center px-1.5 w-full"
+                        className="py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 text-center px-1 w-full"
                       >
                         Desligar
                       </button>
                     </div>
+
+
                   </div>
                 </motion.div>
               )}
