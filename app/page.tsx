@@ -556,6 +556,19 @@ export default function PoolControllerPage() {
       setLedStartMinute(storedLedStartMinute);
       setLedDuration(storedLedDuration);
       setLedProgram(storedLedProgram);
+
+      // Smoothly hide the high-end PWA splash screen
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          const splash = document.getElementById('pwa-splash-screen');
+          if (splash) {
+            splash.style.opacity = '0';
+            setTimeout(() => {
+              splash.style.display = 'none';
+            }, 600);
+          }
+        }, 300); // Short delay to allow visual completion of the introduction
+      }
     }, 0);
   }, []);
 
@@ -3278,7 +3291,7 @@ export default function PoolControllerPage() {
                       >
                         <option value="---">---</option>
                         {Array.from({ length: 25 }, (_, i) => String(i + 1)).map((p) => (
-                          <option key={p} value={p}>Prog {p}</option>
+                          <option key={p} value={p}>Programa {p}</option>
                         ))}
                       </select>
                     </div>
