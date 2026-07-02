@@ -1,6 +1,5 @@
-const CACHE_NAME = 'masterlazer-cache-v2';
+const CACHE_NAME = 'masterlazer-cache-v4';
 const ASSETS_TO_CACHE = [
-  '/',
   '/manifest.json',
   '/180x180.png',
   '/192x192.png',
@@ -44,14 +43,18 @@ self.addEventListener('fetch', (event) => {
   // Only intercept GET requests and local/same-origin URLs to avoid caching dynamic API/MQTT routes or external APIs
   if (event.request.method !== 'GET') return;
   
+  // Always go network-only for HTML documents (navigation requests) to avoid stale chunk errors
+  if (event.request.mode === 'navigate') return;
+  
   const url = new URL(event.request.url);
   
   // Do not intercept hot module replacement, dev-server websockets, or external APIs (except for images if needed)
   if (
+    url.pathname === '/' ||
     url.pathname.startsWith('/_next') || 
     url.pathname.startsWith('/api') || 
     url.hostname.includes('hivemq') ||
-    url.hostname.includes('localhost') && url.port !== '3000'
+    (url.hostname.includes('localhost') && url.port !== '3000')
   ) {
     return;
   }

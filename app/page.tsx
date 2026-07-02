@@ -107,12 +107,7 @@ export default function PoolControllerPage() {
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
 
   const handleBackToHome = () => {
-    if (currentUser?.role === 'owner') {
-      setActiveScreen('admin');
-      setAdminTab('home');
-    } else {
-      setActiveScreen('home');
-    }
+    setActiveScreen('home');
   };
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
@@ -345,6 +340,9 @@ export default function PoolControllerPage() {
   const userWantsMqttRef = useRef(true);
   const lastMessageTimeRef = useRef<number>(0);
   
+  const [isUpdatingData, setIsUpdatingData] = useState(true);
+  const [showUpdatedMessage, setShowUpdatedMessage] = useState(false);
+
   const setUserWantsMqtt = (val: boolean) => {
     userWantsMqttRef.current = val;
     setUserWantsMqttState(val);
@@ -517,11 +515,7 @@ export default function PoolControllerPage() {
           setCurrentUser(parsed);
           const emailLower = (parsed.email || '').toLowerCase().trim();
           const isOwner = emailLower === 'admin@admin.com' || emailLower === 'edersonbatistabertirs@gmail.com' || parsed.role === 'owner';
-          if (isOwner) {
-            setActiveScreen('admin');
-          } else {
-            setActiveScreen('home');
-          }
+          setActiveScreen('home');
 
           // If this is a real Supabase user, load their live devices dynamically!
           if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
@@ -645,6 +639,8 @@ export default function PoolControllerPage() {
   useEffect(() => {
     // Reset device specific metrics on ID change to avoid showing old values wrapped in setTimeout to prevent cascading render error
     setTimeout(() => {
+      setIsUpdatingData(true);
+      setShowUpdatedMessage(false);
       setDeviceIp('---');
       setDeviceMac('---');
       const matched = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
@@ -715,6 +711,27 @@ export default function PoolControllerPage() {
     }, 3000);
     return () => clearInterval(interval);
   }, [mqttConnected, deviceOnline]);
+
+  // 1g. Backup safety timeout to automatically complete update and unlock if MQTT message doesn't arrive
+  useEffect(() => {
+    if (isUpdatingData) {
+      const timer = setTimeout(() => {
+        setIsUpdatingData(false);
+        setShowUpdatedMessage(true);
+      }, 3500); // 3.5 seconds safety timeout
+      return () => clearTimeout(timer);
+    }
+  }, [isUpdatingData]);
+
+  // 1h. Auto-hide the "Sistema Atualizado!" message after 5 seconds
+  useEffect(() => {
+    if (showUpdatedMessage) {
+      const timer = setTimeout(() => {
+        setShowUpdatedMessage(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showUpdatedMessage]);
 
   // 2. Initialize Firebase SDK once scripts/config resolved
   const initRealFirebase = () => {
@@ -1007,11 +1024,7 @@ export default function PoolControllerPage() {
               })));
             }
 
-            if (isOwner) {
-              setActiveScreen('admin');
-            } else {
-              setActiveScreen('home');
-            }
+            setActiveScreen('home');
           }
         } else {
           const { data, error } = await supabase.auth.signUp({
@@ -1035,11 +1048,7 @@ export default function PoolControllerPage() {
             localStorage.setItem('sim_user', JSON.stringify(loggedUser));
             setCurrentUser(loggedUser);
             alert('Conta cadastrada com sucesso no Supabase!');
-            if (isOwner) {
-              setActiveScreen('admin');
-            } else {
-              setActiveScreen('home');
-            }
+            setActiveScreen('home');
           }
         }
       } catch (err: any) {
@@ -1089,11 +1098,7 @@ export default function PoolControllerPage() {
           };
           localStorage.setItem('sim_user', JSON.stringify(loggedUser));
           setCurrentUser(loggedUser);
-          if (isOwner) {
-            setActiveScreen('admin');
-          } else {
-            setActiveScreen('home');
-          }
+          setActiveScreen('home');
         } else {
           setAuthErrorMessage('Senha incorreta ou e-mail não cadastrado neste navegador.');
         }
@@ -1114,11 +1119,7 @@ export default function PoolControllerPage() {
             localStorage.setItem('sim_user', JSON.stringify(loggedUser));
             setCurrentUser(loggedUser);
             alert('Sua conta pré-cadastrada foi personalizada e ativada com sucesso!');
-            if (isOwner) {
-              setActiveScreen('admin');
-            } else {
-              setActiveScreen('home');
-            }
+            setActiveScreen('home');
             return;
           }
           setAuthErrorMessage('E-mail já cadastrado.');
@@ -1132,11 +1133,7 @@ export default function PoolControllerPage() {
         localStorage.setItem('sim_user', JSON.stringify(loggedUser));
         setCurrentUser(loggedUser);
         alert('Conta criada com sucesso no sistema local!');
-        if (isOwner) {
-          setActiveScreen('admin');
-        } else {
-          setActiveScreen('home');
-        }
+        setActiveScreen('home');
       }
     }, 800);
   };
@@ -1270,6 +1267,10 @@ export default function PoolControllerPage() {
           // Message belongs to another device sequence, ignore
           return;
         }
+
+        // Successfully received target device message, complete the update sequence
+        setIsUpdatingData(false);
+        setShowUpdatedMessage(true);
 
         const lowerRelative = relativeTopic.toLowerCase();
 
@@ -1749,6 +1750,10 @@ export default function PoolControllerPage() {
   };
 
   function publishTopic(subTopic: string, payload: string) {
+    if (isUpdatingData) {
+      console.warn("Publish blocked: Data update in progress.");
+      return;
+    }
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
         const rawId = (deviceId || '').trim();
@@ -2553,8 +2558,22 @@ export default function PoolControllerPage() {
         {!isCurrentlyAdmin && (
           <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
             <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">{currentTime}</span>
-            {/* Virtual Notch - Hidden on mobile, shown on desktop */}
-            <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
+            {/* Virtual Notch / Status Center - Hidden on mobile, shown on desktop */}
+            {activeScreen === 'home' && (isUpdatingData || showUpdatedMessage) ? (
+              isUpdatingData ? (
+                <span className="absolute left-1/2 transform -translate-x-1/2 text-[9.5px] font-extrabold text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1 z-[60] animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  Atualizando...
+                </span>
+              ) : (
+                <span className="absolute left-1/2 transform -translate-x-1/2 text-[9.5px] font-extrabold text-emerald-400 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1 z-[60] shadow-sm">
+                  <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                  Sistema Atualizado!
+                </span>
+              )
+            ) : (
+              <div className="hidden sm:block absolute top-0 left-1/2 transform -translate-x-1/2 w-28 h-4 bg-black/20 rounded-b-xl border-b border-l border-r border-white/5" />
+            )}
             <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-sans text-slate-300">
             {mqttConnected ? (
               <span className="flex items-center gap-1 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25 text-emerald-400 font-extrabold text-[9px] scale-90">
@@ -2727,7 +2746,22 @@ export default function PoolControllerPage() {
           )}
 
           {/* Dynamic Screen Contents inside Screen Containers */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 custom-scrollbar flex flex-col">
+          <div className="flex-1 overflow-y-auto px-4 py-3 custom-scrollbar flex flex-col relative">
+            
+            {isUpdatingData && ['home', 'aux', 'led', 'timers', 'setup'].includes(activeScreen) && (
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] z-50 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-auto">
+                <div className="bg-[#1e293b]/95 border border-white/10 rounded-2xl p-6 shadow-2xl max-w-[280px] flex flex-col items-center">
+                  <div className="relative mb-4 flex items-center justify-center">
+                    <div className="w-10 h-10 border-4 border-[#4398fa]/20 border-t-[#4398fa] rounded-full animate-spin" />
+                    <FolderSync className="w-5 h-5 text-[#4398fa] absolute animate-pulse" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white mb-1 uppercase tracking-wider">Atualizando Dados</h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Sincronizando com o equipamento. Por favor, aguarde para evitar acionamentos indevidos...
+                  </p>
+                </div>
+              </div>
+            )}
             
             <AnimatePresence mode="wait">
               
