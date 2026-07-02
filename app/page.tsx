@@ -807,7 +807,7 @@ export default function PoolControllerPage() {
             setSatMultiplier(100);
             setBrightMultiplier(100);
             const picker = new window.iro.ColorPicker(`#${pickerContainerId}`, {
-              width: 210,
+              width: 250,
               color: `hsv(${ledHue}, ${ledSat}, ${initialVal})`,
               borderWidth: 0,
               borderColor: 'transparent',
