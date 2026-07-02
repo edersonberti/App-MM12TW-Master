@@ -42,6 +42,16 @@ import {
   Compass
 } from 'lucide-react';
 
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import {
+  syncUserProfile,
+  fetchUserDevices,
+  registerDeviceInSupabase,
+  deleteDeviceInSupabase,
+  fetchDeviceSettings,
+  saveDeviceSettings
+} from '../lib/supabaseSync';
+
 // TypeScript declarations for browser-loaded scripts
 declare global {
   interface Window {
@@ -512,6 +522,21 @@ export default function PoolControllerPage() {
           } else {
             setActiveScreen('home');
           }
+
+          // If this is a real Supabase user, load their live devices dynamically!
+          if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
+            fetchUserDevices(parsed.uid).then(dbDevices => {
+              if (dbDevices && dbDevices.length > 0) {
+                setRegisteredEquipments(dbDevices.map(d => ({
+                  id: d.id,
+                  model: d.model,
+                  pairing_token: d.pairing_token
+                })));
+              }
+            }).catch(err => {
+              console.warn("Supabase initial devices load error:", err);
+            });
+          }
         } catch (e) {
           // ignore
         }
@@ -645,7 +670,39 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, registeredEquipments]);
 
-  // 1e. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline
+  // 1e. Fetch Supabase device settings (e.g. motor names) when active device changes
+  useEffect(() => {
+    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+      const loadDbSettings = async () => {
+        try {
+          const settings = await fetchDeviceSettings(deviceId);
+          if (settings) {
+            if (settings.motor1_name) {
+              setMotor1Name(settings.motor1_name);
+              localStorage.setItem('motor1_name', settings.motor1_name);
+            }
+            if (settings.motor2_name) {
+              setMotor2Name(settings.motor2_name);
+              localStorage.setItem('motor2_name', settings.motor2_name);
+            }
+            if (settings.motor3_name) {
+              setMotor3Name(settings.motor3_name);
+              localStorage.setItem('motor3_name', settings.motor3_name);
+            }
+            if (settings.motor4_name) {
+              setMotor4Name(settings.motor4_name);
+              localStorage.setItem('motor4_name', settings.motor4_name);
+            }
+          }
+        } catch (err) {
+          console.warn("Error loading device settings from Supabase:", err);
+        }
+      };
+      loadDbSettings();
+    }
+  }, [deviceId, currentUser]);
+
+  // 1f. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const interval = setInterval(() => {
@@ -908,6 +965,90 @@ export default function PoolControllerPage() {
     }
     setAuthErrorMessage('');
     setIsLoadingAuth(true);
+
+    // If real Supabase configured, route there:
+    if (isSupabaseConfigured()) {
+      try {
+        if (mode === 'login') {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: cleanPassword
+          });
+          if (error) throw error;
+          if (data?.user) {
+            // Fetch profile and role
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', data.user.id)
+              .maybeSingle();
+
+            const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com' || profile?.role === 'owner';
+            const loggedUser = {
+              email: data.user.email,
+              uid: data.user.id,
+              role: isOwner ? 'owner' : (profile?.role || 'operator'),
+              isSupabase: true
+            };
+            
+            // Sync user profile to profiles table
+            await syncUserProfile(data.user.id, data.user.email || '', loggedUser.role);
+
+            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+            setCurrentUser(loggedUser);
+
+            // Fetch user's registered devices from Supabase
+            const dbDevices = await fetchUserDevices(data.user.id);
+            if (dbDevices && dbDevices.length > 0) {
+              setRegisteredEquipments(dbDevices.map(d => ({
+                id: d.id,
+                model: d.model,
+                pairing_token: d.pairing_token
+              })));
+            }
+
+            if (isOwner) {
+              setActiveScreen('admin');
+            } else {
+              setActiveScreen('home');
+            }
+          }
+        } else {
+          const { data, error } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password: cleanPassword
+          });
+          if (error) throw error;
+          if (data?.user) {
+            const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com';
+            const role = isOwner ? 'owner' : 'operator';
+            
+            // Sync user profile
+            await syncUserProfile(data.user.id, data.user.email || '', role);
+
+            const loggedUser = {
+              email: data.user.email,
+              uid: data.user.id,
+              role: role,
+              isSupabase: true
+            };
+            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+            setCurrentUser(loggedUser);
+            alert('Conta cadastrada com sucesso no Supabase!');
+            if (isOwner) {
+              setActiveScreen('admin');
+            } else {
+              setActiveScreen('home');
+            }
+          }
+        }
+      } catch (err: any) {
+        setAuthErrorMessage(`Erro Supabase: ${err.message || 'Falha na autenticação.'}`);
+      } finally {
+        setIsLoadingAuth(false);
+      }
+      return;
+    }
 
     // If real Firebase configured, route there:
     if (firebaseInitialized && authRef.current) {
@@ -1800,6 +1941,34 @@ export default function PoolControllerPage() {
     alert('Usuário excluído!');
   };
 
+  const handleUpdateMotorName = async (motorNum: 1 | 2 | 3 | 4, newName: string) => {
+    if (motorNum === 1) {
+      setMotor1Name(newName);
+      localStorage.setItem('motor1_name', newName);
+      if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+        await saveDeviceSettings(deviceId, { motor1_name: newName });
+      }
+    } else if (motorNum === 2) {
+      setMotor2Name(newName);
+      localStorage.setItem('motor2_name', newName);
+      if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+        await saveDeviceSettings(deviceId, { motor2_name: newName });
+      }
+    } else if (motorNum === 3) {
+      setMotor3Name(newName);
+      localStorage.setItem('motor3_name', newName);
+      if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+        await saveDeviceSettings(deviceId, { motor3_name: newName });
+      }
+    } else if (motorNum === 4) {
+      setMotor4Name(newName);
+      localStorage.setItem('motor4_name', newName);
+      if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+        await saveDeviceSettings(deviceId, { motor4_name: newName });
+      }
+    }
+  };
+
   // 7. Interactive action button tasks
   const handleMotorChange = (motorType: 'hidro' | 'filtro' | 'motor3' | 'motor4', checked: boolean) => {
     let num = '1';
@@ -2293,6 +2462,11 @@ export default function PoolControllerPage() {
     
     setRegisteredEquipments(updated);
     localStorage.setItem('registered_equipments', JSON.stringify(updated));
+    
+    // Sync with Supabase if active
+    if (isSupabaseConfigured() && currentUser?.isSupabase) {
+      registerDeviceInSupabase(trimmedId, finalModel, currentUser.uid, finalSerial);
+    }
     
     // Also make this the active device under control!
     setDeviceId(trimmedId);
@@ -2953,10 +3127,7 @@ export default function PoolControllerPage() {
                                 <input
                                   type="text"
                                   value={motor1Name}
-                                  onChange={(e) => {
-                                    setMotor1Name(e.target.value);
-                                    localStorage.setItem('motor1_name', e.target.value);
-                                  }}
+                                  onChange={(e) => handleUpdateMotorName(1, e.target.value)}
                                   onBlur={() => setIsEditingM1(false)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') setIsEditingM1(false);
@@ -3015,10 +3186,7 @@ export default function PoolControllerPage() {
                                 <input
                                   type="text"
                                   value={motor2Name}
-                                  onChange={(e) => {
-                                    setMotor2Name(e.target.value);
-                                    localStorage.setItem('motor2_name', e.target.value);
-                                  }}
+                                  onChange={(e) => handleUpdateMotorName(2, e.target.value)}
                                   onBlur={() => setIsEditingM2(false)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') setIsEditingM2(false);
@@ -3078,10 +3246,7 @@ export default function PoolControllerPage() {
                                 <input
                                   type="text"
                                   value={motor3Name}
-                                  onChange={(e) => {
-                                    setMotor3Name(e.target.value);
-                                    localStorage.setItem('motor3_name', e.target.value);
-                                  }}
+                                  onChange={(e) => handleUpdateMotorName(3, e.target.value)}
                                   onBlur={() => setIsEditingM3(false)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') setIsEditingM3(false);
@@ -3141,10 +3306,7 @@ export default function PoolControllerPage() {
                                 <input
                                   type="text"
                                   value={motor4Name}
-                                  onChange={(e) => {
-                                    setMotor4Name(e.target.value);
-                                    localStorage.setItem('motor4_name', e.target.value);
-                                  }}
+                                  onChange={(e) => handleUpdateMotorName(4, e.target.value)}
                                   onBlur={() => setIsEditingM4(false)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') setIsEditingM4(false);
@@ -3826,10 +3988,13 @@ export default function PoolControllerPage() {
                                     )}
                                     <button
                                       type="button"
-                                      onClick={() => {
+                                      onClick={async () => {
                                         const filtered = registeredEquipments.filter(item => item.id !== eq.id);
                                         setRegisteredEquipments(filtered);
                                         localStorage.setItem('registered_equipments', JSON.stringify(filtered));
+                                        if (isSupabaseConfigured() && currentUser?.isSupabase) {
+                                          await deleteDeviceInSupabase(eq.id);
+                                        }
                                         if (isActive && filtered.length > 0) {
                                           setDeviceId(filtered[0].id);
                                           localStorage.setItem('mqtt_device', filtered[0].id);
