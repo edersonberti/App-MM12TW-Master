@@ -3468,8 +3468,8 @@ export default function PoolControllerPage() {
                   <div className="p-3 sm:p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3 -mx-3 sm:mx-0">
                     <div className="flex items-center justify-between px-1 py-0.5">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL:</p>
-                        <span className="text-[12px] font-black text-[#4398fa] font-mono">
+                        <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">PROGRAMA ATUAL: </p>
+                        <span className="text-[18px] font-black text-[#4398fa] font-mono">
                           {currentProgram === '---' ? '---' : currentProgram}
                         </span>
                       </div>
