@@ -355,6 +355,11 @@ export default function PoolControllerPage() {
       setMotor3Name('Motor 03');
       setMotor4Name('Motor 04');
 
+      // Supabase is the single source of truth for authentication. No simulated local users.
+      localStorage.removeItem('sim_user');
+      localStorage.removeItem('supabase_url_cache');
+      localStorage.removeItem('supabase_anon_key_cache');
+
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
       if (storedTelemetry) {
         try {
@@ -882,6 +887,12 @@ export default function PoolControllerPage() {
     setAuthErrorMessage('');
     setIsLoadingAuth(true);
 
+    if (!isSupabaseConfigured()) {
+      setAuthErrorMessage('Erro: O Supabase não está configurado. Cadastre as chaves NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_ANON_KEY nas configurações de Secrets do AI Studio.');
+      setIsLoadingAuth(false);
+      return;
+    }
+
     try {
       if (mode === 'login') {
         const { data, error } = await signInWithPassword(cleanEmail, cleanPassword);
@@ -962,10 +973,13 @@ export default function PoolControllerPage() {
 
   const handleLogout = async () => {
     try {
-      await signOut();
+      if (isSupabaseConfigured()) {
+        await signOut();
+      }
     } catch (err) {
       console.error(err);
     }
+    localStorage.removeItem('sim_user');
     setCurrentUser(null);
     setEmailInput('');
     setPasswordInput('');

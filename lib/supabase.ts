@@ -19,10 +19,7 @@ export const configureSupabase = (url: string, key: string): boolean => {
     try {
       realSupabaseInstance = createClient(url, key);
       
-      // Save to client-side localStorage cache so it is immediately available on next page reload
       if (typeof window !== 'undefined') {
-        localStorage.setItem('supabase_url_cache', url);
-        localStorage.setItem('supabase_anon_key_cache', key);
         (window as any).__supabase_url = url;
         (window as any).__supabase_key = key;
       }
@@ -38,15 +35,6 @@ export const configureSupabase = (url: string, key: string): boolean => {
 const initialUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const initialKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 configureSupabase(initialUrl, initialKey);
-
-// Synchronously load from localStorage cache during client boot so first render has access immediately
-if (typeof window !== 'undefined') {
-  const cachedUrl = localStorage.getItem('supabase_url_cache');
-  const cachedKey = localStorage.getItem('supabase_anon_key_cache');
-  if (cachedUrl && cachedKey) {
-    configureSupabase(cachedUrl, cachedKey);
-  }
-}
 
 // A recursive proxy that handles any nested properties and returns dummy builder methods to avoid runtime crashes
 const createDummyProxy = (path: string = 'supabase'): any => {
