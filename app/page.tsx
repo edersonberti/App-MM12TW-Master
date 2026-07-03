@@ -43,14 +43,10 @@ import {
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase } from '../lib/supabase';
-import {
-  syncUserProfile,
-  fetchUserDevices,
-  registerDeviceInSupabase,
-  deleteDeviceInSupabase,
-  fetchDeviceSettings,
-  saveDeviceSettings
-} from '../lib/supabaseSync';
+import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
+import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
+import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -190,17 +186,7 @@ export default function PoolControllerPage() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
   const [supabaseStateLoaded, setSupabaseStateLoaded] = useState(false);
 
-  // Firebase Config State (allows customized credential binding matching user requirement)
-  const [firebaseConfig, setFirebaseConfig] = useState({
-    apiKey: '',
-    authDomain: '',
-    projectId: '',
-    storageBucket: '',
-    messagingSenderId: '',
-    appId: ''
-  });
-  const [firebaseInitialized, setFirebaseInitialized] = useState(false);
-  const authRef = useRef<any>(null);
+
 
   // MQTT Config State
   const [mqttBroker, setMqttBroker] = useState(DEFAULT_MQTT_BROKER);
@@ -336,7 +322,6 @@ export default function PoolControllerPage() {
   const pickerContainerId = 'iro-color-picker-target';
 
   const [pahoLoaded, setPahoLoaded] = useState(false);
-  const [firebaseAppLoaded, setFirebaseAppLoaded] = useState(false);
   const [userWantsMqtt, setUserWantsMqttState] = useState(true);
   const userWantsMqttRef = useRef(true);
   const lastMessageTimeRef = useRef<number>(0);
@@ -359,54 +344,16 @@ export default function PoolControllerPage() {
 
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
-      const storedMotor1Name = localStorage.getItem('motor1_name') || 'Motor 01';
-      const storedMotor2Name = localStorage.getItem('motor2_name') || 'Motor 02';
-      const storedMotor3Name = localStorage.getItem('motor3_name') || 'Motor 03';
-      const storedMotor4Name = localStorage.getItem('motor4_name') || 'Motor 04';
 
       setMqttBroker(storedBroker);
       setMqttPort(storedPort);
       setDeviceId(storedDevice);
       setMqttUser(storedMqttUser);
       setMqttPassword(storedMqttPass);
-      setMotor1Name(storedMotor1Name);
-      setMotor2Name(storedMotor2Name);
-      setMotor3Name(storedMotor3Name);
-      setMotor4Name(storedMotor4Name);
-
-      const storedEquips = localStorage.getItem('registered_equipments');
-      if (storedEquips) {
-        try {
-          const parsed = JSON.parse(storedEquips);
-          const hasOp1 = parsed.some((e: any) => e.userEmail === 'operador.suporte@lazer.com');
-          const hasOp2 = parsed.some((e: any) => e.userEmail === 'visitante.pool@lazer.com');
-          if (!hasOp1 || !hasOp2) {
-            const updatedParsed = parsed.map((e: any) => {
-              if (e.id === 'MM12TW-000123' && !e.userEmail) {
-                return { ...e, userEmail: 'operador.suporte@lazer.com', userPassword: '12345678' };
-              }
-              if (e.id === 'MM03TW-1002' && !e.userEmail) {
-                return { ...e, userEmail: 'visitante.pool@lazer.com', userPassword: '12345678' };
-              }
-              return e;
-            });
-            setRegisteredEquipments(updatedParsed);
-            localStorage.setItem('registered_equipments', JSON.stringify(updatedParsed));
-          } else {
-            setRegisteredEquipments(parsed);
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        const initialEquips = [
-          { id: 'MM12TW-000123', model: 'MM12TW' as const, userEmail: 'operador.suporte@lazer.com', userPassword: '12345678' },
-          { id: 'MM03TW-1002', model: 'MM03TW' as const, userEmail: 'visitante.pool@lazer.com', userPassword: '12345678' },
-          { id: 'MM08TSW-20045', model: 'MM08TSW' as const }
-        ];
-        setRegisteredEquipments(initialEquips);
-        localStorage.setItem('registered_equipments', JSON.stringify(initialEquips));
-      }
+      setMotor1Name('Motor 01');
+      setMotor2Name('Motor 02');
+      setMotor3Name('Motor 03');
+      setMotor4Name('Motor 04');
 
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
       if (storedTelemetry) {
@@ -446,52 +393,6 @@ export default function PoolControllerPage() {
         localStorage.setItem('device_telemetry_map', JSON.stringify(initialTelemetry));
       }
 
-      const conf = {
-        apiKey: localStorage.getItem('fb_api_key') || '',
-        authDomain: localStorage.getItem('fb_auth_domain') || '',
-        projectId: localStorage.getItem('fb_project_id') || '',
-        storageBucket: localStorage.getItem('fb_storage_bucket') || '',
-        messagingSenderId: localStorage.getItem('fb_messaging_sender_id') || '',
-        appId: localStorage.getItem('fb_app_id') || ''
-      };
-      setFirebaseConfig(conf);
-
-      // Load any existing users registered in localStorage (if any)
-      try {
-        const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        setSimUsers(storedUsers);
-      } catch (e) {
-        console.error("Error loading users:", e);
-      }
-
-      // Pre-seed logs for beautiful stats graphs
-      try {
-        if (!localStorage.getItem('sim_user_logs')) {
-          const dummyLogs = [
-            { id: 'log-1', timestamp: new Date(Date.now() - 5 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Ligou Motor Hidro (M1)', deviceId: 'MM12TW-000123' },
-            { id: 'log-2', timestamp: new Date(Date.now() - 25 * 60000).toISOString(), email: 'admin@admin.com', action: 'Configurou Timer do LED', deviceId: 'MM12TW-000123' },
-            { id: 'log-3', timestamp: new Date(Date.now() - 40 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Alterou Cor do LED (H:240, S:100, V:100)', deviceId: 'MM12TW-000123' },
-            { id: 'log-4', timestamp: new Date(Date.now() - 120 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Salvou Configuração de Filtração', deviceId: 'MM12TW-000123' },
-            { id: 'log-5', timestamp: new Date(Date.now() - 180 * 60000).toISOString(), email: 'visitante.pool@lazer.com', action: 'Ligou Motor de Filtro (M2)', deviceId: 'MM03TW-1002' },
-            { id: 'log-6', timestamp: new Date(Date.now() - 300 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Desligou Motor Hidro (M1)', deviceId: 'MM12TW-000123' },
-            { id: 'log-7', timestamp: new Date(Date.now() - 420 * 60000).toISOString(), email: 'admin@admin.com', action: 'Ligou Motor 3 (M3)', deviceId: 'MM08TSW-20045' },
-            { id: 'log-8', timestamp: new Date(Date.now() - 600 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Configurou Timer de Hidro', deviceId: 'MM12TW-000123' },
-            { id: 'log-9', timestamp: new Date(Date.now() - 820 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Alterou Cor do LED (H:120, S:100, V:100)', deviceId: 'MM12TW-000123' },
-            { id: 'log-10', timestamp: new Date(Date.now() - 1000 * 60000).toISOString(), email: 'admin@admin.com', action: 'Salvou Configurações do Broker MQTT', deviceId: 'MM12TW-000123' },
-            { id: 'log-11', timestamp: new Date(Date.now() - 1200 * 60000).toISOString(), email: 'visitante.pool@lazer.com', action: 'Ligou Motor 4 (M4)', deviceId: 'MM12TW-000123' },
-            { id: 'log-12', timestamp: new Date(Date.now() - 1500 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Configurou Timer de Hidro', deviceId: 'MM12TW-000123' },
-            { id: 'log-13', timestamp: new Date(Date.now() - 1800 * 60000).toISOString(), email: 'admin@admin.com', action: 'Ligou Motor Hidro (M1)', deviceId: 'MM03TW-1002' },
-            { id: 'log-14', timestamp: new Date(Date.now() - 2200 * 60000).toISOString(), email: 'operador.suporte@lazer.com', action: 'Desligou Motor 3 (M3)', deviceId: 'MM08TSW-20045' },
-            { id: 'log-15', timestamp: new Date(Date.now() - 2800 * 60000).toISOString(), email: 'edersonbatistabertirs@gmail.com', action: 'Ligou Motor de Filtro (M2)', deviceId: 'MM12TW-000123' }
-          ];
-          localStorage.setItem('sim_user_logs', JSON.stringify(dummyLogs));
-        }
-        const logs = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
-        setUserLogs(logs);
-      } catch (e) {
-        console.error("Error pre-seeding logs:", e);
-      }
-
       // Fetch Supabase configuration from server dynamically
       const initAppAndSupabase = async () => {
         try {
@@ -505,37 +406,6 @@ export default function PoolControllerPage() {
           }
         } catch (err) {
           console.error("Failed to load Supabase runtime config:", err);
-        }
-
-        const simUser = localStorage.getItem('sim_user');
-        if (simUser) {
-          try {
-            const parsed = JSON.parse(simUser);
-            if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
-              setCurrentUser(parsed);
-              setActiveScreen('home');
-
-              fetchUserDevices(parsed.uid).then(dbDevices => {
-                if (dbDevices && dbDevices.length > 0) {
-                  setRegisteredEquipments(dbDevices.map(d => ({
-                    id: d.id,
-                    model: d.model,
-                    pairing_token: d.pairing_token
-                  })));
-                }
-              }).catch(err => {
-                console.warn("Supabase initial devices load error:", err);
-              });
-            } else if (firebaseInitialized && authRef.current && !parsed.isSupabase) {
-              setCurrentUser(parsed);
-              setActiveScreen('home');
-            } else {
-              localStorage.removeItem('sim_user');
-              setCurrentUser(null);
-            }
-          } catch (e) {
-            localStorage.removeItem('sim_user');
-          }
         }
       };
 
@@ -738,51 +608,59 @@ export default function PoolControllerPage() {
     }
   }, [showUpdatedMessage]);
 
-  // 2. Initialize Firebase SDK once scripts/config resolved
-  const initRealFirebase = () => {
-    if (typeof window === 'undefined' || !window.firebase || !firebaseConfig.apiKey) {
-      return; // Not configured yet, fall back to robust local simulator
-    }
-    try {
-      const fb = window.firebase;
-      let app;
-      if (fb.apps.length === 0) {
-        app = fb.initializeApp(firebaseConfig);
-      } else {
-        app = fb.app();
-      }
-      
-      const auth = fb.auth();
-      authRef.current = auth;
-      
-      // Wrap synchronously called state updates in a timeout to avoid synchronous cascading renders
-      setTimeout(() => {
-        setFirebaseInitialized(true);
-      }, 0);
-
-      auth.onAuthStateChanged((usr: any) => {
-        if (usr) {
-          setCurrentUser(usr);
-          setActiveScreen('home');
-        } else {
-          setCurrentUser(null);
-          if (activeScreen !== 'register') {
-            setActiveScreen('login');
-          }
-        }
-      });
-    } catch (err: any) {
-      console.warn("Real Firebase Boot Failed, defaulting to robust local sandbox auth flow:", err);
-    }
-  };
-
-  const isFirebaseAvailable = typeof window !== 'undefined' && !!window.firebase;
+  // 2. Initialize Supabase Auth state observer
   useEffect(() => {
-    if (firebaseConfig.apiKey && isFirebaseAvailable) {
-      initRealFirebase();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firebaseConfig, isFirebaseAvailable]);
+    if (!supabaseStateLoaded || !isSupabaseConfigured()) return;
+
+    const { data: { subscription } } = onAuthStateChange(async (event: any, session: any) => {
+      if (session?.user) {
+        // Fetch user profile and role from profiles table
+        const profile = await fetchProfile(session.user.id);
+        if (profile) {
+          const loggedUser = {
+            email: session.user.email,
+            uid: session.user.id,
+            role: profile.role, // owner, admin, support, operator, installer, factory
+            full_name: profile.full_name,
+            isSupabase: true
+          };
+          setCurrentUser(loggedUser);
+          
+          // Load devices for the user strictly from Supabase
+          const dbDevices = await fetchUserDevices(session.user.id);
+          if (dbDevices && dbDevices.length > 0) {
+            setRegisteredEquipments(dbDevices.map((d: any) => ({
+              id: d.id,
+              model: d.model,
+              pairing_token: d.pairing_token
+            })));
+          } else {
+            setRegisteredEquipments([]);
+          }
+          
+          if (activeScreen === 'login' || activeScreen === 'register') {
+            setActiveScreen('home');
+          }
+        } else {
+          // No profile exists, show error and logout
+          setAuthErrorMessage('Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
+          signOut();
+          setCurrentUser(null);
+          setActiveScreen('login');
+        }
+      } else {
+        setCurrentUser(null);
+        setRegisteredEquipments([]);
+        if (activeScreen !== 'register') {
+          setActiveScreen('login');
+        }
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, [supabaseStateLoaded, activeScreen]);
 
   // 3. Dynamic setup of Iro.js Color picker when active screen is 'led'
   useEffect(() => {
@@ -881,6 +759,22 @@ export default function PoolControllerPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
+
+  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
+  useEffect(() => {
+    if (activeScreen === 'admin' && isSupabaseConfigured()) {
+      const loadProfiles = async () => {
+        const profiles = await fetchAllProfiles();
+        setSimUsers(profiles.map(p => ({
+          uid: p.id,
+          email: p.email,
+          full_name: p.full_name,
+          role: p.role
+        })));
+      };
+      loadProfiles();
+    }
+  }, [activeScreen]);
 
   // 4. Color HSV to RGB Converter Math helper helper
   function hsvToRgb(h: number, s: number, v: number) {
@@ -988,189 +882,66 @@ export default function PoolControllerPage() {
     setAuthErrorMessage('');
     setIsLoadingAuth(true);
 
-    // Make sure we have the latest Supabase configuration loaded
-    if (!isSupabaseConfigured()) {
-      try {
-        const res = await fetch('/api/supabase-config');
-        const data = await res.json();
-        if (data.supabaseUrl && data.supabaseAnonKey) {
-          const success = configureSupabase(data.supabaseUrl, data.supabaseAnonKey);
-          if (success) {
-            setSupabaseStateLoaded(true);
+    try {
+      if (mode === 'login') {
+        const { data, error } = await signInWithPassword(cleanEmail, cleanPassword);
+        if (error) throw error;
+        if (data?.user) {
+          // Fetch profile and role using profileService
+          let profile = await fetchProfile(data.user.id);
+          if (!profile) {
+            // Wait 500ms and retry fetching profile to account for potential replication delay
+            await new Promise(resolve => setTimeout(resolve, 500));
+            profile = await fetchProfile(data.user.id);
           }
-        }
-      } catch (e) {
-        console.warn("Failed to dynamically fetch Supabase config in handleAuthSubmit:", e);
-      }
-    }
 
-    // If real Supabase configured, route there:
-    if (isSupabaseConfigured()) {
-      try {
-        if (mode === 'login') {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password: cleanPassword
-          });
-          if (error) throw error;
-          if (data?.user) {
-            // Fetch profile and role
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', data.user.id)
-              .maybeSingle();
-
-            const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com' || profile?.role === 'owner';
-            const loggedUser = {
-              email: data.user.email,
-              uid: data.user.id,
-              role: isOwner ? 'owner' : (profile?.role || 'operator'),
-              isSupabase: true
-            };
-            
-            // Sync user profile to profiles table
-            await syncUserProfile(data.user.id, data.user.email || '', loggedUser.role);
-
-            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-            setCurrentUser(loggedUser);
-
-            // Fetch user's registered devices from Supabase
-            const dbDevices = await fetchUserDevices(data.user.id);
-            if (dbDevices && dbDevices.length > 0) {
-              setRegisteredEquipments(dbDevices.map(d => ({
-                id: d.id,
-                model: d.model,
-                pairing_token: d.pairing_token
-              })));
-            }
-
-            setActiveScreen('home');
+          if (!profile) {
+            await signOut();
+            throw new Error('Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           }
-        } else {
-          const { data, error } = await supabase.auth.signUp({
-            email: cleanEmail,
-            password: cleanPassword
-          });
-          if (error) throw error;
-          if (data?.user) {
-            const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com';
-            const role = isOwner ? 'owner' : 'operator';
-            
-            // Sync user profile
-            await syncUserProfile(data.user.id, data.user.email || '', role);
 
-            const loggedUser = {
-              email: data.user.email,
-              uid: data.user.id,
-              role: role,
-              isSupabase: true
-            };
-            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-            setCurrentUser(loggedUser);
-            alert('Conta cadastrada com sucesso no Supabase!');
-            setActiveScreen('home');
-          }
-        }
-      } catch (err: any) {
-        let errorMsg = err.message || 'Falha na autenticação.';
-        if (errorMsg.toLowerCase().includes('email not confirmed') || errorMsg.toLowerCase().includes('email_not_confirmed')) {
-          errorMsg = 'E-mail não confirmado! Por favor, confirme o e-mail através do link enviado pelo Supabase ou desative a opção "Confirmar E-mail" (Confirm Email) nas configurações de Authentication do seu console do Supabase.';
-        }
-        setAuthErrorMessage(`Erro Supabase: ${errorMsg}`);
-      } finally {
-        setIsLoadingAuth(false);
-      }
-      return;
-    }
-
-    // If real Firebase configured, route there:
-    if (firebaseInitialized && authRef.current) {
-      try {
-        if (mode === 'login') {
-          await authRef.current.signInWithEmailAndPassword(cleanEmail, cleanPassword);
-        } else {
-          await authRef.current.createUserWithEmailAndPassword(cleanEmail, cleanPassword);
-          alert('Conta cadastrada com sucesso!');
-          setActiveScreen('home');
-        }
-      } catch (err: any) {
-        setAuthErrorMessage(`Erro: ${err.message || 'Falha na autenticação.'}`);
-      } finally {
-        setIsLoadingAuth(false);
-      }
-      return;
-    }
-
-    // Dynamic Mock Auth Fallback Mode (Simulado via localStorage no navegador do usuário)
-    setTimeout(() => {
-      setIsLoadingAuth(false);
-      try {
-        const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        if (mode === 'login') {
-          const matched = storedUsers.find((u: any) => {
-            const uEmail = (u.email || '').trim().toLowerCase();
-            return uEmail === cleanEmail && u.password === cleanPassword;
-          });
-          
-          if (matched) {
-            const loggedUser = { 
-              email: cleanEmail, 
-              uid: matched.uid || ('sim-' + Math.random().toString(36).substr(2, 9)),
-              role: matched.role || 'operator'
-            };
-            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-            setCurrentUser(loggedUser);
-            setActiveScreen('home');
-          } else {
-            if (storedUsers.length === 0) {
-              setAuthErrorMessage('Nenhum usuário cadastrado neste navegador. Toque em "Criar nova conta" abaixo para criar o seu primeiro acesso de forma segura.');
-            } else {
-              setAuthErrorMessage('E-mail ou senha incorretos neste navegador. Verifique os dados ou crie uma nova conta.');
-            }
-          }
-        } else {
-          // Signup mode
-          const existingIdx = storedUsers.findIndex((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
-          if (existingIdx !== -1) {
-            setAuthErrorMessage('Este e-mail já está cadastrado neste navegador.');
-            return;
-          }
-          
-          // First user created gets the owner role. Also owner role if matches specific emails.
-          const isOwner = storedUsers.length === 0 || 
-                          cleanEmail === 'admin@admin.com' || 
-                          cleanEmail === 'edersonbatistabertirs@gmail.com' || 
-                          cleanEmail === 'ederson@mastermoldes.com.br' || 
-                          cleanEmail.includes('admin');
-          const role = isOwner ? 'owner' : 'operator';
-          
-          const newUser = { 
-            email: cleanEmail, 
-            password: cleanPassword, 
-            role, 
-            uid: 'sim-' + Math.random().toString(36).substr(2, 9) 
+          const loggedUser = {
+            email: data.user.email,
+            uid: data.user.id,
+            role: profile.role,
+            full_name: profile.full_name,
+            isSupabase: true
           };
-          
-          storedUsers.push(newUser);
-          localStorage.setItem('sim_users', JSON.stringify(storedUsers));
-          setSimUsers(storedUsers);
-          
-          const loggedUser = { 
-            email: cleanEmail, 
-            role, 
-            uid: newUser.uid 
-          };
-          localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+
           setCurrentUser(loggedUser);
-          
-          alert(`Conta criada com sucesso no navegador! Nível de acesso: ${role === 'owner' ? 'Proprietário/Administrador' : 'Operador'}`);
+
+          // Fetch user's registered devices from Supabase
+          const dbDevices = await fetchUserDevices(data.user.id);
+          setRegisteredEquipments(dbDevices.map(d => ({
+            id: d.id,
+            model: d.model,
+            pairing_token: d.pairing_token
+          })));
+
+          if (dbDevices.length > 0) {
+            setDeviceId(dbDevices[0].id);
+          }
+
           setActiveScreen('home');
         }
-      } catch (err: any) {
-        setAuthErrorMessage(`Erro na simulação de banco local: ${err.message}`);
+      } else {
+        // Register mode
+        const { data, error } = await signUp(cleanEmail, cleanPassword, cleanEmail.split('@')[0], 'operator');
+        if (error) throw error;
+        if (data?.user) {
+          alert('Conta cadastrada com sucesso! Verifique seu e-mail para confirmação se necessário.');
+          setActiveScreen('login');
+        }
       }
-    }, 800);
+    } catch (err: any) {
+      let errorMsg = err.message || 'Falha na autenticação.';
+      if (errorMsg.toLowerCase().includes('email not confirmed') || errorMsg.toLowerCase().includes('email_not_confirmed')) {
+        errorMsg = 'E-mail não confirmado! Por favor, confirme o e-mail através do link enviado pelo Supabase ou desative a opção "Confirmar E-mail" (Confirm Email) nas configurações de Authentication do seu console do Supabase.';
+      }
+      setAuthErrorMessage(`Erro Supabase: ${errorMsg}`);
+    } finally {
+      setIsLoadingAuth(false);
+    }
   };
 
   const handleResetPasswordSimulated = async () => {
@@ -1178,29 +949,23 @@ export default function PoolControllerPage() {
       alert('Por favor, insira o seu e-mail no campo de login acima.');
       return;
     }
-    
-    if (firebaseInitialized && authRef.current) {
-      try {
-        await authRef.current.sendPasswordResetEmail(emailInput);
-        alert('E-mail de redefinição enviado com sucesso para o seu Firebase Auth!');
-      } catch (err: any) {
-        alert(`Erro Firebase: ${err.message}`);
-      }
-      return;
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(emailInput, {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      });
+      if (error) throw error;
+      alert(`Instruções de redefinição de senha enviadas para o email: ${emailInput}.`);
+    } catch (err: any) {
+      alert(`Erro Supabase: ${err.message}`);
     }
-
-    alert(`Instruções de recuperação de senha enviadas para o email: ${emailInput} (Simulação: sandbox limpo).`);
   };
 
   const handleLogout = async () => {
-    if (firebaseInitialized && authRef.current) {
-      try {
-        await authRef.current.signOut();
-      } catch (err) {
-        console.error(err);
-      }
+    try {
+      await signOut();
+    } catch (err) {
+      console.error(err);
     }
-    localStorage.removeItem('sim_user');
     setCurrentUser(null);
     setEmailInput('');
     setPasswordInput('');
@@ -1850,7 +1615,6 @@ export default function PoolControllerPage() {
   const logUserAction = (actionName: string) => {
     try {
       const email = currentUser?.email || 'anonimo@pool.com';
-      const storedLogs = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
       const newLog = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: new Date().toISOString(),
@@ -1858,8 +1622,7 @@ export default function PoolControllerPage() {
         action: actionName,
         deviceId: deviceId || 'MASTERLAZER'
       };
-      const updated = [newLog, ...storedLogs].slice(0, 200);
-      localStorage.setItem('sim_user_logs', JSON.stringify(updated));
+      const updated = [newLog, ...userLogs].slice(0, 200);
       setUserLogs(updated);
     } catch (e) {
       console.error("Error logging action:", e);
@@ -1868,141 +1631,97 @@ export default function PoolControllerPage() {
 
   const handleAddUserAdmin = (e: React.FormEvent) => {
     e.preventDefault();
-    const email = userFormEmail.trim().toLowerCase();
-    const password = userFormPassword;
-    const role = userFormRole;
-
-    if (!email || password.length < 8) {
-      alert('Preencha um e-mail válido e senha com no mínimo 8 caracteres.');
-      return;
-    }
-
-    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
-    if (currentUsersList.some((u: any) => (u.email || '').trim().toLowerCase() === email)) {
-      alert('Usuário com este e-mail já existe!');
-      return;
-    }
-
-    const newUser = {
-      email,
-      password,
-      role,
-      uid: 'sim-' + Math.random().toString(36).substr(2, 9)
-    };
-
-    const updated = [...currentUsersList, newUser];
-    localStorage.setItem('sim_users', JSON.stringify(updated));
-    setSimUsers(updated);
-    logUserAction(`Criou usuário: ${email} (${role === 'owner' ? 'Proprietário' : 'Operador'})`);
-
-    // Reset Form
-    setUserFormEmail('');
-    setUserFormPassword('');
-    setUserFormRole('operator');
+    alert('No Supabase, novos usuários devem cadastrar-se pela tela de Login ("Criar nova conta"). Após cadastrados, você pode alterar o nível de acesso deles na lista abaixo.');
     setUserModalOpen(null);
-    alert('Usuário cadastrado com sucesso!');
   };
 
-  const handleUpdateUserAdmin = (e: React.FormEvent) => {
+  const handleUpdateUserAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserForEdit) return;
 
-    const email = userFormEmail.trim().toLowerCase();
-    const password = userFormPassword;
-    const role = userFormRole;
+    const role = userFormRole; // owner, admin, support, operator, installer, factory
 
-    if (!email || password.length < 8) {
-      alert('Preencha um e-mail válido e senha com no mínimo 8 caracteres.');
-      return;
-    }
-
-    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
-    const idx = currentUsersList.findIndex((u: any) => u.uid === selectedUserForEdit.uid);
-    if (idx === -1) {
-      alert('Usuário não encontrado!');
-      return;
-    }
-
-    // Check email uniqueness if changed
-    if (currentUsersList[idx].email.toLowerCase().trim() !== email) {
-      if (currentUsersList.some((u: any) => (u.email || '').trim().toLowerCase() === email)) {
-        alert('E-mail já está sendo usado por outro usuário!');
-        return;
+    try {
+      await updateProfileRole(selectedUserForEdit.uid, role);
+      
+      // Reload list
+      const profiles = await fetchAllProfiles();
+      setSimUsers(profiles.map(p => ({
+        uid: p.id,
+        email: p.email,
+        full_name: p.full_name,
+        role: p.role
+      })));
+      
+      logUserAction(`Alterou permissão do usuário: ${selectedUserForEdit.email} para ${role}`);
+      
+      // If edited self, update currentUser state
+      if (currentUser && currentUser.uid === selectedUserForEdit.uid) {
+        const updatedSelf = { ...currentUser, role };
+        setCurrentUser(updatedSelf);
       }
+
+      setSelectedUserForEdit(null);
+      setUserFormEmail('');
+      setUserFormPassword('');
+      setUserFormRole('operator');
+      setUserModalOpen(null);
+      alert('Nível de acesso atualizado com sucesso no Supabase!');
+    } catch (err: any) {
+      alert(`Erro ao atualizar perfil no Supabase: ${err.message}`);
     }
-
-    currentUsersList[idx].email = email;
-    currentUsersList[idx].password = password;
-    currentUsersList[idx].role = role;
-
-    localStorage.setItem('sim_users', JSON.stringify(currentUsersList));
-    setSimUsers(currentUsersList);
-    logUserAction(`Editou usuário: ${email} (${role === 'owner' ? 'Proprietário' : 'Operador'})`);
-
-    // If edited self, update currentUser state
-    if (currentUser && currentUser.uid === selectedUserForEdit.uid) {
-      const updatedSelf = { ...currentUser, email, password, role };
-      localStorage.setItem('sim_user', JSON.stringify(updatedSelf));
-      setCurrentUser(updatedSelf);
-    }
-
-    // Reset Form
-    setSelectedUserForEdit(null);
-    setUserFormEmail('');
-    setUserFormPassword('');
-    setUserFormRole('operator');
-    setUserModalOpen(null);
-    alert('Usuário atualizado com sucesso!');
   };
 
-  const handleDeleteUserAdmin = (uid: string) => {
+  const handleDeleteUserAdmin = async (uid: string) => {
     if (currentUser && currentUser.uid === uid) {
-      alert('Você não pode excluir a si mesmo enquanto estiver logado!');
+      alert('Você não pode remover a si mesmo!');
       return;
     }
 
     const targetUser = simUsers.find(u => u.uid === uid);
     if (!targetUser) return;
 
-    if (targetUser.email === 'admin@admin.com' || targetUser.email === 'edersonbatistabertirs@gmail.com') {
-      alert('Estes usuários de sistema padrão (proprietários raiz) não podem ser excluídos!');
+    if (!confirm(`Tem certeza que deseja excluir o perfil do usuário ${targetUser.email} do Supabase? Esta ação não pode ser desfeita.`)) {
       return;
     }
 
-    if (!confirm(`Tem certeza que deseja excluir o usuário ${targetUser.email}?`)) {
-      return;
+    try {
+      await deleteProfile(uid);
+      
+      // Reload list
+      const profiles = await fetchAllProfiles();
+      setSimUsers(profiles.map(p => ({
+        uid: p.id,
+        email: p.email,
+        full_name: p.full_name,
+        role: p.role
+      })));
+      
+      logUserAction(`Removeu usuário: ${targetUser.email}`);
+      alert('Usuário removido com sucesso do Supabase!');
+    } catch (err: any) {
+      alert(`Erro ao remover usuário do Supabase: ${err.message}`);
     }
-
-    const currentUsersList = JSON.parse(localStorage.getItem('sim_users') || '[]');
-    const updated = currentUsersList.filter((u: any) => u.uid !== uid);
-    localStorage.setItem('sim_users', JSON.stringify(updated));
-    setSimUsers(updated);
-    logUserAction(`Excluiu usuário: ${targetUser.email}`);
-    alert('Usuário excluído!');
   };
 
   const handleUpdateMotorName = async (motorNum: 1 | 2 | 3 | 4, newName: string) => {
     if (motorNum === 1) {
       setMotor1Name(newName);
-      localStorage.setItem('motor1_name', newName);
       if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
         await saveDeviceSettings(deviceId, { motor1_name: newName });
       }
     } else if (motorNum === 2) {
       setMotor2Name(newName);
-      localStorage.setItem('motor2_name', newName);
       if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
         await saveDeviceSettings(deviceId, { motor2_name: newName });
       }
     } else if (motorNum === 3) {
       setMotor3Name(newName);
-      localStorage.setItem('motor3_name', newName);
       if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
         await saveDeviceSettings(deviceId, { motor3_name: newName });
       }
     } else if (motorNum === 4) {
       setMotor4Name(newName);
-      localStorage.setItem('motor4_name', newName);
       if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
         await saveDeviceSettings(deviceId, { motor4_name: newName });
       }
@@ -2476,9 +2195,8 @@ export default function PoolControllerPage() {
       return;
     }
     
-    // Retrieve currently logged-in user's email and password
+    // Retrieve currently logged-in user's email
     const userEmail = currentUser?.email || '';
-    const userPassword = currentUser?.password || '';
     
     // Check if equipment is already in registered list
     const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
@@ -2489,8 +2207,7 @@ export default function PoolControllerPage() {
       model: finalModel,
       serial: finalSerial,
       manufacturer: finalManufacturer,
-      userEmail,
-      userPassword
+      userEmail
     };
     
     if (!exists) {
@@ -2501,11 +2218,10 @@ export default function PoolControllerPage() {
     }
     
     setRegisteredEquipments(updated);
-    localStorage.setItem('registered_equipments', JSON.stringify(updated));
     
     // Sync with Supabase if active
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      registerDeviceInSupabase(trimmedId, finalModel, currentUser.uid, finalSerial);
+      registerDevice(trimmedId, finalModel as any, currentUser.uid, finalSerial);
     }
     
     // Also make this the active device under control!
@@ -2533,13 +2249,6 @@ export default function PoolControllerPage() {
     localStorage.setItem('mqtt_device', deviceId);
     localStorage.setItem('mqtt_user', mqttUser);
     localStorage.setItem('mqtt_pass', mqttPassword);
-    
-    localStorage.setItem('fb_api_key', firebaseConfig.apiKey);
-    localStorage.setItem('fb_auth_domain', firebaseConfig.authDomain);
-    localStorage.setItem('fb_project_id', firebaseConfig.projectId);
-    localStorage.setItem('fb_storage_bucket', firebaseConfig.storageBucket);
-    localStorage.setItem('fb_messaging_sender_id', firebaseConfig.messagingSenderId);
-    localStorage.setItem('fb_app_id', firebaseConfig.appId);
 
     alert('Configurações armazenadas com sucesso no navegador! Conecte novamente.');
     setActiveScreen('home');
@@ -2565,26 +2274,7 @@ export default function PoolControllerPage() {
           setIroLoaded(true);
         }}
       />
-      <Script 
-        src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          console.log('Firebase App Compat loaded');
-          setFirebaseAppLoaded(true);
-        }}
-      />
-      {firebaseAppLoaded && (
-        <Script 
-          src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"
-          strategy="afterInteractive"
-          onLoad={() => {
-            console.log('Firebase Auth Compat loaded');
-            if (typeof window !== 'undefined' && window.firebase && firebaseConfig.apiKey) {
-              initRealFirebase();
-            }
-          }}
-        />
-      )}
+
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
       <div className={`w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
@@ -2682,7 +2372,7 @@ export default function PoolControllerPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {currentUser && (currentUser.email === 'admin@admin.com' || currentUser.email === 'edersonbatistabertirs@gmail.com' || currentUser.role === 'owner') && (
+                  {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
                     <button 
                       onClick={() => setActiveScreen('admin')} 
                       className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
@@ -4061,9 +3751,8 @@ export default function PoolControllerPage() {
                                       onClick={async () => {
                                         const filtered = registeredEquipments.filter(item => item.id !== eq.id);
                                         setRegisteredEquipments(filtered);
-                                        localStorage.setItem('registered_equipments', JSON.stringify(filtered));
                                         if (isSupabaseConfigured() && currentUser?.isSupabase) {
-                                          await deleteDeviceInSupabase(eq.id);
+                                          await deleteDevice(eq.id);
                                         }
                                         if (isActive && filtered.length > 0) {
                                           setDeviceId(filtered[0].id);
@@ -4252,11 +3941,7 @@ export default function PoolControllerPage() {
                         )}
                       </button>
                       <button
-                        onClick={() => {
-                          localStorage.removeItem('sim_user');
-                          setCurrentUser(null);
-                          setActiveScreen('login');
-                        }}
+                        onClick={handleLogout}
                         className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/20 text-rose-400 rounded-xl text-xs font-bold transition-all active:scale-95"
                       >
                         Sair do App
@@ -4485,38 +4170,29 @@ export default function PoolControllerPage() {
                                   {userModalOpen === 'add' ? 'Cadastrar Novo Usuário' : 'Editar Usuário'}
                                 </h4>
                                 
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                   <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-slate-300">E-mail</label>
+                                    <label className="text-[10px] font-bold text-slate-300">E-mail (Não editável)</label>
                                     <input
                                       type="email"
-                                      required
-                                      placeholder="usuario@email.com"
+                                      disabled
                                       value={userFormEmail}
-                                      onChange={(e) => setUserFormEmail(e.target.value)}
-                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                                      className="w-full px-2.5 py-1.5 bg-black/40 border border-white/10 rounded-lg text-xs text-slate-400 focus:outline-none cursor-not-allowed"
                                     />
                                   </div>
                                   <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-slate-300">Senha</label>
-                                    <input
-                                      type="text"
-                                      required
-                                      placeholder="min. 8 caracteres"
-                                      value={userFormPassword}
-                                      onChange={(e) => setUserFormPassword(e.target.value)}
-                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-slate-300">Acesso</label>
+                                    <label className="text-[10px] font-bold text-slate-300">Nível de Acesso (Role)</label>
                                     <select
                                       value={userFormRole}
                                       onChange={(e: any) => setUserFormRole(e.target.value)}
                                       className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors"
                                     >
-                                      <option value="operator" className="bg-[#121824]">Operador (Básico)</option>
-                                      <option value="owner" className="bg-[#121824]">Proprietário (Admin)</option>
+                                      <option value="owner" className="bg-[#121824]">Proprietário (owner)</option>
+                                      <option value="admin" className="bg-[#121824]">Administrador (admin)</option>
+                                      <option value="support" className="bg-[#121824]">Suporte (support)</option>
+                                      <option value="operator" className="bg-[#121824]">Operador (operator)</option>
+                                      <option value="installer" className="bg-[#121824]">Instalador (installer)</option>
+                                      <option value="factory" className="bg-[#121824]">Fábrica (factory)</option>
                                     </select>
                                   </div>
                                 </div>
@@ -4557,7 +4233,7 @@ export default function PoolControllerPage() {
                                 <thead>
                                   <tr className="bg-black/20 text-slate-400 border-b border-white/10 text-left">
                                     <th className="p-3">E-mail</th>
-                                    <th className="p-3">Senha</th>
+                                    <th className="p-3">Autenticação</th>
                                     <th className="p-3">Acesso</th>
                                     <th className="p-3 text-right">Ações</th>
                                   </tr>
@@ -4566,7 +4242,7 @@ export default function PoolControllerPage() {
                                   {simUsers
                                     .filter(u => (u.email || '').toLowerCase().includes(adminSearchUser.toLowerCase()))
                                     .map((u) => {
-                                      const isRoot = u.email === 'admin@admin.com' || u.email === 'edersonbatistabertirs@gmail.com';
+                                      const isRoot = u.role === 'owner';
                                       const isSelf = currentUser && currentUser.email === u.email;
                                       const isSelected = selectedUserForEquip === u.email;
                                       return (
@@ -4606,14 +4282,31 @@ export default function PoolControllerPage() {
                                               )}
                                             </div>
                                           </td>
-                                          <td className="p-3 font-mono text-slate-400">{u.password}</td>
+                                          <td className="p-3 font-mono text-emerald-400 text-[10px] font-semibold flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                            Ativo (Supabase)
+                                          </td>
                                           <td className="p-3">
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                               u.role === 'owner' 
                                                 ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' 
-                                                : 'bg-slate-400/15 text-slate-300 border border-white/5'
+                                                : u.role === 'admin'
+                                                  ? 'bg-blue-400/10 text-blue-400 border border-blue-400/20'
+                                                  : 'bg-slate-400/15 text-slate-300 border border-white/5'
                                             }`}>
-                                              {u.role === 'owner' ? 'Proprietário' : 'Operador'}
+                                              {u.role === 'owner' 
+                                                ? 'Proprietário' 
+                                                : u.role === 'admin' 
+                                                  ? 'Administrador' 
+                                                  : u.role === 'support'
+                                                    ? 'Suporte'
+                                                    : u.role === 'operator'
+                                                      ? 'Operador'
+                                                      : u.role === 'installer'
+                                                        ? 'Instalador'
+                                                        : u.role === 'factory'
+                                                          ? 'Fábrica'
+                                                          : u.role}
                                             </span>
                                           </td>
                                           <td className="p-3 text-right">
@@ -4623,7 +4316,7 @@ export default function PoolControllerPage() {
                                                   e.stopPropagation();
                                                   setSelectedUserForEdit(u);
                                                   setUserFormEmail(u.email);
-                                                  setUserFormPassword(u.password);
+                                                  setUserFormPassword('');
                                                   setUserFormRole(u.role || 'operator');
                                                   setUserModalOpen('edit');
                                                 }}
@@ -4638,7 +4331,7 @@ export default function PoolControllerPage() {
                                                   handleDeleteUserAdmin(u.uid);
                                                 }}
                                                 disabled={isRoot || isSelf}
-                                                title={isRoot ? 'Usuário padrão raiz não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
+                                                title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
                                                 className={`p-1.5 rounded-lg border transition-colors ${
                                                   isRoot || isSelf
                                                     ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
@@ -4739,16 +4432,27 @@ export default function PoolControllerPage() {
                                   <div className="flex flex-col gap-1.5 pt-1">
                                     <span className="text-[10px] text-slate-400 font-bold">Vincular equipamento disponível:</span>
                                     <select 
-                                      onChange={(e) => {
+                                      onChange={async (e) => {
                                         const eqId = e.target.value;
                                         if (!eqId) return;
+                                        
+                                        const targetUser = simUsers.find(u => u.email === selectedUserForEquip);
+                                        if (!targetUser) {
+                                          alert("Usuário não encontrado!");
+                                          return;
+                                        }
+
                                         const updated = registeredEquipments.map(eq => 
-                                          eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip, userPassword: '12345678' } : eq
+                                          eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
                                         );
                                         setRegisteredEquipments(updated);
-                                        localStorage.setItem('registered_equipments', JSON.stringify(updated));
+                                        
+                                        if (isSupabaseConfigured()) {
+                                          await updateDeviceOwner(eqId, targetUser.uid);
+                                        }
+
                                         setAdminSearchEquip(eqId);
-                                        alert(`Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip} com sucesso!`);
+                                        alert(`Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip} com sucesso no Supabase!`);
                                       }}
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
@@ -5381,14 +5085,13 @@ export default function PoolControllerPage() {
                                 <button
                                   onClick={() => {
                                     try {
-                                      const list = JSON.parse(localStorage.getItem('sim_user_logs') || '[]');
                                       const actions = [
                                         'Ligou Motor 3 (M3)', 'Desligou Motor 3 (M3)', 
                                         `Alterou LED para ${telemetry.mostUsedLedProgram}`, 
                                         'Desligou Motor de Filtro (M2)', 'Ligou Motor Hidro (M1)', 
                                         'Configurou Timer do LED'
                                       ];
-                                      const emails = ['edersonbatistabertirs@gmail.com', 'admin@admin.com', 'operador.suporte@lazer.com', 'visitante.pool@lazer.com'];
+                                      const emails = [currentUser?.email || 'operador@lazer.com'];
                                       
                                       const generated: any[] = [];
                                       for (let i = 0; i < 5; i++) {
@@ -5401,8 +5104,7 @@ export default function PoolControllerPage() {
                                         });
                                       }
 
-                                      const combined = [...generated, ...list].slice(0, 200);
-                                      localStorage.setItem('sim_user_logs', JSON.stringify(combined));
+                                      const combined = [...generated, ...userLogs].slice(0, 200);
                                       setUserLogs(combined);
                                       alert(`5 Logs de teste inseridos para o dispositivo ${searchedEquip.id}!`);
                                     } catch (e) {}
@@ -5648,7 +5350,6 @@ export default function PoolControllerPage() {
                                 <span className="text-[10px] text-rose-300 font-medium px-1">Confirmar limpeza?</span>
                                 <button
                                   onClick={() => {
-                                    localStorage.setItem('sim_user_logs', '[]');
                                     setUserLogs([]);
                                     setShowConfirmClearLogs(false);
                                   }}
@@ -5854,13 +5555,13 @@ export default function PoolControllerPage() {
                             </div>
 
                             <div className="flex justify-between items-center text-xs">
-                              <span className="text-slate-400 font-semibold">Conexão Firebase Real</span>
+                              <span className="text-slate-400 font-semibold">Conexão Supabase Real</span>
                               <span className={`font-black uppercase text-[9px] px-2 py-0.5 rounded ${
-                                firebaseInitialized 
+                                isSupabaseConfigured() 
                                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
                                   : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                               }`}>
-                                {firebaseInitialized ? 'Ativo (Real)' : 'Simulado (Nativo)'}
+                                {isSupabaseConfigured() ? 'Ativo (Real)' : 'Não Configurado'}
                               </span>
                             </div>
                           </div>
@@ -5868,7 +5569,7 @@ export default function PoolControllerPage() {
                           <div className="p-3.5 bg-white/5 border border-white/10 rounded-xl text-[11px] text-slate-300 leading-relaxed font-sans">
                             <strong className="text-white block mb-1">Notas do Projeto:</strong>
                             Este painel simula totalmente a comunicação serial Modbus do hardware através de barramentos JSON estruturados via MQTT. 
-                            Quando as credenciais Firebase são preenchidas nas Configurações Avançadas, as coleções de dados são sincronizadas de forma distribuída na nuvem.
+                            Quando as credenciais Supabase estão configuradas, as coleções de dados são sincronizadas de forma distribuída na nuvem.
                           </div>
                         </div>
 
