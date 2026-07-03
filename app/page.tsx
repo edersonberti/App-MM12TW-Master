@@ -1063,10 +1063,74 @@ export default function PoolControllerPage() {
       return;
     }
 
-    // Dynamic Mock Auth Fallback Mode - Blocked for security reasons
+    // Dynamic Mock Auth Fallback Mode (Simulado via localStorage no navegador do usuário)
     setTimeout(() => {
       setIsLoadingAuth(false);
-      setAuthErrorMessage('Banco de dados de autenticação não configurado. Por favor, conecte o Supabase ou Firebase no ambiente do servidor para realizar o acesso de forma segura.');
+      try {
+        const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
+        if (mode === 'login') {
+          const matched = storedUsers.find((u: any) => {
+            const uEmail = (u.email || '').trim().toLowerCase();
+            return uEmail === cleanEmail && u.password === cleanPassword;
+          });
+          
+          if (matched) {
+            const loggedUser = { 
+              email: cleanEmail, 
+              uid: matched.uid || ('sim-' + Math.random().toString(36).substr(2, 9)),
+              role: matched.role || 'operator'
+            };
+            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+            setCurrentUser(loggedUser);
+            setActiveScreen('home');
+          } else {
+            if (storedUsers.length === 0) {
+              setAuthErrorMessage('Nenhum usuário cadastrado neste navegador. Toque em "Criar nova conta" abaixo para criar o seu primeiro acesso de forma segura.');
+            } else {
+              setAuthErrorMessage('E-mail ou senha incorretos neste navegador. Verifique os dados ou crie uma nova conta.');
+            }
+          }
+        } else {
+          // Signup mode
+          const existingIdx = storedUsers.findIndex((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+          if (existingIdx !== -1) {
+            setAuthErrorMessage('Este e-mail já está cadastrado neste navegador.');
+            return;
+          }
+          
+          // First user created gets the owner role. Also owner role if matches specific emails.
+          const isOwner = storedUsers.length === 0 || 
+                          cleanEmail === 'admin@admin.com' || 
+                          cleanEmail === 'edersonbatistabertirs@gmail.com' || 
+                          cleanEmail === 'ederson@mastermoldes.com.br' || 
+                          cleanEmail.includes('admin');
+          const role = isOwner ? 'owner' : 'operator';
+          
+          const newUser = { 
+            email: cleanEmail, 
+            password: cleanPassword, 
+            role, 
+            uid: 'sim-' + Math.random().toString(36).substr(2, 9) 
+          };
+          
+          storedUsers.push(newUser);
+          localStorage.setItem('sim_users', JSON.stringify(storedUsers));
+          setSimUsers(storedUsers);
+          
+          const loggedUser = { 
+            email: cleanEmail, 
+            role, 
+            uid: newUser.uid 
+          };
+          localStorage.setItem('sim_user', JSON.stringify(loggedUser));
+          setCurrentUser(loggedUser);
+          
+          alert(`Conta criada com sucesso no navegador! Nível de acesso: ${role === 'owner' ? 'Proprietário/Administrador' : 'Operador'}`);
+          setActiveScreen('home');
+        }
+      } catch (err: any) {
+        setAuthErrorMessage(`Erro na simulação de banco local: ${err.message}`);
+      }
     }, 800);
   };
 
