@@ -42,7 +42,7 @@ import {
   Compass
 } from 'lucide-react';
 
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, configureSupabase } from '../lib/supabase';
 import {
   syncUserProfile,
   fetchUserDevices,
@@ -85,7 +85,7 @@ function escapeRegExp(str: string): string {
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
     <Image 
-      src="https://www.masterlazer.com.br/images/icon.jpg"
+      src="/public/logo.png"
       alt="Master Lazer Logo"
       fill
       sizes="168px"
@@ -188,6 +188,7 @@ export default function PoolControllerPage() {
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
+  const [supabaseStateLoaded, setSupabaseStateLoaded] = useState(false);
 
   // Firebase Config State (allows customized credential binding matching user requirement)
   const [firebaseConfig, setFirebaseConfig] = useState({
@@ -491,36 +492,54 @@ export default function PoolControllerPage() {
         console.error("Error pre-seeding logs:", e);
       }
 
-      const simUser = localStorage.getItem('sim_user');
-      if (simUser) {
+      // Fetch Supabase configuration from server dynamically
+      const initAppAndSupabase = async () => {
         try {
-          const parsed = JSON.parse(simUser);
-          if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
-            setCurrentUser(parsed);
-            setActiveScreen('home');
-
-            fetchUserDevices(parsed.uid).then(dbDevices => {
-              if (dbDevices && dbDevices.length > 0) {
-                setRegisteredEquipments(dbDevices.map(d => ({
-                  id: d.id,
-                  model: d.model,
-                  pairing_token: d.pairing_token
-                })));
-              }
-            }).catch(err => {
-              console.warn("Supabase initial devices load error:", err);
-            });
-          } else if (firebaseInitialized && authRef.current && !parsed.isSupabase) {
-            setCurrentUser(parsed);
-            setActiveScreen('home');
-          } else {
-            localStorage.removeItem('sim_user');
-            setCurrentUser(null);
+          const res = await fetch('/api/supabase-config');
+          const data = await res.json();
+          if (data.supabaseUrl && data.supabaseAnonKey) {
+            const success = configureSupabase(data.supabaseUrl, data.supabaseAnonKey);
+            if (success) {
+              setSupabaseStateLoaded(true);
+            }
           }
-        } catch (e) {
-          localStorage.removeItem('sim_user');
+        } catch (err) {
+          console.error("Failed to load Supabase runtime config:", err);
         }
-      }
+
+        const simUser = localStorage.getItem('sim_user');
+        if (simUser) {
+          try {
+            const parsed = JSON.parse(simUser);
+            if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
+              setCurrentUser(parsed);
+              setActiveScreen('home');
+
+              fetchUserDevices(parsed.uid).then(dbDevices => {
+                if (dbDevices && dbDevices.length > 0) {
+                  setRegisteredEquipments(dbDevices.map(d => ({
+                    id: d.id,
+                    model: d.model,
+                    pairing_token: d.pairing_token
+                  })));
+                }
+              }).catch(err => {
+                console.warn("Supabase initial devices load error:", err);
+              });
+            } else if (firebaseInitialized && authRef.current && !parsed.isSupabase) {
+              setCurrentUser(parsed);
+              setActiveScreen('home');
+            } else {
+              localStorage.removeItem('sim_user');
+              setCurrentUser(null);
+            }
+          } catch (e) {
+            localStorage.removeItem('sim_user');
+          }
+        }
+      };
+
+      initAppAndSupabase();
 
       const storedHidroEnabled = localStorage.getItem('hidro_timer_enabled') === 'true';
       const storedHidroHours = localStorage.getItem('hidro_timer_hours') || '1';
@@ -969,6 +988,22 @@ export default function PoolControllerPage() {
     setAuthErrorMessage('');
     setIsLoadingAuth(true);
 
+    // Make sure we have the latest Supabase configuration loaded
+    if (!isSupabaseConfigured()) {
+      try {
+        const res = await fetch('/api/supabase-config');
+        const data = await res.json();
+        if (data.supabaseUrl && data.supabaseAnonKey) {
+          const success = configureSupabase(data.supabaseUrl, data.supabaseAnonKey);
+          if (success) {
+            setSupabaseStateLoaded(true);
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to dynamically fetch Supabase config in handleAuthSubmit:", e);
+      }
+    }
+
     // If real Supabase configured, route there:
     if (isSupabaseConfigured()) {
       try {
@@ -1038,7 +1073,11 @@ export default function PoolControllerPage() {
           }
         }
       } catch (err: any) {
-        setAuthErrorMessage(`Erro Supabase: ${err.message || 'Falha na autenticação.'}`);
+        let errorMsg = err.message || 'Falha na autenticação.';
+        if (errorMsg.toLowerCase().includes('email not confirmed') || errorMsg.toLowerCase().includes('email_not_confirmed')) {
+          errorMsg = 'E-mail não confirmado! Por favor, confirme o e-mail através do link enviado pelo Supabase ou desative a opção "Confirmar E-mail" (Confirm Email) nas configurações de Authentication do seu console do Supabase.';
+        }
+        setAuthErrorMessage(`Erro Supabase: ${errorMsg}`);
       } finally {
         setIsLoadingAuth(false);
       }
@@ -2775,6 +2814,30 @@ export default function PoolControllerPage() {
                       <MasterLazerLogo className="w-[168px] h-[168px] hover:scale-105 transition-all duration-300 drop-shadow-[0_8px_8px_rgba(0,0,0,0.5)]" />
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Acesso Master</h2>
+                    
+                    <div className="mt-2 flex flex-col items-center gap-1.5">
+                      {isSupabaseConfigured() ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
+                          <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
+                          SUPABASE CLOUD ATIVO
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                          <Shield className="w-3 h-3 text-amber-400" />
+                          CARREGANDO CONEXÃO CLOUD...
+                        </span>
+                      )}
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.location.href = window.location.origin + '?nocache=' + Date.now();
+                        }}
+                        className="text-[10px] text-slate-400 hover:text-white underline transition-all mt-1"
+                      >
+                        Limpar cache e forçar atualização
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-3 my-auto">
@@ -2855,6 +2918,20 @@ export default function PoolControllerPage() {
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Novo Usuário</h2>
                     <p className="text-xs text-slate-400">Cadastre-se para gerenciar seus sistemas</p>
+                    
+                    <div className="mt-2 flex justify-center">
+                      {isSupabaseConfigured() ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
+                          <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
+                          SUPABASE CLOUD ATIVO
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                          <Shield className="w-3 h-3 text-amber-400" />
+                          CARREGANDO CONEXÃO CLOUD...
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-3 my-auto">
