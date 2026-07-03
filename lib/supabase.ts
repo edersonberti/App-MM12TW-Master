@@ -3,11 +3,26 @@ import { createClient } from '@supabase/supabase-js';
 // Global/module state for the real Supabase client instance
 let realSupabaseInstance: any = null;
 
+// Helper to clean credentials of any accidental whitespace or surrounding quotes
+const cleanCredential = (val: string): string => {
+  if (!val) return '';
+  let cleaned = val.trim();
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned;
+};
+
 // Helper to check if credentials are valid and not placeholder values
 const isValidConfig = (url: string, key: string): boolean => {
-  if (!url || !key) return false;
-  const lowerUrl = url.toLowerCase();
-  const lowerKey = key.toLowerCase();
+  const cleanUrl = cleanCredential(url);
+  const cleanKey = cleanCredential(key);
+  if (!cleanUrl || !cleanKey) return false;
+  const lowerUrl = cleanUrl.toLowerCase();
+  const lowerKey = cleanKey.toLowerCase();
   if (lowerUrl.includes('your-supabase-project') || lowerUrl.includes('placeholder')) return false;
   if (lowerKey.includes('your-supabase-anon-key') || lowerKey.includes('placeholder')) return false;
   return true;
@@ -15,13 +30,15 @@ const isValidConfig = (url: string, key: string): boolean => {
 
 // Lazy initializer / Configurer
 export const configureSupabase = (url: string, key: string): boolean => {
-  if (isValidConfig(url, key)) {
+  const cleanUrl = cleanCredential(url);
+  const cleanKey = cleanCredential(key);
+  if (isValidConfig(cleanUrl, cleanKey)) {
     try {
-      realSupabaseInstance = createClient(url, key);
+      realSupabaseInstance = createClient(cleanUrl, cleanKey);
       
       if (typeof window !== 'undefined') {
-        (window as any).__supabase_url = url;
-        (window as any).__supabase_key = key;
+        (window as any).__supabase_url = cleanUrl;
+        (window as any).__supabase_key = cleanKey;
       }
       return true;
     } catch (err) {
