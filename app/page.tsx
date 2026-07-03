@@ -455,29 +455,12 @@ export default function PoolControllerPage() {
       };
       setFirebaseConfig(conf);
 
-      // Pre-seed simulated users database so they always have admin@admin.com and owners' emails ready on load
+      // Load any existing users registered in localStorage (if any)
       try {
         const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        const defaultUsers = [
-          { email: 'admin@admin.com', password: '12345678', uid: 'sim-admin-id', role: 'owner' },
-          { email: 'edersonbatistabertirs@gmail.com', password: '12345678', uid: 'sim-user-id', role: 'owner' },
-          { email: 'operador.suporte@lazer.com', password: '12345678', uid: 'sim-op-id', role: 'operator' },
-          { email: 'visitante.pool@lazer.com', password: '12345678', uid: 'sim-visit-id', role: 'operator' }
-        ];
-        
-        let updatedUsersList = [...storedUsers];
-        defaultUsers.forEach(defUser => {
-          const exists = updatedUsersList.find(u => (u.email || '').toLowerCase().trim() === defUser.email);
-          if (!exists) {
-            updatedUsersList.push(defUser);
-          } else if (!exists.role) {
-            exists.role = defUser.role;
-          }
-        });
-        localStorage.setItem('sim_users', JSON.stringify(updatedUsersList));
-        setSimUsers(updatedUsersList);
+        setSimUsers(storedUsers);
       } catch (e) {
-        console.error("Error pre-seeding users:", e);
+        console.error("Error loading users:", e);
       }
 
       // Pre-seed logs for beautiful stats graphs
@@ -512,13 +495,10 @@ export default function PoolControllerPage() {
       if (simUser) {
         try {
           const parsed = JSON.parse(simUser);
-          setCurrentUser(parsed);
-          const emailLower = (parsed.email || '').toLowerCase().trim();
-          const isOwner = emailLower === 'admin@admin.com' || emailLower === 'edersonbatistabertirs@gmail.com' || parsed.role === 'owner';
-          setActiveScreen('home');
-
-          // If this is a real Supabase user, load their live devices dynamically!
           if (isSupabaseConfigured() && parsed.isSupabase && parsed.uid) {
+            setCurrentUser(parsed);
+            setActiveScreen('home');
+
             fetchUserDevices(parsed.uid).then(dbDevices => {
               if (dbDevices && dbDevices.length > 0) {
                 setRegisteredEquipments(dbDevices.map(d => ({
@@ -530,9 +510,15 @@ export default function PoolControllerPage() {
             }).catch(err => {
               console.warn("Supabase initial devices load error:", err);
             });
+          } else if (firebaseInitialized && authRef.current && !parsed.isSupabase) {
+            setCurrentUser(parsed);
+            setActiveScreen('home');
+          } else {
+            localStorage.removeItem('sim_user');
+            setCurrentUser(null);
           }
         } catch (e) {
-          // ignore
+          localStorage.removeItem('sim_user');
         }
       }
 
@@ -1077,64 +1063,10 @@ export default function PoolControllerPage() {
       return;
     }
 
-    // Dynamic Mock Auth Fallback Mode
+    // Dynamic Mock Auth Fallback Mode - Blocked for security reasons
     setTimeout(() => {
       setIsLoadingAuth(false);
-      if (mode === 'login') {
-        const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        const matched = storedUsers.find((u: any) => {
-          const uEmail = (u.email || '').trim().toLowerCase();
-          return uEmail === cleanEmail && u.password === cleanPassword;
-        });
-        
-        const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com' || matched?.role === 'owner';
-        
-        if (matched || (cleanEmail === 'admin@admin.com' && cleanPassword === '12345678') || (cleanEmail === 'edersonbatistabertirs@gmail.com' && cleanPassword === '12345678')) { // default dev shortcuts
-          const loggedUser = { 
-            email: cleanEmail, 
-            password: cleanPassword, 
-            uid: matched?.uid || (cleanEmail === 'admin@admin.com' ? 'sim-admin-id' : 'sim-user-id'),
-            role: isOwner ? 'owner' : (matched?.role || 'operator')
-          };
-          localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-          setCurrentUser(loggedUser);
-          setActiveScreen('home');
-        } else {
-          setAuthErrorMessage('Senha incorreta ou e-mail não cadastrado neste navegador.');
-        }
-      } else {
-        const storedUsers = JSON.parse(localStorage.getItem('sim_users') || '[]');
-        const existingIdx = storedUsers.findIndex((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
-        
-        const isOwner = cleanEmail === 'admin@admin.com' || cleanEmail === 'edersonbatistabertirs@gmail.com';
-        const role = isOwner ? 'owner' : 'operator';
-
-        if (existingIdx !== -1) {
-          // If the profile matches a default preseeded user profile with '12345678', we'll allow registering over it with a custom password!
-          if (storedUsers[existingIdx].password === '12345678') {
-            storedUsers[existingIdx].password = cleanPassword;
-            storedUsers[existingIdx].role = role;
-            localStorage.setItem('sim_users', JSON.stringify(storedUsers));
-            const loggedUser = { email: cleanEmail, password: cleanPassword, uid: storedUsers[existingIdx].uid, role };
-            localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-            setCurrentUser(loggedUser);
-            alert('Sua conta pré-cadastrada foi personalizada e ativada com sucesso!');
-            setActiveScreen('home');
-            return;
-          }
-          setAuthErrorMessage('E-mail já cadastrado.');
-          return;
-        }
-        const newUser = { email: cleanEmail, password: cleanPassword, role, uid: 'sim-' + Math.random().toString(36).substr(2, 9) };
-        storedUsers.push(newUser);
-        localStorage.setItem('sim_users', JSON.stringify(storedUsers));
-        
-        const loggedUser = { email: cleanEmail, password: cleanPassword, role, uid: newUser.uid };
-        localStorage.setItem('sim_user', JSON.stringify(loggedUser));
-        setCurrentUser(loggedUser);
-        alert('Conta criada com sucesso no sistema local!');
-        setActiveScreen('home');
-      }
+      setAuthErrorMessage('Banco de dados de autenticação não configurado. Por favor, conecte o Supabase ou Firebase no ambiente do servidor para realizar o acesso de forma segura.');
     }, 800);
   };
 
@@ -2827,44 +2759,7 @@ export default function PoolControllerPage() {
                       Esqueci minha senha
                     </button>
 
-                    {/* FAST LOGIN SHORTCUTS FOR MOCK AUTH */}
-                    {!firebaseInitialized && (
-                      <div className="pt-3 border-t border-white/5 space-y-2 mt-4">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-center">
-                          Acesso Rápido Simulado
-                        </span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEmailInput('admin@admin.com');
-                              setPasswordInput('12345678');
-                              setAuthErrorMessage('');
-                            }}
-                            className="bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl p-2 text-left transition-all duration-200"
-                          >
-                            <span className="text-[10px] font-bold text-[#4398fa] block">Admin</span>
-                            <span className="text-[8px] text-slate-400 font-mono truncate block">admin@admin.com</span>
-                          </button>
-                          
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEmailInput('edersonbatistabertirs@gmail.com');
-                              setPasswordInput('12345678');
-                              setAuthErrorMessage('');
-                            }}
-                            className="bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl p-2 text-left transition-all duration-200"
-                          >
-                            <span className="text-[10px] font-bold text-emerald-400 block">Proprietário</span>
-                            <span className="text-[8px] text-slate-400 font-mono truncate block">edersonbatistaber...</span>
-                          </button>
-                        </div>
-                        <p className="text-[8px] text-slate-500 leading-normal text-center">
-                          Toque em uma conta pré-salva acima para auto-preencher! Senha padrão: <span className="font-mono text-slate-400 font-bold">12345678</span>
-                        </p>
-                      </div>
-                    )}
+
                   </div>
 
                   <div className="text-center pt-4 border-t border-white/10">
