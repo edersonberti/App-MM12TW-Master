@@ -42,7 +42,7 @@ import {
   Compass
 } from 'lucide-react';
 
-import { isSupabaseConfigured, supabase, configureSupabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
@@ -97,6 +97,12 @@ export default function PoolControllerPage() {
   const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
+
+  // Manual API Configuration states
+  const [showManualConfig, setShowManualConfig] = useState(false);
+  const [manualUrl, setManualUrl] = useState('');
+  const [manualKey, setManualKey] = useState('');
+  const [manualSuccessMsg, setManualSuccessMsg] = useState('');
 
   // Admin & Owner Dashboard states
   const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba2' | 'aba3' | 'aba4'>('home');
@@ -355,8 +361,21 @@ export default function PoolControllerPage() {
       setMotor3Name('Motor 03');
       setMotor4Name('Motor 04');
 
-      // Supabase is the single source of truth for authentication. No simulated local users.
-      localStorage.removeItem('sim_user');
+      // Supabase is the single source of truth for authentication when properly configured.
+      // If unconfigured or configured with errors, we support local simulated sessions to prevent lock-outs.
+      if (isSupabaseConfigured()) {
+        localStorage.removeItem('sim_user');
+      } else {
+        const savedSimUser = localStorage.getItem('sim_user');
+        if (savedSimUser) {
+          try {
+            setCurrentUser(JSON.parse(savedSimUser));
+            setActiveScreen('home');
+          } catch (e) {
+            localStorage.removeItem('sim_user');
+          }
+        }
+      }
       localStorage.removeItem('supabase_url_cache');
       localStorage.removeItem('supabase_anon_key_cache');
 
@@ -401,6 +420,17 @@ export default function PoolControllerPage() {
       // Fetch Supabase configuration from server dynamically
       const initAppAndSupabase = async () => {
         try {
+          const localUrl = localStorage.getItem('local_supabase_url');
+          const localKey = localStorage.getItem('local_supabase_key');
+          if (localUrl) setManualUrl(localUrl);
+          if (localKey) setManualKey(localKey);
+
+          if (localUrl && localKey) {
+            // Already initialized using localStorage in /lib/supabase.ts
+            setSupabaseStateLoaded(true);
+            return;
+          }
+
           const res = await fetch('/api/supabase-config', { cache: 'no-store' });
           const data = await res.json();
           if (data.supabaseUrl && data.supabaseAnonKey) {
@@ -887,8 +917,9 @@ export default function PoolControllerPage() {
     setAuthErrorMessage('');
     setIsLoadingAuth(true);
 
-    if (!isSupabaseConfigured()) {
-      setAuthErrorMessage('Erro: O Supabase não está configurado. Cadastre as chaves NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_ANON_KEY nas configurações de Secrets do AI Studio.');
+    const configErr = getSupabaseConfigError();
+    if (configErr) {
+      setAuthErrorMessage(configErr);
       setIsLoadingAuth(false);
       return;
     }
@@ -969,6 +1000,20 @@ export default function PoolControllerPage() {
     } catch (err: any) {
       alert(`Erro Supabase: ${err.message}`);
     }
+  };
+
+  const handleEnterDemoMode = () => {
+    const demoUser = {
+      email: 'demo@masterlazer.com.br',
+      uid: 'demo-user-123',
+      role: 'owner',
+      full_name: 'Proprietário Demo',
+      isSupabase: false
+    };
+    setCurrentUser(demoUser);
+    localStorage.setItem('sim_user', JSON.stringify(demoUser));
+    setActiveScreen('home');
+    setAuthErrorMessage('');
   };
 
   const handleLogout = async () => {
@@ -2519,12 +2564,118 @@ export default function PoolControllerPage() {
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Acesso Master</h2>
                     
-                    <div className="mt-2 flex flex-col items-center gap-1.5">
-                      {isSupabaseConfigured() ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
-                          <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
-                          SUPABASE CLOUD ATIVO
-                        </span>
+                    <div className="mt-2 flex flex-col items-center gap-2 px-6 w-full max-w-[340px]">
+                      {getSupabaseConfigError() ? (
+                        <div className="flex flex-col items-center gap-2 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center w-full shadow-lg shadow-rose-950/20">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-rose-500/25 text-rose-300 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                            Chave Inválida / Erro de API
+                          </span>
+                          <p className="text-[10.5px] text-slate-300 leading-normal">
+                            A chave configurada nos Secrets do AI Studio começa com <code className="bg-rose-950 px-1 py-0.5 rounded text-rose-300 font-mono font-semibold">sb_publishable_</code>, que é um token de outro serviço (Stack Auth), inviabilizando a comunicação real com o Supabase.
+                          </p>
+                          <p className="text-[10.5px] text-emerald-400 font-bold leading-normal bg-emerald-950/25 p-1.5 rounded border border-emerald-500/20">
+                            Acesse seu painel do Supabase → Settings → API, copie a chave <strong>&apos;anon&apos; &apos;public&apos;</strong> (que começa com <strong>eyJ...</strong>) e cadastre-a como <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong> nos Secrets do AI Studio.
+                          </p>
+
+                          <div className="mt-2 pt-2 border-t border-rose-500/20 w-full flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowManualConfig(!showManualConfig);
+                                setManualSuccessMsg('');
+                              }}
+                              className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center justify-center gap-1 transition-all"
+                            >
+                              <Settings className="w-3.5 h-3.5 animate-spin-slow" />
+                              {showManualConfig ? 'Ocultar Ajuste Manual' : 'Configurar Chave Manualmente'}
+                            </button>
+
+                            {showManualConfig && (
+                              <div className="flex flex-col gap-2 text-left bg-black/40 p-2.5 rounded-lg border border-white/5">
+                                <label className="text-[10px] font-bold text-slate-400 block">URL do Supabase:</label>
+                                <input
+                                  type="text"
+                                  placeholder="https://xxxx.supabase.co"
+                                  value={manualUrl}
+                                  onChange={(e) => setManualUrl(e.target.value)}
+                                  className="w-full text-xs bg-slate-900 border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-orange-500"
+                                />
+                                <label className="text-[10px] font-bold text-slate-400 block mt-1">Chave Anon (Public Key):</label>
+                                <textarea
+                                  placeholder="eyJ..."
+                                  rows={2}
+                                  value={manualKey}
+                                  onChange={(e) => setManualKey(e.target.value)}
+                                  className="w-full text-[11px] font-mono bg-slate-900 border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-orange-500 resize-none"
+                                />
+
+                                <div className="flex gap-2 mt-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!manualUrl || !manualKey) {
+                                        alert('Por favor, preencha ambos os campos.');
+                                        return;
+                                      }
+                                      const success = saveLocalConfig(manualUrl, manualKey);
+                                      if (success) {
+                                        setManualSuccessMsg('Configuração salva! Recarregando...');
+                                        setTimeout(() => {
+                                          window.location.reload();
+                                        }, 1200);
+                                      } else {
+                                        alert('Dados inválidos. Verifique se a chave começa com "eyJ" e tem formato de JWT.');
+                                      }
+                                    }}
+                                    className="flex-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-[10.5px] text-center transition-all"
+                                  >
+                                    Salvar & Conectar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      clearLocalConfig();
+                                      setManualUrl('');
+                                      setManualKey('');
+                                      setManualSuccessMsg('Redefinido para o padrão! Recarregando...');
+                                      setTimeout(() => {
+                                        window.location.reload();
+                                      }, 1200);
+                                    }}
+                                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded text-[10.5px] text-center transition-all"
+                                    title="Restaurar valores do AI Studio"
+                                  >
+                                    Limpar
+                                  </button>
+                                </div>
+                                {manualSuccessMsg && (
+                                  <span className="text-[10px] text-emerald-400 text-center font-bold animate-pulse mt-1 block">
+                                    {manualSuccessMsg}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : isSupabaseConfigured() ? (
+                        <div className="flex flex-col items-center gap-1.5 w-full">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
+                            <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
+                            SUPABASE CLOUD ATIVO
+                          </span>
+                          {typeof window !== 'undefined' && localStorage.getItem('local_supabase_url') && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                clearLocalConfig();
+                                window.location.reload();
+                              }}
+                              className="text-[9px] text-amber-400 hover:underline transition-all"
+                            >
+                              Remover Chave Manual & Restaurar Padrão
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
                           <Shield className="w-3 h-3 text-amber-400" />
@@ -2585,7 +2736,7 @@ export default function PoolControllerPage() {
                     <button
                       type="button"
                       onClick={handleResetPasswordSimulated}
-                      className="w-full text-center text-xs text-slate-400 hover:text-[#4398fa] transition-all py-1"
+                      className="w-full text-center text-xs text-slate-400 hover:text-[#4398fa] transition-all py-1 mt-2"
                     >
                       Esqueci minha senha
                     </button>
@@ -2623,8 +2774,14 @@ export default function PoolControllerPage() {
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Novo Usuário</h2>
                     <p className="text-xs text-slate-400">Cadastre-se para gerenciar seus sistemas</p>
                     
-                    <div className="mt-2 flex justify-center">
-                      {isSupabaseConfigured() ? (
+                    <div className="mt-2 flex flex-col items-center gap-1.5 px-6">
+                      {getSupabaseConfigError() ? (
+                        <div className="flex flex-col items-center gap-1.5 p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center max-w-[340px]">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-rose-500/25 text-rose-300 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                            Chave Inválida / Erro de API
+                          </span>
+                        </div>
+                      ) : isSupabaseConfigured() ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
                           <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
                           SUPABASE CLOUD ATIVO
@@ -5571,11 +5728,13 @@ export default function PoolControllerPage() {
                             <div className="flex justify-between items-center text-xs">
                               <span className="text-slate-400 font-semibold">Conexão Supabase Real</span>
                               <span className={`font-black uppercase text-[9px] px-2 py-0.5 rounded ${
-                                isSupabaseConfigured() 
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                getSupabaseConfigError()
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  : isSupabaseConfigured() 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                               }`}>
-                                {isSupabaseConfigured() ? 'Ativo (Real)' : 'Não Configurado'}
+                                {getSupabaseConfigError() ? 'Chave Inválida' : isSupabaseConfigured() ? 'Ativo (Real)' : 'Não Configurado'}
                               </span>
                             </div>
                           </div>
