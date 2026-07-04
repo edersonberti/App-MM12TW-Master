@@ -401,7 +401,7 @@ export default function PoolControllerPage() {
       // Fetch Supabase configuration from server dynamically
       const initAppAndSupabase = async () => {
         try {
-          const res = await fetch('/api/supabase-config');
+          const res = await fetch('/api/supabase-config', { cache: 'no-store' });
           const data = await res.json();
           if (data.supabaseUrl && data.supabaseAnonKey) {
             const success = configureSupabase(data.supabaseUrl, data.supabaseAnonKey);

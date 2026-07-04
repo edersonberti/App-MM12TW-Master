@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const cleanCredential = (val: string): string => {
   if (!val) return '';
   let cleaned = val.trim();
