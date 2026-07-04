@@ -49,8 +49,12 @@ export const configureSupabase = (url: string, key: string): boolean => {
 };
 
 // Try to initialize immediately from process.env (for server-side or dev runtime)
-const initialUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const initialKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const initialUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const initialKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+                   process.env.SUPABASE_ANON_KEY || 
+                   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 
+                   process.env.SUPABASE_PUBLISHABLE_KEY || 
+                   '';
 configureSupabase(initialUrl, initialKey);
 
 // A recursive proxy that handles any nested properties and returns dummy builder methods to avoid runtime crashes
