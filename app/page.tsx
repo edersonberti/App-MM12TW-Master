@@ -2539,10 +2539,9 @@ export default function PoolControllerPage() {
                     <div className="w-10 h-10 border-4 border-[#4398fa]/20 border-t-[#4398fa] rounded-full animate-spin" />
                     <FolderSync className="w-5 h-5 text-[#4398fa] absolute animate-pulse" />
                   </div>
-                  <h3 className="text-sm font-bold text-white mb-1 uppercase tracking-wider">Atualizando Dados</h3>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Sincronizando com o equipamento. Por favor, aguarde para evitar acionamentos indevidos...
-                  </p>
+
+                 
+
                 </div>
               </div>
             )}
