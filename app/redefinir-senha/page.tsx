@@ -4,21 +4,23 @@ import { createClient } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
+let supabaseClientInstance: any = null;
 const getSupabaseClient = () => {
+  if (supabaseClientInstance) return supabaseClientInstance;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  supabaseClientInstance = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: true,
     },
   });
+  return supabaseClientInstance;
 };
 
 export default function ResetPasswordPage() {
-  const [supabaseClient, setSupabaseClient] = useState<any>(null);
   const [status, setStatus] = useState<'checking' | 'ready' | 'success' | 'error'>('checking');
   const [message, setMessage] = useState('Validando seu link de recuperação...');
   const [password, setPassword] = useState('');
@@ -29,7 +31,6 @@ export default function ResetPasswordPage() {
     if (typeof window === 'undefined') return;
 
     const client = getSupabaseClient();
-    setSupabaseClient(client);
 
     const verifyRecovery = async () => {
       try {
@@ -82,7 +83,8 @@ export default function ResetPasswordPage() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!supabaseClient) {
+    const client = getSupabaseClient();
+    if (!client) {
       setStatus('error');
       setMessage('Cliente de autenticação indisponível.');
       return;
@@ -105,7 +107,7 @@ export default function ResetPasswordPage() {
       setStatus('checking');
       setMessage('Atualizando sua senha...');
 
-      const { error } = await supabaseClient.auth.updateUser({ password });
+      const { error } = await client.auth.updateUser({ password });
       if (error) {
         throw error;
       }

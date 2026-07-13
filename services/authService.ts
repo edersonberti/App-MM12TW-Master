@@ -31,3 +31,10 @@ export async function getSession() {
 export function onAuthStateChange(callback: (event: any, session: any) => void) {
   return supabase.auth.onAuthStateChange(callback);
 }
+
+export async function resetPasswordForEmail(email: string, redirectTo: string) {
+  return await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+}
+

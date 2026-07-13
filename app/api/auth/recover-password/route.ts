@@ -59,25 +59,32 @@ function getSupabaseAdminClient() {
   });
 }
 
-async function generateRecoveryLink(email: string, baseUrl: string): Promise<string> {
+/**
+ * Envia email de recuperação usando Supabase Auth
+ * O Supabase gerencia os templates de email e o envio automaticamente
+ */
+async function sendPasswordResetEmail(email: string, code: string): Promise<void> {
   const supabaseAdmin = getSupabaseAdminClient();
-  const { data, error } = await (supabaseAdmin.auth.admin as any).generateLink({
-    type: 'recovery',
-    email,
-    options: {
-      redirectTo: `${baseUrl}/redefinir-senha`,
-    },
-  });
+  
+  try {
+    const { data, error } = await (supabaseAdmin.auth.admin as any).generateLink({
+      type: 'recovery',
+      email,
+      options: {
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://127.0.0.1:3000'}/auth/callback`,
+      },
+    });
 
-  if (error) {
-    throw new Error(error.message || 'Não foi possível gerar o link de recuperação.');
+    if (error) {
+      throw new Error(`Erro ao gerar link: ${error.message}`);
+    }
+
+    if (!data?.action_link) {
+      throw new Error('Link não foi gerado corretamente.');
+    }
+  } catch (err: any) {
+    throw new Error(`Falha ao enviar email: ${err.message || 'Erro desconhecido'}`);
   }
-
-  if (!data?.action_link) {
-    throw new Error('O link de recuperação não foi gerado corretamente.');
-  }
-
-  return data.action_link;
 }
 
 async function sendRecoveryEmail(email: string, code: string): Promise<void> {
@@ -230,17 +237,18 @@ export async function POST(request: Request) {
       });
 
       try {
-        await sendRecoveryEmail(email, code);
+        await sendPasswordResetEmail(email, code);
       } catch (emailError: any) {
+        recoveryCodes.delete(email);
         return NextResponse.json({
           ok: false,
-          message: emailError?.message || 'Não foi possível enviar o e-mail de recuperação no momento.',
+          message: emailError?.message || 'Não foi possível enviar o e-mail de recuperação.',
         }, { status: 400 });
       }
 
       return NextResponse.json({
         ok: true,
-        message: `Enviamos um código de 6 dígitos para ${email}.`,
+        message: `Enviamos um código de 6 dígitos para ${email}. Verifique seu email.`,
       });
     }
 
