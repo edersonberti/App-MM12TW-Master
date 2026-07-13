@@ -81,7 +81,7 @@ function escapeRegExp(str: string): string {
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
     <Image 
-      src="/public/logo.png"
+      src="/public/512x512.png"
       alt="Master Lazer Logo"
       fill
       sizes="168px"
@@ -97,6 +97,13 @@ export default function PoolControllerPage() {
   const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
+  const [recoveryMode, setRecoveryMode] = useState<'idle' | 'request' | 'verify' | 'recover'>('idle');
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   // Manual API Configuration states
   const [showManualConfig, setShowManualConfig] = useState(false);
@@ -986,19 +993,152 @@ export default function PoolControllerPage() {
     }
   };
 
-  const handleResetPasswordSimulated = async () => {
-    if (!emailInput) {
-      alert('Por favor, insira o seu e-mail no campo de login acima.');
+  const openRecoveryModal = () => {
+    setRecoveryEmail(emailInput.trim().toLowerCase());
+    setRecoveryCode('');
+    setRecoveryMessage('');
+    setRecoveryMode('request');
+  };
+
+  const closeRecoveryModal = () => {
+    setRecoveryMode('idle');
+    setRecoveryCode('');
+    setRecoveryMessage('');
+    setRecoveryLoading(false);
+    setNewPassword('');
+    setConfirmNewPassword('');
+  };
+
+  const handleRecoveryRequest = async () => {
+    const cleanEmail = (recoveryEmail || '').trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setRecoveryMessage('Informe um e-mail válido para receber o código.');
       return;
     }
+
+    setRecoveryLoading(true);
+    setRecoveryMessage('');
+
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(emailInput, {
-        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      const response = await fetch('/api/auth/recover-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, action: 'request' }),
       });
-      if (error) throw error;
-      alert(`Instruções de redefinição de senha enviadas para o email: ${emailInput}.`);
+      const result = await response.json();
+
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.message || 'Não foi possível enviar o código.');
+      }
+
+      setRecoveryMode('verify');
+      setRecoveryMessage(result.message || 'Código enviado com sucesso.');
     } catch (err: any) {
-      alert(`Erro Supabase: ${err.message}`);
+      setRecoveryMessage(err.message || 'Falha ao solicitar o código.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleRecoveryVerify = async () => {
+    const cleanEmail = (recoveryEmail || '').trim().toLowerCase();
+    const cleanCode = (recoveryCode || '').trim();
+
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setRecoveryMessage('Informe um e-mail válido.');
+      return;
+    }
+
+    if (!/^\d{6}$/.test(cleanCode)) {
+      setRecoveryMessage('O código deve ter exatamente 6 dígitos.');
+      return;
+    }
+
+    setRecoveryLoading(true);
+    setRecoveryMessage('');
+
+    try {
+      const verifyResponse = await fetch('/api/auth/recover-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, code: cleanCode, action: 'verify' }),
+      });
+      const verifyResult = await verifyResponse.json();
+
+      if (!verifyResponse.ok || !verifyResult?.ok) {
+        throw new Error(verifyResult?.message || 'Código inválido.');
+      }
+
+      // Mark email as verified for password reset
+      try {
+        await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail, action: 'markVerified' }),
+        });
+      } catch (err) {
+        // Continue even if marking verified fails, user can still reset
+        console.warn('Falha ao marcar e-mail como verificado:', err);
+      }
+
+      setRecoveryCode('');
+      setRecoveryMessage('Código validado com sucesso! Defina uma nova senha.');
+      setRecoveryMode('recover');
+      setNewPassword('');
+      setConfirmNewPassword('');
+    } catch (err: any) {
+      setRecoveryMessage(err.message || 'Falha ao validar o código.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleRecoveryReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const cleanEmail = (recoveryEmail || '').trim().toLowerCase();
+    const password = (newPassword || '').trim();
+    const passwordConfirm = (confirmNewPassword || '').trim();
+
+    if (!password || password.length < 8) {
+      setRecoveryMessage('A nova senha deve ter pelo menos 8 caracteres.');
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      setRecoveryMessage('As senhas não coincidem.');
+      return;
+    }
+
+    setRecoveryLoading(true);
+    setRecoveryMessage('');
+
+    try {
+      const resetResponse = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password, action: 'reset' }),
+      });
+
+      const resetResult = await resetResponse.json();
+
+      if (!resetResponse.ok || !resetResult?.ok) {
+        throw new Error(resetResult?.message || 'Não foi possível redefinir a senha.');
+      }
+
+      setRecoveryMessage('✓ Senha redefinida com sucesso! Redirecionando para login...');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      
+      setTimeout(() => {
+        setRecoveryMode('idle');
+        setRecoveryEmail('');
+        setAuthErrorMessage('');
+      }, 2000);
+    } catch (err: any) {
+      setRecoveryMessage(err?.message || 'Falha ao redefinir a senha.');
+    } finally {
+      setRecoveryLoading(false);
     }
   };
 
@@ -2734,7 +2874,7 @@ export default function PoolControllerPage() {
                     
                     <button
                       type="button"
-                      onClick={handleResetPasswordSimulated}
+                      onClick={openRecoveryModal}
                       className="w-full text-center text-xs text-slate-400 hover:text-[#4398fa] transition-all py-1 mt-2"
                     >
                       Esqueci minha senha
@@ -2742,6 +2882,127 @@ export default function PoolControllerPage() {
 
 
                   </div>
+
+                  <AnimatePresence>
+                    {recoveryMode !== 'idle' && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4"
+                      >
+                        <motion.div
+                          initial={{ y: 20, opacity: 0 }}
+                          animate={{ y: 0, opacity: 1 }}
+                          exit={{ y: 20, opacity: 0 }}
+                          className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900/95 p-4 shadow-2xl shadow-black/40"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-semibold text-white">
+                                {recoveryMode === 'recover' ? 'Redefinir Senha' : 'Recuperar Senha'}
+                              </h3>
+                              <p className="text-xs text-slate-400 mt-1">
+                                {recoveryMode === 'request' ? 'Enviaremos um código de 6 dígitos para o seu e-mail.' : recoveryMode === 'verify' ? 'Digite o código recebido para validar.' : 'Digite sua nova senha abaixo.'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={closeRecoveryModal}
+                              className="rounded-full p-1 text-slate-400 hover:bg-white/10 hover:text-white"
+                              aria-label="Fechar recuperação"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          {recoveryMessage && (
+                            <div className="mt-3 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-300">
+                              {recoveryMessage}
+                            </div>
+                          )}
+
+                          <div className="mt-4 space-y-3">
+                            {recoveryMode === 'request' ? (
+                              <>
+                                <div className="relative">
+                                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                  <input
+                                    type="email"
+                                    placeholder="Seu e-mail"
+                                    value={recoveryEmail}
+                                    onChange={(e) => setRecoveryEmail(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4398fa]"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleRecoveryRequest}
+                                  disabled={recoveryLoading}
+                                  className="w-full rounded-xl bg-gradient-to-r from-[#0055CC] to-[#4398fa] px-3 py-3 text-sm font-semibold text-white disabled:opacity-70"
+                                >
+                                  {recoveryLoading ? 'Enviando...' : 'Enviar código'}
+                                </button>
+                              </>
+                            ) : recoveryMode === 'verify' ? (
+                              <>
+                                <div className="relative">
+                                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    maxLength={6}
+                                    placeholder="Código de 6 dígitos"
+                                    value={recoveryCode}
+                                    onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4398fa]"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleRecoveryVerify}
+                                  disabled={recoveryLoading}
+                                  className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-400 px-3 py-3 text-sm font-semibold text-white disabled:opacity-70"
+                                >
+                                  {recoveryLoading ? 'Validando...' : 'Validar código'}
+                                </button>
+                              </>
+                            ) : recoveryMode === 'recover' ? (
+                              <form onSubmit={handleRecoveryReset} className="space-y-3">
+                                <div className="relative">
+                                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                  <input
+                                    type="password"
+                                    placeholder="Nova senha (mín. 8 caracteres)"
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4398fa]"
+                                  />
+                                </div>
+                                <div className="relative">
+                                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                  <input
+                                    type="password"
+                                    placeholder="Confirmar nova senha"
+                                    value={confirmNewPassword}
+                                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4398fa]"
+                                  />
+                                </div>
+                                <button
+                                  type="submit"
+                                  disabled={recoveryLoading}
+                                  className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-400 px-3 py-3 text-sm font-semibold text-white disabled:opacity-70"
+                                >
+                                  {recoveryLoading ? 'Salvando...' : 'Salvar nova senha'}
+                                </button>
+                              </form>
+                            ) : null}
+                          </div>
+                        </motion.div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   <div className="text-center pt-4 border-t border-white/10">
                     <p className="text-xs text-slate-400">
