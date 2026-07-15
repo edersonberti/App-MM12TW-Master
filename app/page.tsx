@@ -39,7 +39,8 @@ import {
   Trash2,
   Search,
   MapPin,
-  Compass
+  Compass,
+  Menu
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
@@ -102,6 +103,7 @@ export default function PoolControllerPage() {
 
   // Manual API Configuration states
   const [showManualConfig, setShowManualConfig] = useState(false);
+  const [showNavMenu, setShowNavMenu] = useState(false);
   const [manualUrl, setManualUrl] = useState('');
   const [manualKey, setManualKey] = useState('');
   const [manualSuccessMsg, setManualSuccessMsg] = useState('');
@@ -2713,52 +2715,74 @@ export default function PoolControllerPage() {
                   </div>
                 </div>
 
-                {/* Connection Status Indicator */}
-                <button 
-                  onClick={forceReconnectMQTT}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 shadow-sm transition-all cursor-pointer"
-                  title="Conexão com ESP32. Clique para reconectar imediatamente"
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    mqttConnected 
-                      ? 'bg-[#4398fa] animate-pulse' 
-                      : mqttStatusMessage === 'Conectando...' 
-                        ? 'bg-amber-400 animate-pulse' 
-                        : 'bg-slate-400'
-                  }`} />
-                  <span className={`text-[9px] font-black tracking-wider uppercase ${
-                    mqttConnected 
-                      ? 'text-[#4398fa]' 
-                      : mqttStatusMessage === 'Conectando...' 
-                        ? 'text-amber-400' 
-                        : 'text-slate-400'
-                  }`}>
-                    {mqttConnected 
-                      ? 'CONECTADO' 
-                      : mqttStatusMessage === 'Conectando...' 
-                        ? 'CONECTANDO' 
-                        : 'OFFLINE'
-                    }
-                  </span>
-                </button>
-
                 <div className="flex items-center gap-2">
                   {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
-                    <button 
-                      onClick={() => setActiveScreen('admin')} 
-                      className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
+                    <button
+                      type="button"
+                      onClick={() => setActiveScreen('admin')}
+                      className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
                       title="Painel de Administração (Proprietário)"
                     >
-                      <Shield className="w-3.5 h-3.5" />
+                      <Shield className="w-4 h-4" />
                     </button>
                   )}
-                  <button 
-                    onClick={() => setActiveScreen('setup')} 
-                    className="w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all hover:bg-white/10"
-                    title="Configurações Avançadas"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                  </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowNavMenu((open) => !open)}
+                      className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all"
+                      title="Menu"
+                      aria-label="Abrir menu"
+                      aria-expanded={showNavMenu}
+                    >
+                      <Menu className="w-5 h-5" />
+                    </button>
+
+                    {showNavMenu && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-[70]"
+                          onClick={() => setShowNavMenu(false)}
+                          aria-hidden="true"
+                        />
+                        <div className="absolute right-0 top-11 z-[80] w-52 rounded-2xl border border-white/10 bg-[#0f172a]/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden">
+                          <div className="px-3.5 py-2.5 border-b border-white/10">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Menu</p>
+                            <p className="text-[11px] text-slate-300 truncate mt-0.5">
+                              {currentUser?.email || 'Conta'}
+                            </p>
+                          </div>
+
+                          <div className="p-1.5 space-y-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNavMenu(false);
+                                setActiveScreen('setup');
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-slate-200 hover:bg-white/10 transition-colors"
+                            >
+                              <Settings className="w-4 h-4 text-[#4398fa]" />
+                              Configurações
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNavMenu(false);
+                                handleLogout();
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            >
+                              <LogOut className="w-4 h-4" />
+                              Sair da conta
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -3169,11 +3193,64 @@ export default function PoolControllerPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="space-y-4 flex flex-col flex-1 justify-between"
+                  className="space-y-3"
                 >
-                  <div className="space-y-3">
-                    {/* LED & TIMERS Status Indicators */}
-                    <div className="grid grid-cols-2 gap-2">
+                  {/* System connect / offline — placed at top for easy access */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (mqttConnected) {
+                        disconnectMQTT();
+                      } else {
+                        connectMQTT();
+                      }
+                    }}
+                    className={`w-full p-3.5 rounded-xl border flex items-center justify-between gap-3 active:scale-[0.99] transition-all ${
+                      mqttConnected
+                        ? 'bg-emerald-500/10 border-emerald-500/25 hover:bg-emerald-500/15'
+                        : mqttStatusMessage === 'Conectando...'
+                          ? 'bg-amber-500/10 border-amber-500/25'
+                          : 'bg-[#4398fa]/10 border-[#4398fa]/25 hover:bg-[#4398fa]/15'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 text-left min-w-0">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 ${
+                        mqttConnected
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                          : 'bg-[#4398fa]/15 border-[#4398fa]/30 text-[#4398fa]'
+                      }`}>
+                        {mqttConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                          Sistema remoto
+                        </p>
+                        <p className={`text-sm font-bold truncate ${
+                          mqttConnected
+                            ? 'text-emerald-400'
+                            : mqttStatusMessage === 'Conectando...'
+                              ? 'text-amber-400'
+                              : 'text-white'
+                        }`}>
+                          {mqttConnected
+                            ? 'Conectado — toque para deixar offline'
+                            : mqttStatusMessage === 'Conectando...'
+                              ? 'Conectando...'
+                              : 'Offline — toque para conectar'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider border ${
+                      mqttConnected
+                        ? 'bg-rose-500/15 border-rose-500/25 text-rose-400'
+                        : 'bg-[#4398fa]/20 border-[#4398fa]/30 text-[#4398fa]'
+                    }`}>
+                      {mqttConnected ? 'Offline' : 'Conectar'}
+                    </span>
+                  </button>
+
+                  {/* LED & TIMERS Status Indicators */}
+                  <div className="grid grid-cols-2 gap-2">
                       {/* Left: LED Status Indicator */}
                       <button
                         id="home-status-led"
@@ -3304,45 +3381,6 @@ export default function PoolControllerPage() {
                         </div>
                       </button>
                     </div>
-                  </div>
-
-                  <div className="pt-2">
-                    <div className="grid grid-cols-2 gap-2 text-center">
-                      {/* Connection Status Column */}
-                      {mqttConnected ? (
-                        <div className="p-3 bg-white/10 backdrop-blur-md border border-white/10 rounded-xl flex flex-col justify-center items-center shadow-md shadow-[#4398fa]/5">
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">SISTEMA</p>
-                          <p className="text-xs font-bold text-emerald-400 mt-1 flex items-center gap-1 justify-center">
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                            </span>
-                            CONECTADO
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="p-3 bg-white/5 border border-white/10 rounded-xl flex flex-col justify-center items-center">
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">SISTEMA</p>
-                          <p className="text-xs font-bold text-slate-500 mt-1 flex items-center gap-1 justify-center">
-                            <span className="h-2 w-2 rounded-full bg-slate-500"></span>
-                            OFFLINE
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Logout Button Column */}
-                      <button
-                        onClick={handleLogout}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl flex flex-col justify-center items-center active:scale-95 transition-all text-center"
-                      >
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LOGOUT</p>
-                        <p className="text-xs font-bold text-rose-400 mt-1 flex items-center gap-1 justify-center">
-                          <LogOut className="w-3.5 h-3.5" />
-                          SAIR
-                        </p>
-                      </button>
-                    </div>
-                  </div>
                 </motion.div>
               )}
 
