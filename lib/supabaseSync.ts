@@ -15,11 +15,17 @@ export interface SupabaseDevice {
 }
 
 export interface SupabaseDeviceSettings {
+  id?: string;
   device_id: string;
   motor1_name?: string;
   motor2_name?: string;
   motor3_name?: string;
   motor4_name?: string;
+  motor5_name?: string;
+  motor6_name?: string;
+  motor7_name?: string;
+  motor8_name?: string;
+  updated_at?: string;
 }
 
 /**
@@ -161,7 +167,34 @@ export async function fetchDeviceSettings(deviceId: string): Promise<SupabaseDev
 }
 
 /**
- * Upserts custom motor names or other device-specific configurations in Supabase.
+ * Creates default device_settings row when missing (INSERT only).
+ */
+export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDeviceSettings | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  const existing = await fetchDeviceSettings(deviceId);
+  if (existing) return existing;
+
+  try {
+    const { data, error } = await supabase
+      .from('device_settings')
+      .insert({ device_id: deviceId })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('[Supabase Sync] Error creating default device settings:', error.message);
+      return null;
+    }
+    return data;
+  } catch (err: any) {
+    console.error('[Supabase Sync] Create default device settings error:', err);
+    return null;
+  }
+}
+
+/**
+ * Updates motor names in device_settings (PUT when row exists, INSERT otherwise).
  */
 export async function saveDeviceSettings(
   deviceId: string,
@@ -170,14 +203,38 @@ export async function saveDeviceSettings(
     motor2_name?: string;
     motor3_name?: string;
     motor4_name?: string;
+    motor5_name?: string;
+    motor6_name?: string;
+    motor7_name?: string;
+    motor8_name?: string;
   }
 ): Promise<SupabaseDeviceSettings | null> {
   if (!isSupabaseConfigured()) return null;
 
   try {
+    const existing = await fetchDeviceSettings(deviceId);
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('device_settings')
+        .update({
+          ...settings,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('device_id', deviceId)
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('[Supabase Sync] Error updating device settings:', error.message);
+        return null;
+      }
+      return data;
+    }
+
     const { data, error } = await supabase
       .from('device_settings')
-      .upsert({
+      .insert({
         device_id: deviceId,
         ...settings,
       })
@@ -185,7 +242,7 @@ export async function saveDeviceSettings(
       .single();
 
     if (error) {
-      console.warn('[Supabase Sync] Error saving device settings:', error.message);
+      console.warn('[Supabase Sync] Error inserting device settings:', error.message);
       return null;
     }
     return data;
