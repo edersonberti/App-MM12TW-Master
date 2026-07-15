@@ -27,11 +27,14 @@ model Profile {
   @@map("profiles")
 }
 
-/// Equipamentos IoT registrados por usuário
+/// Equipamentos IoT registrados por usuário (vinculados via QR Code)
 model Device {
   id           String   @id @db.Text
   model        String   @db.Text
   pairingToken String?  @map("pairing_token") @db.Text
+  serial       String?  @db.Text
+  qrVersion    Int?     @map("qr_version")
+  localUrl     String?  @map("local_url") @db.Text
   userId       String?  @map("user_id") @db.Uuid
   createdAt    DateTime @default(dbgenerated("timezone('utc'::text, now())")) @map("created_at") @db.Timestamptz(6)
 
@@ -40,6 +43,7 @@ model Device {
 
   @@index([userId], map: "idx_devices_user_id")
   @@index([model], map: "idx_devices_model")
+  @@index([serial], map: "idx_devices_serial")
   @@map("devices")
 }
 

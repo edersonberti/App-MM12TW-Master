@@ -45,7 +45,14 @@ import {
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange, resetPasswordForEmail } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
-import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import {
+  fetchUserDevices,
+  registerDevice,
+  deleteDevice,
+  updateDeviceOwner,
+  parseEquipmentQrPayload,
+  type RegisterDevicePayload,
+} from '../services/deviceService';
 import { fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 
 // TypeScript declarations for browser-loaded scripts
@@ -229,6 +236,7 @@ export default function PoolControllerPage() {
     manufacturer?: string; 
     userEmail?: string; 
     userPassword?: string;
+    pairing_token?: string | null;
   }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
@@ -675,6 +683,7 @@ export default function PoolControllerPage() {
             setRegisteredEquipments(dbDevices.map((d: any) => ({
               id: d.id,
               model: d.model,
+              serial: d.serial || d.id,
               pairing_token: d.pairing_token
             })));
           } else {
@@ -965,6 +974,7 @@ export default function PoolControllerPage() {
           setRegisteredEquipments(dbDevices.map(d => ({
             id: d.id,
             model: d.model,
+            serial: d.serial || d.id,
             pairing_token: d.pairing_token
           })));
 
@@ -2182,19 +2192,14 @@ export default function PoolControllerPage() {
     setIsScanningQr(false);
   };
 
-  // Handle scanned text
+  // Handle scanned text — formato QR v1: { v, serial, token, local }
   const handleQrCodeScanned = (text: string) => {
     try {
-      const cleanJsonStr = text.trim();
-      const parsed = JSON.parse(cleanJsonStr);
-      
-      // Dynamically build deviceId if not explicitly provided but model and serial are present
-      if (!parsed.deviceId && parsed.model && parsed.serial) {
-        parsed.deviceId = `${parsed.model}-${parsed.serial}`;
-      }
-      
-      if (!parsed.deviceId) {
-        throw new Error('JSON lido não possui a chave "deviceId" nem campos suficientes para montá-lo.');
+      const parsed = JSON.parse(text.trim());
+      const equipment = parseEquipmentQrPayload(parsed);
+
+      if (!equipment?.id || !equipment.pairingToken) {
+        throw new Error('JSON do QR sem serial/token válidos.');
       }
 
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -2202,69 +2207,53 @@ export default function PoolControllerPage() {
       }
 
       setScannedData(parsed);
-      
-      // Auto-populate form
-      setBleDeviceId(parsed.deviceId);
-      
-      let finalModel = 'MM12TW';
-      if (parsed.model) {
-        finalModel = parsed.model;
-      } else {
-        const matchedModel = parsed.deviceId.match(/^(MM\d+T?S?W?)/i);
-        if (matchedModel) {
-          finalModel = matchedModel[1].toUpperCase();
-        }
-      }
-      setSelectedEquipmentModel(finalModel);
-      
-      if (parsed.serial) {
-        setEquipmentSerial(parsed.serial);
-      } else {
-        setEquipmentSerial('');
-      }
-      
-      if (parsed.manufacturer) {
-        setEquipmentManufacturer(parsed.manufacturer);
-      } else {
-        setEquipmentManufacturer('MASTERLAZER');
-      }
+      setBleDeviceId(equipment.id);
+      setSelectedEquipmentModel(equipment.model);
+      setEquipmentSerial(equipment.serial || equipment.id);
+      setEquipmentManufacturer('MASTERLAZER');
 
-      // Automatically save and activate the device immediately
-      handleSaveEquipment(parsed.deviceId, finalModel, parsed.serial || '', parsed.manufacturer || 'MASTERLAZER');
+      void handleSaveEquipment({
+        ...equipment,
+        manufacturer: 'MASTERLAZER',
+      });
 
       stopQrScanner();
     } catch (err) {
       console.warn('O QR Code escaneado não é um JSON válido. Tentando texto puro...', err);
-      
-      const matchedModel = text.match(/^(MM\d+T?S?W?)/i);
-      if (matchedModel && text.length >= 5) {
+
+      const matchedModel = text.match(/MM\d+[A-Z]*/i);
+      if (matchedModel && text.trim().length >= 5) {
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
           navigator.vibrate(100);
         }
-        let finalModel = 'MM12TW';
-        const matched = text.match(/^(MM\d+T?S?W?)/i);
-        if (matched) {
-          finalModel = matched[1].toUpperCase();
-        }
 
+        const deviceId = text.trim();
+        const finalModel = matchedModel[0].toUpperCase();
         const simulatedJson = {
-          deviceId: text.trim(),
+          deviceId,
           model: finalModel,
-          serial: text.split('-')[1] || '',
-          manufacturer: 'MASTERLAZER'
+          serial: deviceId,
+          manufacturer: 'MASTERLAZER',
         };
-        setScannedData(simulatedJson);
-        setBleDeviceId(simulatedJson.deviceId);
-        setSelectedEquipmentModel(simulatedJson.model);
-        setEquipmentSerial(simulatedJson.serial);
-        setEquipmentManufacturer(simulatedJson.manufacturer);
 
-        // Automatically save and activate the device immediately
-        handleSaveEquipment(simulatedJson.deviceId, simulatedJson.model, simulatedJson.serial, simulatedJson.manufacturer);
+        setScannedData(simulatedJson);
+        setBleDeviceId(deviceId);
+        setSelectedEquipmentModel(finalModel);
+        setEquipmentSerial(deviceId);
+        setEquipmentManufacturer('MASTERLAZER');
+
+        void handleSaveEquipment({
+          id: deviceId,
+          model: finalModel,
+          serial: deviceId,
+          manufacturer: 'MASTERLAZER',
+        });
 
         stopQrScanner();
       } else {
-        setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento.');
+        setQrScannerError(
+          'Formato inválido. O QR Code deve conter JSON com serial, token e local (versão v).'
+        );
       }
     }
   };
@@ -2278,65 +2267,84 @@ export default function PoolControllerPage() {
     };
   }, []);
 
-  // Save specific equipment
-  function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
-    const finalId = idOverride || bleDeviceId;
-    const finalModel = modelOverride || selectedEquipmentModel;
-    const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
-    const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
-    
-    const trimmedId = finalId.trim();
-    if (!trimmedId) {
-      alert("Por favor, digite um ID de equipamento válido.");
+  // Save specific equipment (manual form or QR scan)
+  async function handleSaveEquipment(
+    override?: Partial<RegisterDevicePayload> & { manufacturer?: string }
+  ) {
+    const finalId = (override?.id || bleDeviceId).trim();
+    const finalModel = override?.model || selectedEquipmentModel;
+    const finalSerial = override?.serial !== undefined ? override.serial : equipmentSerial;
+    const finalManufacturer = override?.manufacturer !== undefined ? override.manufacturer : equipmentManufacturer;
+    const finalToken = override?.pairingToken;
+    const finalLocalUrl = override?.localUrl;
+    const finalQrVersion = override?.qrVersion;
+
+    if (!finalId) {
+      alert('Por favor, digite um ID de equipamento válido.');
       return;
     }
-    
-    // Retrieve currently logged-in user's email
+
     const userEmail = currentUser?.email || '';
-    
-    // Check if equipment is already in registered list
-    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
+
+    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === finalId.toLowerCase());
     let updated = [...registeredEquipments];
-    
+
     const newItem = {
-      id: trimmedId,
+      id: finalId,
       model: finalModel,
       serial: finalSerial,
       manufacturer: finalManufacturer,
-      userEmail
+      userEmail,
     };
-    
+
     if (!exists) {
       updated.push(newItem);
     } else {
-      // Update existing entry for this ID
-      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, ...newItem } : eq);
+      updated = updated.map(eq =>
+        eq.id.toLowerCase() === finalId.toLowerCase() ? { ...eq, ...newItem } : eq
+      );
     }
-    
+
     setRegisteredEquipments(updated);
-    
-    // Sync with Supabase if active
-    if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      registerDevice(trimmedId, finalModel as any, currentUser.uid, finalSerial);
+
+    // Sync with Supabase — vincula o equipamento ao usuário que escaneou
+    if (isSupabaseConfigured() && currentUser?.isSupabase && currentUser.uid) {
+      const { data, error } = await registerDevice({
+        id: finalId,
+        model: finalModel,
+        userId: currentUser.uid,
+        pairingToken: finalToken || finalSerial || '',
+        serial: finalSerial || finalId,
+        qrVersion: finalQrVersion,
+        localUrl: finalLocalUrl,
+      });
+
+      if (error || !data) {
+        alert(
+          `Equipamento salvo localmente, mas falhou ao gravar no Supabase:\n${error || 'erro desconhecido'}`
+        );
+      }
     }
-    
-    // Also make this the active device under control!
-    setDeviceId(trimmedId);
-    localStorage.setItem('mqtt_device', trimmedId);
-    
-    // Log registration info in the Equipment terminal console
+
+    setDeviceId(finalId);
+    localStorage.setItem('mqtt_device', finalId);
+
     setBleLog(prev => [
       ...prev,
       `[REGISTRO] Equipamento salvo: ${finalModel}`,
-      `[REGISTRO] ID único: ${trimmedId}`,
-      `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
+      `[REGISTRO] ID / Serial: ${finalId}`,
+      `[REGISTRO] Token: ${finalToken || 'N/A'}`,
+      `[REGISTRO] Local: ${finalLocalUrl || 'N/A'}`,
+      `[REGISTRO] QR v: ${finalQrVersion ?? 'N/A'}`,
       `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
       `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
-      `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
+      `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`,
     ]);
-    
-    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
-  };
+
+    alert(
+      `Equipamento ${finalModel} ("${finalId}") salvo e vinculado ao usuário "${userEmail}"!`
+    );
+  }
 
   // Save Advanced Developer Config
   const handleSaveDevConfig = () => {
@@ -3921,23 +3929,29 @@ export default function PoolControllerPage() {
 
                           <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[10px] font-semibold bg-slate-950/45 p-2.5 rounded-lg border border-cyan-500/5">
                             <div>
-                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">ID do Equipamento</span>
-                              <span className="text-cyan-200 font-mono">{scannedData.deviceId}</span>
+                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Número de Série</span>
+                              <span className="text-cyan-200 font-mono">{scannedData.serial || scannedData.deviceId || '—'}</span>
                             </div>
                             <div>
                               <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Modelo</span>
-                              <span className="text-cyan-200">{scannedData.model || 'Não especificado'}</span>
+                              <span className="text-cyan-200">{scannedData.model || 'MM12TW'}</span>
                             </div>
-                            {scannedData.serial && (
+                            {scannedData.token && (
                               <div>
-                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Número de Série</span>
-                                <span className="text-cyan-200 font-mono">{scannedData.serial}</span>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Token</span>
+                                <span className="text-cyan-200 font-mono">{scannedData.token}</span>
                               </div>
                             )}
-                            {scannedData.manufacturer && (
+                            {scannedData.local && (
                               <div>
-                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Fabricante</span>
-                                <span className="text-cyan-200">{scannedData.manufacturer}</span>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">IP Local</span>
+                                <span className="text-cyan-200 font-mono">{scannedData.local}</span>
+                              </div>
+                            )}
+                            {scannedData.v != null && (
+                              <div>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Versão QR</span>
+                                <span className="text-cyan-200">{scannedData.v}</span>
                               </div>
                             )}
                           </div>
@@ -3945,7 +3959,13 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer);
+                              const equipment = parseEquipmentQrPayload(scannedData);
+                              if (equipment) {
+                                void handleSaveEquipment({
+                                  ...equipment,
+                                  manufacturer: scannedData.manufacturer || 'MASTERLAZER',
+                                });
+                              }
                               setScannedData(null);
                             }}
                             className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
