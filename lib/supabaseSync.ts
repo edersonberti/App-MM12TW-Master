@@ -166,6 +166,20 @@ export async function fetchDeviceSettings(deviceId: string): Promise<SupabaseDev
   }
 }
 
+async function assertManagedDevice(deviceId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('devices')
+    .select('id')
+    .eq('id', deviceId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[Supabase Sync] Device access check failed:', error.message);
+    return false;
+  }
+  return !!data;
+}
+
 /**
  * Creates default device_settings row when missing (INSERT only).
  */
@@ -174,6 +188,12 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
 
   const existing = await fetchDeviceSettings(deviceId);
   if (existing) return existing;
+
+  const canManage = await assertManagedDevice(deviceId);
+  if (!canManage) {
+    console.warn('[Supabase Sync] Skipping settings create for inaccessible device:', deviceId);
+    return null;
+  }
 
   try {
     const { data, error } = await supabase
@@ -194,7 +214,7 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
 }
 
 /**
- * Updates motor names in device_settings (PUT when row exists, INSERT otherwise).
+ * Updates motor names in device_settings (UPDATE when row exists, INSERT otherwise).
  */
 export async function saveDeviceSettings(
   deviceId: string,
@@ -230,6 +250,12 @@ export async function saveDeviceSettings(
         return null;
       }
       return data;
+    }
+
+    const canManage = await assertManagedDevice(deviceId);
+    if (!canManage) {
+      console.warn('[Supabase Sync] Cannot insert settings for inaccessible device:', deviceId);
+      return null;
     }
 
     const { data, error } = await supabase

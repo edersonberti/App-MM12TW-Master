@@ -78,16 +78,17 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Official logo component using the exact image from the official Master Lazer website (scaled to 1.5x default):
-const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
+const APP_LOGO_PATH = encodeURI('/logo(512 x 512 px).png');
+
+// Official Master Lazer logo (public/logo(512 x 512 px).png)
+const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
-    <Image 
-      src="/public/logo.png"
+    <Image
+      src={APP_LOGO_PATH}
       alt="Master Lazer Logo"
       fill
-      sizes="168px"
-      className="object-contain rounded-2xl"
-      referrerPolicy="no-referrer"
+      sizes="192px"
+      className="object-contain rounded-full"
       priority
     />
   </div>
@@ -601,7 +602,11 @@ export default function PoolControllerPage() {
     setMotor8Name('Motor 08');
     setMotorSettingsSaveState('idle');
 
-    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+    const deviceIsRegistered = registeredEquipments.some(
+      (eq) => eq.id.toLowerCase() === (deviceId || '').toLowerCase()
+    );
+
+    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId && deviceIsRegistered) {
       const loadDbSettings = async () => {
         try {
           const settings = await ensureDeviceSettings(deviceId);
@@ -621,7 +626,7 @@ export default function PoolControllerPage() {
       };
       loadDbSettings();
     }
-  }, [deviceId, currentUser]);
+  }, [deviceId, currentUser, registeredEquipments]);
 
   useEffect(() => {
     return () => {
@@ -751,6 +756,16 @@ export default function PoolControllerPage() {
               model: d.model,
               pairing_token: d.pairing_token
             })));
+
+            // Avoid stale localStorage device IDs (deleted / not owned) — they cause
+            // device_settings INSERT to fail with RLS 42501 in production.
+            const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
+            const matched = dbDevices.find(
+              (d: any) => d.id.toLowerCase() === storedDevice.toLowerCase()
+            );
+            const nextDeviceId = matched?.id || dbDevices[0].id;
+            setDeviceId(nextDeviceId);
+            localStorage.setItem('mqtt_device', nextDeviceId);
           } else {
             setRegisteredEquipments([]);
           }
@@ -2757,7 +2772,7 @@ export default function PoolControllerPage() {
                 >
                   <div className="text-center mt-6 flex flex-col items-center">
                     <div className="mb-4">
-                      <MasterLazerLogo className="w-[168px] h-[168px] hover:scale-105 transition-all duration-300 drop-shadow-[0_8px_8px_rgba(0,0,0,0.5)]" />
+                      <MasterLazerLogo className="w-[192px] h-[192px] hover:scale-105 transition-all duration-300 drop-shadow-[0_8px_24px_rgba(0,0,0,0.45)]" />
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Acesso Master</h2>
                     
@@ -2858,7 +2873,7 @@ export default function PoolControllerPage() {
                         <div className="flex flex-col items-center gap-1.5 w-full">
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
                             <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
-                            SUPABASE CLOUD ATIVO
+                            CLOUD ATIVO
                           </span>
                           {typeof window !== 'undefined' && localStorage.getItem('local_supabase_url') && (
                             <button
@@ -2981,7 +2996,7 @@ export default function PoolControllerPage() {
                       ) : isSupabaseConfigured() ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
                           <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
-                          SUPABASE CLOUD ATIVO
+                          CLOUD ATIVO
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
