@@ -43,16 +43,9 @@ import {
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
-import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange, resetPasswordForEmail } from '../services/authService';
+import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
-import {
-  fetchUserDevices,
-  registerDevice,
-  deleteDevice,
-  updateDeviceOwner,
-  parseEquipmentQrPayload,
-  type RegisterDevicePayload,
-} from '../services/deviceService';
+import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
 import { fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 
 // TypeScript declarations for browser-loaded scripts
@@ -88,7 +81,7 @@ function escapeRegExp(str: string): string {
 const MasterLazerLogo = ({ className = "w-[168px] h-[168px]" }: { className?: string }) => (
   <div className={`relative ${className}`}>
     <Image 
-      src="/public/512x512.png"
+      src="/public/logo.png"
       alt="Master Lazer Logo"
       fill
       sizes="168px"
@@ -104,14 +97,6 @@ export default function PoolControllerPage() {
   const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
-  const [recoveryMode, setRecoveryMode] = useState<'idle' | 'request' | 'verify' | 'recover'>('idle');
-  const [recoveryEmail, setRecoveryEmail] = useState('');
-  const [recoveryCode, setRecoveryCode] = useState('');
-  const [recoveryLoading, setRecoveryLoading] = useState(false);
-  const [recoveryMessage, setRecoveryMessage] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [recoverySent, setRecoverySent] = useState(false);
 
   // Manual API Configuration states
   const [showManualConfig, setShowManualConfig] = useState(false);
@@ -236,7 +221,6 @@ export default function PoolControllerPage() {
     manufacturer?: string; 
     userEmail?: string; 
     userPassword?: string;
-    pairing_token?: string | null;
   }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
@@ -347,6 +331,7 @@ export default function PoolControllerPage() {
   const [userWantsMqtt, setUserWantsMqttState] = useState(true);
   const userWantsMqttRef = useRef(true);
   const lastMessageTimeRef = useRef<number>(0);
+  const consecutiveAutoReconnectsRef = useRef<number>(0);
   
   const [isUpdatingData, setIsUpdatingData] = useState(true);
   const [showUpdatedMessage, setShowUpdatedMessage] = useState(false);
@@ -624,19 +609,40 @@ export default function PoolControllerPage() {
     }
   }, [deviceId, currentUser]);
 
-  // 1f. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline
+  // 1f. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline, and handle zombie auto-recovery
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const interval = setInterval(() => {
-      if (mqttConnected && deviceOnline === true && lastMessageTimeRef.current > 0) {
-        if (Date.now() - lastMessageTimeRef.current > 15000) {
-          console.log('No telemetry received from device in 15 seconds. Marking device as OFFLINE.');
-          setDeviceOnline(false);
+      if (mqttConnected) {
+        if (lastMessageTimeRef.current > 0) {
+          const silenceDuration = Date.now() - lastMessageTimeRef.current;
+
+          // 1. Mark device as offline if no message received in 15 seconds
+          if (deviceOnline === true && silenceDuration > 15000) {
+            console.log('No telemetry received from device in 15 seconds. Marking device as OFFLINE.');
+            setDeviceOnline(false);
+          }
+
+          // 2. Automatic Zombie Recovery: if connection is silent for > 25 seconds, reconnect MQTT cleanly
+          if (silenceDuration > 25000 && userWantsMqtt) {
+            if (consecutiveAutoReconnectsRef.current < 2) {
+              console.log(`Silence detected (${Math.round(silenceDuration/1000)}s). Zombie connection suspected. Auto-reconnection attempt #${consecutiveAutoReconnectsRef.current + 1}...`);
+              consecutiveAutoReconnectsRef.current += 1;
+              forceReconnectMQTT();
+            } else {
+              // We tried reconnecting twice, but still silent. Device is likely truly offline.
+              // Just mark device as offline and reset lastMessageTimeRef to stop spamming.
+              console.log('Auto-recovery attempts exhausted. Device is truly offline.');
+              setDeviceOnline(false);
+              lastMessageTimeRef.current = 0;
+            }
+          }
         }
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [mqttConnected, deviceOnline]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mqttConnected, deviceOnline, userWantsMqtt]);
 
   // 1g. Backup safety timeout to automatically complete update and unlock if MQTT message doesn't arrive
   useEffect(() => {
@@ -658,6 +664,43 @@ export default function PoolControllerPage() {
       return () => clearTimeout(timer);
     }
   }, [showUpdatedMessage]);
+
+  // 1i. Recover from mobile background sleep, tab switching, or network recovery using focus, visibilitychange, and online events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let lastFocusReconnect = 0;
+    const handleFocusOrVisibility = () => {
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
+          const now = Date.now();
+          // Rate-limit auto-reconnect to at most once every 12 seconds to prevent spam
+          if (now - lastFocusReconnect > 12000) {
+            console.log('Tab visibility change or focus detected. Checking if MQTT needs connection refresh...');
+            lastFocusReconnect = now;
+            forceReconnectMQTT();
+          }
+        }
+      }
+    };
+
+    const handleNetworkRecovery = () => {
+      if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
+        console.log('Internet connection restored. Forcing MQTT reconnection to stabilize communication...');
+        forceReconnectMQTT();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleFocusOrVisibility);
+    window.addEventListener('focus', handleFocusOrVisibility);
+    window.addEventListener('online', handleNetworkRecovery);
+    return () => {
+      document.removeEventListener('visibilitychange', handleFocusOrVisibility);
+      window.removeEventListener('focus', handleFocusOrVisibility);
+      window.removeEventListener('online', handleNetworkRecovery);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, userWantsMqtt]);
 
   // 2. Initialize Supabase Auth state observer
   useEffect(() => {
@@ -683,7 +726,6 @@ export default function PoolControllerPage() {
             setRegisteredEquipments(dbDevices.map((d: any) => ({
               id: d.id,
               model: d.model,
-              serial: d.serial || d.id,
               pairing_token: d.pairing_token
             })));
           } else {
@@ -974,7 +1016,6 @@ export default function PoolControllerPage() {
           setRegisteredEquipments(dbDevices.map(d => ({
             id: d.id,
             model: d.model,
-            serial: d.serial || d.id,
             pairing_token: d.pairing_token
           })));
 
@@ -1004,48 +1045,19 @@ export default function PoolControllerPage() {
     }
   };
 
-  const openRecoveryModal = () => {
-    setRecoveryEmail(emailInput.trim().toLowerCase());
-    setRecoveryCode('');
-    setRecoveryMessage('');
-    setRecoveryMode('request');
-    setRecoverySent(false);
-  };
-
-  const closeRecoveryModal = () => {
-    setRecoveryMode('idle');
-    setRecoveryCode('');
-    setRecoveryMessage('');
-    setRecoveryLoading(false);
-    setNewPassword('');
-    setConfirmNewPassword('');
-    setRecoverySent(false);
-  };
-
-  const handleRecoveryRequest = async () => {
-    const cleanEmail = (recoveryEmail || '').trim().toLowerCase();
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setRecoveryMessage('Informe um e-mail válido para receber o link.');
+  const handleResetPasswordSimulated = async () => {
+    if (!emailInput) {
+      alert('Por favor, insira o seu e-mail no campo de login acima.');
       return;
     }
-
-    setRecoveryLoading(true);
-    setRecoveryMessage('');
-
     try {
-      const redirectUrl = `${window.location.origin}/redefinir-senha`;
-      const { error } = await resetPasswordForEmail(cleanEmail, redirectUrl);
-
-      if (error) {
-        throw error;
-      }
-
-      setRecoverySent(true);
-      setRecoveryMessage(`Enviamos um link de recuperação para o e-mail: ${cleanEmail}. Por favor, verifique sua caixa de entrada e pasta de spam (lixo eletrônico).`);
+      const { error } = await supabase.auth.resetPasswordForEmail(emailInput, {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      });
+      if (error) throw error;
+      alert(`Instruções de redefinição de senha enviadas para o email: ${emailInput}.`);
     } catch (err: any) {
-      setRecoveryMessage(err.message || 'Falha ao solicitar o link de recuperação de senha.');
-    } finally {
-      setRecoveryLoading(false);
+      alert(`Erro Supabase: ${err.message}`);
     }
   };
 
@@ -1113,20 +1125,22 @@ export default function PoolControllerPage() {
       mqttClientRef.current = client;
 
       client.onConnectionLost = (responseObject: any) => {
-        if (responseObject.errorCode !== 0) {
-          console.warn('MQTT Connection lost:', responseObject.errorMessage);
-          setMqttConnected(false);
-          setMqttStatusMessage('Desconectado');
+        const errorMsg = responseObject?.errorMessage || 'Conexão encerrada pelo servidor ou oscilação de rede.';
+        console.warn('MQTT Connection lost:', errorMsg, 'Code:', responseObject?.errorCode);
+        
+        setMqttConnected(false);
+        setMqttStatusMessage('Desconectado');
+        if (responseObject?.errorCode !== 0 && responseObject?.errorMessage) {
           setMqttErrorMsg(responseObject.errorMessage);
+        }
 
-          // Retry connection if user wants connectivity
-          if (userWantsMqttRef.current) {
-            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = setTimeout(() => {
-              console.log('Automated Reconnection onConnectionLost target triggered...');
-              connectMQTT();
-            }, 3000);
-          }
+        // Always retry connection if user wants connectivity, regardless of whether errorCode is 0 or not!
+        if (userWantsMqttRef.current) {
+          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            console.log('Automated Reconnection onConnectionLost target triggered...');
+            connectMQTT();
+          }, 3000);
         }
       };
 
@@ -1177,6 +1191,7 @@ export default function PoolControllerPage() {
         // Successfully received target device message, complete the update sequence
         setIsUpdatingData(false);
         setShowUpdatedMessage(true);
+        consecutiveAutoReconnectsRef.current = 0; // Reset consecutive reconnects counter on successful message
 
         const lowerRelative = relativeTopic.toLowerCase();
 
@@ -1635,8 +1650,11 @@ export default function PoolControllerPage() {
     }
   };
 
-  const disconnectMQTT = () => {
-    setUserWantsMqtt(false); // User intentionally disconnected
+  const disconnectMQTT = (isTemporary?: boolean | any) => {
+    const isTemp = isTemporary === true;
+    if (!isTemp) {
+      setUserWantsMqtt(false); // User intentionally disconnected
+    }
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -1652,7 +1670,15 @@ export default function PoolControllerPage() {
       mqttClientRef.current = null;
     }
     setMqttConnected(false);
-    setMqttStatusMessage('Desconectado');
+    setMqttStatusMessage(isTemporary ? 'Reconectando...' : 'Desconectado');
+  };
+
+  const forceReconnectMQTT = () => {
+    console.log('Force reconnecting MQTT to stabilize connection...');
+    disconnectMQTT(true);
+    setTimeout(() => {
+      connectMQTT();
+    }, 300);
   };
 
   function publishTopic(subTopic: string, payload: string) {
@@ -2192,14 +2218,44 @@ export default function PoolControllerPage() {
     setIsScanningQr(false);
   };
 
-  // Handle scanned text — formato QR v1: { v, serial, token, local }
+  // Handle scanned text
   const handleQrCodeScanned = (text: string) => {
     try {
-      const parsed = JSON.parse(text.trim());
-      const equipment = parseEquipmentQrPayload(parsed);
+      const cleanJsonStr = text.trim();
+      const parsed = JSON.parse(cleanJsonStr);
+      
+      // Handle the new custom QR code standard (v, serial, token, local)
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.serial && !parsed.deviceId) {
+          // Use serial as the deviceId internally
+          parsed.deviceId = parsed.serial;
+          
+          // Discard 'local' property as requested (only used for equipment installation)
+          if ('local' in parsed) {
+            delete parsed.local;
+          }
+          
+          // Extract model from the serial (e.g. MLZ-MM12TW-3F296847-0005 -> MM12TW)
+          const modelMatch = parsed.serial.match(/(MM\d+T?S?W?)/i);
+          if (modelMatch) {
+            parsed.model = modelMatch[1].toUpperCase();
+          } else {
+            parsed.model = 'MM12TW';
+          }
+          
+          if (!parsed.manufacturer) {
+            parsed.manufacturer = 'MASTERLAZER';
+          }
+        }
+      }
 
-      if (!equipment?.id || !equipment.pairingToken) {
-        throw new Error('JSON do QR sem serial/token válidos.');
+      // Dynamically build deviceId if not explicitly provided but model and serial are present (legacy fallback)
+      if (!parsed.deviceId && parsed.model && parsed.serial) {
+        parsed.deviceId = `${parsed.model}-${parsed.serial}`;
+      }
+      
+      if (!parsed.deviceId) {
+        throw new Error('JSON lido não possui a chave "deviceId" nem "serial" para montá-lo.');
       }
 
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -2207,53 +2263,65 @@ export default function PoolControllerPage() {
       }
 
       setScannedData(parsed);
-      setBleDeviceId(equipment.id);
-      setSelectedEquipmentModel(equipment.model);
-      setEquipmentSerial(equipment.serial || equipment.id);
-      setEquipmentManufacturer('MASTERLAZER');
+      
+      // Auto-populate form
+      setBleDeviceId(parsed.deviceId);
+      
+      let finalModel = 'MM12TW';
+      if (parsed.model) {
+        finalModel = parsed.model;
+      } else {
+        const matchedModel = parsed.deviceId.match(/(MM\d+T?S?W?)/i);
+        if (matchedModel) {
+          finalModel = matchedModel[1].toUpperCase();
+        }
+      }
+      setSelectedEquipmentModel(finalModel);
+      
+      if (parsed.serial) {
+        setEquipmentSerial(parsed.serial);
+      } else {
+        setEquipmentSerial('');
+      }
+      
+      if (parsed.manufacturer) {
+        setEquipmentManufacturer(parsed.manufacturer);
+      } else {
+        setEquipmentManufacturer('MASTERLAZER');
+      }
 
-      void handleSaveEquipment({
-        ...equipment,
-        manufacturer: 'MASTERLAZER',
-      });
+      // Automatically save and activate the device immediately
+      handleSaveEquipment(parsed.deviceId, finalModel, parsed.serial || '', parsed.manufacturer || 'MASTERLAZER');
 
       stopQrScanner();
     } catch (err) {
       console.warn('O QR Code escaneado não é um JSON válido. Tentando texto puro...', err);
-
-      const matchedModel = text.match(/MM\d+[A-Z]*/i);
-      if (matchedModel && text.trim().length >= 5) {
+      
+      const matchedModel = text.match(/(MM\d+T?S?W?)/i);
+      if (matchedModel && text.length >= 5) {
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
           navigator.vibrate(100);
         }
+        let finalModel = matchedModel[1].toUpperCase();
 
-        const deviceId = text.trim();
-        const finalModel = matchedModel[0].toUpperCase();
         const simulatedJson = {
-          deviceId,
+          deviceId: text.trim(),
           model: finalModel,
-          serial: deviceId,
-          manufacturer: 'MASTERLAZER',
+          serial: text.trim(),
+          manufacturer: 'MASTERLAZER'
         };
-
         setScannedData(simulatedJson);
-        setBleDeviceId(deviceId);
-        setSelectedEquipmentModel(finalModel);
-        setEquipmentSerial(deviceId);
-        setEquipmentManufacturer('MASTERLAZER');
+        setBleDeviceId(simulatedJson.deviceId);
+        setSelectedEquipmentModel(simulatedJson.model);
+        setEquipmentSerial(simulatedJson.serial);
+        setEquipmentManufacturer(simulatedJson.manufacturer);
 
-        void handleSaveEquipment({
-          id: deviceId,
-          model: finalModel,
-          serial: deviceId,
-          manufacturer: 'MASTERLAZER',
-        });
+        // Automatically save and activate the device immediately
+        handleSaveEquipment(simulatedJson.deviceId, simulatedJson.model, simulatedJson.serial, simulatedJson.manufacturer);
 
         stopQrScanner();
       } else {
-        setQrScannerError(
-          'Formato inválido. O QR Code deve conter JSON com serial, token e local (versão v).'
-        );
+        setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento ou serial válido.');
       }
     }
   };
@@ -2267,84 +2335,65 @@ export default function PoolControllerPage() {
     };
   }, []);
 
-  // Save specific equipment (manual form or QR scan)
-  async function handleSaveEquipment(
-    override?: Partial<RegisterDevicePayload> & { manufacturer?: string }
-  ) {
-    const finalId = (override?.id || bleDeviceId).trim();
-    const finalModel = override?.model || selectedEquipmentModel;
-    const finalSerial = override?.serial !== undefined ? override.serial : equipmentSerial;
-    const finalManufacturer = override?.manufacturer !== undefined ? override.manufacturer : equipmentManufacturer;
-    const finalToken = override?.pairingToken;
-    const finalLocalUrl = override?.localUrl;
-    const finalQrVersion = override?.qrVersion;
-
-    if (!finalId) {
-      alert('Por favor, digite um ID de equipamento válido.');
+  // Save specific equipment
+  function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
+    const finalId = idOverride || bleDeviceId;
+    const finalModel = modelOverride || selectedEquipmentModel;
+    const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
+    const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
+    
+    const trimmedId = finalId.trim();
+    if (!trimmedId) {
+      alert("Por favor, digite um ID de equipamento válido.");
       return;
     }
-
+    
+    // Retrieve currently logged-in user's email
     const userEmail = currentUser?.email || '';
-
-    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === finalId.toLowerCase());
+    
+    // Check if equipment is already in registered list
+    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
     let updated = [...registeredEquipments];
-
+    
     const newItem = {
-      id: finalId,
+      id: trimmedId,
       model: finalModel,
       serial: finalSerial,
       manufacturer: finalManufacturer,
-      userEmail,
+      userEmail
     };
-
+    
     if (!exists) {
       updated.push(newItem);
     } else {
-      updated = updated.map(eq =>
-        eq.id.toLowerCase() === finalId.toLowerCase() ? { ...eq, ...newItem } : eq
-      );
+      // Update existing entry for this ID
+      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, ...newItem } : eq);
     }
-
+    
     setRegisteredEquipments(updated);
-
-    // Sync with Supabase — vincula o equipamento ao usuário que escaneou
-    if (isSupabaseConfigured() && currentUser?.isSupabase && currentUser.uid) {
-      const { data, error } = await registerDevice({
-        id: finalId,
-        model: finalModel,
-        userId: currentUser.uid,
-        pairingToken: finalToken || finalSerial || '',
-        serial: finalSerial || finalId,
-        qrVersion: finalQrVersion,
-        localUrl: finalLocalUrl,
-      });
-
-      if (error || !data) {
-        alert(
-          `Equipamento salvo localmente, mas falhou ao gravar no Supabase:\n${error || 'erro desconhecido'}`
-        );
-      }
+    
+    // Sync with Supabase if active
+    if (isSupabaseConfigured() && currentUser?.isSupabase) {
+      registerDevice(trimmedId, finalModel as any, currentUser.uid, finalSerial);
     }
-
-    setDeviceId(finalId);
-    localStorage.setItem('mqtt_device', finalId);
-
+    
+    // Also make this the active device under control!
+    setDeviceId(trimmedId);
+    localStorage.setItem('mqtt_device', trimmedId);
+    
+    // Log registration info in the Equipment terminal console
     setBleLog(prev => [
       ...prev,
       `[REGISTRO] Equipamento salvo: ${finalModel}`,
-      `[REGISTRO] ID / Serial: ${finalId}`,
-      `[REGISTRO] Token: ${finalToken || 'N/A'}`,
-      `[REGISTRO] Local: ${finalLocalUrl || 'N/A'}`,
-      `[REGISTRO] QR v: ${finalQrVersion ?? 'N/A'}`,
+      `[REGISTRO] ID único: ${trimmedId}`,
+      `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
       `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
       `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
-      `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`,
+      `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
-
-    alert(
-      `Equipamento ${finalModel} ("${finalId}") salvo e vinculado ao usuário "${userEmail}"!`
-    );
-  }
+    
+    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
+  };
 
   // Save Advanced Developer Config
   const handleSaveDevConfig = () => {
@@ -2451,7 +2500,11 @@ export default function PoolControllerPage() {
                 </div>
 
                 {/* Connection Status Indicator */}
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 shadow-sm">
+                <button 
+                  onClick={forceReconnectMQTT}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 shadow-sm transition-all cursor-pointer"
+                  title="Conexão com ESP32. Clique para reconectar imediatamente"
+                >
                   <span className={`w-1.5 h-1.5 rounded-full ${
                     mqttConnected 
                       ? 'bg-[#4398fa] animate-pulse' 
@@ -2473,7 +2526,7 @@ export default function PoolControllerPage() {
                         : 'OFFLINE'
                     }
                   </span>
-                </div>
+                </button>
 
                 <div className="flex items-center gap-2">
                   {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
@@ -2779,7 +2832,7 @@ export default function PoolControllerPage() {
                     
                     <button
                       type="button"
-                      onClick={openRecoveryModal}
+                      onClick={handleResetPasswordSimulated}
                       className="w-full text-center text-xs text-slate-400 hover:text-[#4398fa] transition-all py-1 mt-2"
                     >
                       Esqueci minha senha
@@ -2787,82 +2840,6 @@ export default function PoolControllerPage() {
 
 
                   </div>
-
-                  <AnimatePresence>
-                    {recoveryMode !== 'idle' && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4"
-                      >
-                        <motion.div
-                          initial={{ y: 20, opacity: 0 }}
-                          animate={{ y: 0, opacity: 1 }}
-                          exit={{ y: 20, opacity: 0 }}
-                          className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900/95 p-4 shadow-2xl shadow-black/40"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-sm font-semibold text-white">
-                                Recuperar Senha
-                              </h3>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {recoverySent ? 'E-mail de recuperação enviado.' : 'Enviaremos um link de redefinição para o seu e-mail.'}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={closeRecoveryModal}
-                              className="rounded-full p-1 text-slate-400 hover:bg-white/10 hover:text-white"
-                              aria-label="Fechar recuperação"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          {recoveryMessage && (
-                            <div className="mt-3 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-300">
-                              {recoveryMessage}
-                            </div>
-                          )}
-
-                          <div className="mt-4 space-y-3">
-                            {!recoverySent ? (
-                              <>
-                                <div className="relative">
-                                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                  <input
-                                    type="email"
-                                    placeholder="Seu e-mail"
-                                    value={recoveryEmail}
-                                    onChange={(e) => setRecoveryEmail(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4398fa]"
-                                  />
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={handleRecoveryRequest}
-                                  disabled={recoveryLoading}
-                                  className="w-full rounded-xl bg-gradient-to-r from-[#0055CC] to-[#4398fa] px-3 py-3 text-sm font-semibold text-white disabled:opacity-70"
-                                >
-                                  {recoveryLoading ? 'Enviando...' : 'Enviar link de recuperação'}
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={closeRecoveryModal}
-                                className="w-full rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-3 text-sm font-semibold text-white transition-all"
-                              >
-                                Fechar
-                              </button>
-                            )}
-                          </div>
-                        </motion.div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
 
                   <div className="text-center pt-4 border-t border-white/10">
                     <p className="text-xs text-slate-400">
@@ -3929,29 +3906,23 @@ export default function PoolControllerPage() {
 
                           <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[10px] font-semibold bg-slate-950/45 p-2.5 rounded-lg border border-cyan-500/5">
                             <div>
-                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Número de Série</span>
-                              <span className="text-cyan-200 font-mono">{scannedData.serial || scannedData.deviceId || '—'}</span>
+                              <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">ID do Equipamento</span>
+                              <span className="text-cyan-200 font-mono">{scannedData.deviceId}</span>
                             </div>
                             <div>
                               <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Modelo</span>
-                              <span className="text-cyan-200">{scannedData.model || 'MM12TW'}</span>
+                              <span className="text-cyan-200">{scannedData.model || 'Não especificado'}</span>
                             </div>
-                            {scannedData.token && (
+                            {scannedData.serial && (
                               <div>
-                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Token</span>
-                                <span className="text-cyan-200 font-mono">{scannedData.token}</span>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Número de Série</span>
+                                <span className="text-cyan-200 font-mono">{scannedData.serial}</span>
                               </div>
                             )}
-                            {scannedData.local && (
+                            {scannedData.manufacturer && (
                               <div>
-                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">IP Local</span>
-                                <span className="text-cyan-200 font-mono">{scannedData.local}</span>
-                              </div>
-                            )}
-                            {scannedData.v != null && (
-                              <div>
-                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Versão QR</span>
-                                <span className="text-cyan-200">{scannedData.v}</span>
+                                <span className="text-slate-400 block font-normal text-[8.5px] uppercase tracking-wider">Fabricante</span>
+                                <span className="text-cyan-200">{scannedData.manufacturer}</span>
                               </div>
                             )}
                           </div>
@@ -3959,13 +3930,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              const equipment = parseEquipmentQrPayload(scannedData);
-                              if (equipment) {
-                                void handleSaveEquipment({
-                                  ...equipment,
-                                  manufacturer: scannedData.manufacturer || 'MASTERLAZER',
-                                });
-                              }
+                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer);
                               setScannedData(null);
                             }}
                             className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
