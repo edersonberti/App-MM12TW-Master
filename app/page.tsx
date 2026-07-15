@@ -2259,47 +2259,118 @@ export default function PoolControllerPage() {
 
     try {
       const { Html5Qrcode } = await import('html5-qrcode');
-      
-      setTimeout(() => {
-        const scannerElement = document.getElementById('qr-reader');
-        if (!scannerElement) {
-          setQrScannerError('Elemento de visualização da câmera não encontrado.');
-          return;
+
+      // Wait for the #qr-reader element to mount
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const scannerElement = document.getElementById('qr-reader');
+      if (!scannerElement) {
+        setQrScannerError('Elemento de visualização da câmera não encontrado.');
+        setIsScanningQr(false);
+        return;
+      }
+
+      // Stop any previous scanner instance before starting a new one
+      if (qrScannerRef.current) {
+        try {
+          await qrScannerRef.current.stop();
+        } catch {
+          // ignore
+        }
+        qrScannerRef.current = null;
+      }
+
+      let cameras: Array<{ id: string; label: string }> = [];
+      try {
+        cameras = await Html5Qrcode.getCameras();
+      } catch {
+        cameras = [];
+      }
+
+      if (!cameras || cameras.length === 0) {
+        setQrScannerError(
+          'Nenhuma câmera encontrada neste dispositivo. Conecte uma webcam ou use um celular com câmera para escanear o QR Code.'
+        );
+        setIsScanningQr(false);
+        return;
+      }
+
+      // Prefer back/environment camera; otherwise use the first available device
+      const preferred =
+        cameras.find((cam) => /back|rear|traseira|environment|posterior/i.test(cam.label)) ||
+        cameras[cameras.length - 1] ||
+        cameras[0];
+
+      const html5QrCode = new Html5Qrcode('qr-reader');
+      qrScannerRef.current = html5QrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: (width: number, height: number) => {
+          const size = Math.min(width, height) * 0.7;
+          return { width: size, height: size };
+        },
+        aspectRatio: 1.0,
+      };
+
+      const onSuccess = (decodedText: string) => {
+        handleQrCodeScanned(decodedText);
+      };
+      const onFailure = () => {
+        // ignore frame-level decode misses
+      };
+
+      try {
+        await html5QrCode.start(preferred.id, config, onSuccess, onFailure);
+      } catch (primaryErr) {
+        // Fallback: try facingMode variants when deviceId start fails
+        const errText = String(primaryErr);
+        const isMissingDevice =
+          errText.includes('NotFoundError') ||
+          errText.includes('Requested device not found') ||
+          errText.includes('OverconstrainedError');
+
+        if (!isMissingDevice) {
+          throw primaryErr;
         }
 
-        const html5QrCode = new Html5Qrcode('qr-reader');
-        qrScannerRef.current = html5QrCode;
+        let started = false;
+        for (const cameraConfig of [{ facingMode: 'environment' }, { facingMode: 'user' }, cameras[0].id] as const) {
+          try {
+            await html5QrCode.start(cameraConfig as any, config, onSuccess, onFailure);
+            started = true;
+            break;
+          } catch {
+            // try next option
+          }
+        }
 
-        html5QrCode.start(
-          { facingMode: 'environment' },
-          {
-            fps: 10,
-            qrbox: (width, height) => {
-              const size = Math.min(width, height) * 0.7;
-              return { width: size, height: size };
-            },
-            aspectRatio: 1.0,
-          },
-          (decodedText) => {
-            handleQrCodeScanned(decodedText);
-          },
-          () => {
-            // ignore verbose log
-          }
-        ).catch((err) => {
-          console.error('Erro ao iniciar a câmera:', err);
-          let userFriendlyMsg = 'Erro ao acessar a câmera. Verifique as permissões.';
-          if (String(err).includes('NotAllowedError')) {
-            userFriendlyMsg = 'Permissão de câmera negada. Ative as permissões nas configurações do seu navegador.';
-          } else if (String(err).includes('NotFoundError')) {
-            userFriendlyMsg = 'Nenhuma câmera traseira compatível encontrada no seu dispositivo.';
-          }
-          setQrScannerError(userFriendlyMsg);
-        });
-      }, 300);
-    } catch (e) {
-      console.error('Falha ao importar o scanner:', e);
-      setQrScannerError('Falha ao carregar a biblioteca do scanner.');
+        if (!started) {
+          throw primaryErr;
+        }
+      }
+    } catch (err) {
+      const errText = String(err);
+      let userFriendlyMsg = 'Erro ao acessar a câmera. Verifique as permissões do navegador.';
+
+      if (errText.includes('NotAllowedError') || errText.includes('Permission')) {
+        userFriendlyMsg =
+          'Permissão de câmera negada. Ative a câmera nas configurações do navegador e tente novamente.';
+      } else if (
+        errText.includes('NotFoundError') ||
+        errText.includes('Requested device not found') ||
+        errText.includes('OverconstrainedError')
+      ) {
+        userFriendlyMsg =
+          'Nenhuma câmera compatível encontrada. Use um dispositivo com câmera ou conecte uma webcam.';
+      } else if (errText.includes('NotReadableError') || errText.includes('TrackStartError')) {
+        userFriendlyMsg =
+          'A câmera está em uso por outro aplicativo. Feche-o e tente novamente.';
+      }
+
+      setQrScannerError(userFriendlyMsg);
+      setIsScanningQr(false);
+      qrScannerRef.current = null;
     }
   };
 
@@ -2508,6 +2579,34 @@ export default function PoolControllerPage() {
   };
 
   const isCurrentlyAdmin = activeScreen === 'admin';
+  const hasRegisteredEquipment = registeredEquipments.length > 0;
+
+  // Shared empty-state shown on HOME/BOMBAS/LED/TIMERS when no equipment is registered
+  const renderNoEquipmentScreen = (key: string, featureLabel: string) => (
+    <motion.div
+      key={key}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center justify-center h-full text-center px-6 py-10 gap-4"
+    >
+      <div className="w-14 h-14 rounded-2xl bg-[#4398fa]/10 border border-[#4398fa]/20 flex items-center justify-center">
+        <QrCode className="w-7 h-7 text-[#4398fa]" />
+      </div>
+      <h3 className="text-sm font-bold text-white">Nenhum equipamento cadastrado</h3>
+      <p className="text-xs text-slate-400 leading-relaxed max-w-[280px]">
+        Para acessar {featureLabel}, cadastre primeiro o seu equipamento escaneando o QR Code.
+      </p>
+      <button
+        type="button"
+        onClick={() => setActiveScreen('setup')}
+        className="mt-2 px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-2"
+      >
+        <QrCode className="w-4 h-4" />
+        Cadastrar Equipamento
+      </button>
+    </motion.div>
+  );
   const motorControls: Array<{
     number: MotorNumber;
     name: string;
@@ -3061,7 +3160,10 @@ export default function PoolControllerPage() {
               )}
 
               {/* Screen: Home (Remote MQTT sync) */}
-              {activeScreen === 'home' && (
+              {activeScreen === 'home' && !hasRegisteredEquipment &&
+                renderNoEquipmentScreen('home-screen-empty', 'o painel do equipamento')}
+
+              {activeScreen === 'home' && hasRegisteredEquipment && (
                 <motion.div
                   key="home-screen"
                   initial={{ opacity: 0 }}
@@ -3245,7 +3347,10 @@ export default function PoolControllerPage() {
               )}
 
               {/* Screen: AUX (Motor Control) */}
-              {activeScreen === 'aux' && (
+              {activeScreen === 'aux' && !hasRegisteredEquipment &&
+                renderNoEquipmentScreen('aux-screen-empty', 'o controle de motores')}
+
+              {activeScreen === 'aux' && hasRegisteredEquipment && (
                 <motion.div
                   key="aux-screen"
                   initial={{ opacity: 0 }}
@@ -3358,7 +3463,10 @@ export default function PoolControllerPage() {
               )}
 
               {/* Screen: LED Controller */}
-              {activeScreen === 'led' && (
+              {activeScreen === 'led' && !hasRegisteredEquipment &&
+                renderNoEquipmentScreen('led-screen-empty', 'o controle de iluminação LED')}
+
+              {activeScreen === 'led' && hasRegisteredEquipment && (
                 <motion.div
                   key="led-screen"
                   initial={{ opacity: 0 }}
@@ -3488,7 +3596,10 @@ export default function PoolControllerPage() {
               )}
 
               {/* Screen: Timers / Automação (Filtro & LED) */}
-              {activeScreen === 'timers' && (
+              {activeScreen === 'timers' && !hasRegisteredEquipment &&
+                renderNoEquipmentScreen('timers-screen-empty', 'a programação de timers')}
+
+              {activeScreen === 'timers' && hasRegisteredEquipment && (
                 <motion.div
                   key="timers-screen"
                   initial={{ opacity: 0 }}
@@ -3797,14 +3908,21 @@ export default function PoolControllerPage() {
                     <div className="space-y-3.5">
                       {/* QR Code Scan Controls */}
                       {!isScanningQr && (
-                        <button
-                          type="button"
-                          onClick={startQrScanner}
-                          className="w-full py-2.5 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 hover:from-blue-600/35 hover:to-cyan-600/35 border border-cyan-500/20 hover:border-cyan-500/40 text-cyan-200 hover:text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                        >
-                          <QrCode className="w-4 h-4 text-cyan-400 animate-pulse" />
-                          <span>Escanear QR Code do Equipamento</span>
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={startQrScanner}
+                            className="w-full py-2.5 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 hover:from-blue-600/35 hover:to-cyan-600/35 border border-cyan-500/20 hover:border-cyan-500/40 text-cyan-200 hover:text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <QrCode className="w-4 h-4 text-cyan-400 animate-pulse" />
+                            <span>Escanear QR Code do Equipamento</span>
+                          </button>
+                          {qrScannerError && (
+                            <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-400 font-semibold text-center leading-normal">
+                              {qrScannerError}
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {isScanningQr && (
