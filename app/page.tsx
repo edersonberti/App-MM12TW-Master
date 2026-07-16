@@ -2507,7 +2507,7 @@ export default function PoolControllerPage() {
   }, []);
 
   // Save specific equipment
-  function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
+  async function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
     const finalId = idOverride || bleDeviceId;
     const finalModel = modelOverride || selectedEquipmentModel;
     const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
@@ -2522,10 +2522,6 @@ export default function PoolControllerPage() {
     // Retrieve currently logged-in user's email
     const userEmail = currentUser?.email || '';
     
-    // Check if equipment is already in registered list
-    const exists = registeredEquipments.some(eq => eq.id.toLowerCase() === trimmedId.toLowerCase());
-    let updated = [...registeredEquipments];
-    
     const newItem = {
       id: trimmedId,
       model: finalModel,
@@ -2533,26 +2529,50 @@ export default function PoolControllerPage() {
       manufacturer: finalManufacturer,
       userEmail
     };
-    
-    if (!exists) {
-      updated.push(newItem);
-    } else {
-      // Update existing entry for this ID
-      updated = updated.map(eq => eq.id.toLowerCase() === trimmedId.toLowerCase() ? { ...eq, ...newItem } : eq);
-    }
-    
-    setRegisteredEquipments(updated);
-    
-    // Sync with Supabase if active
+
+    // Wait for Supabase confirmation before declaring the device registered.
+    // Previously this ran in the background, so the empty state could remain visible
+    // (or a later auth refresh could overwrite the optimistic local list).
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      void registerDevice(trimmedId, finalModel as any, currentUser.uid, finalSerial).then(() => {
-        void ensureDeviceSettings(trimmedId);
-      });
+      const registeredDevice = await registerDevice(
+        trimmedId,
+        finalModel as any,
+        currentUser.uid,
+        finalSerial
+      );
+
+      if (!registeredDevice) {
+        setQrScannerError(
+          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
+        );
+        return;
+      }
+
+      await ensureDeviceSettings(trimmedId);
     }
+
+    // Functional update always uses the latest list and immediately removes the
+    // "Nenhum equipamento cadastrado" state.
+    setRegisteredEquipments((current) => {
+      const exists = current.some(
+        (eq) => eq.id.toLowerCase() === trimmedId.toLowerCase()
+      );
+
+      if (!exists) return [...current, newItem];
+
+      return current.map((eq) =>
+        eq.id.toLowerCase() === trimmedId.toLowerCase()
+          ? { ...eq, ...newItem }
+          : eq
+      );
+    });
     
     // Also make this the active device under control!
     setDeviceId(trimmedId);
     localStorage.setItem('mqtt_device', trimmedId);
+    setScannedData(null);
+    setQrScannerError(null);
+    setActiveScreen('aux');
     
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
@@ -3195,60 +3215,6 @@ export default function PoolControllerPage() {
                   exit={{ opacity: 0 }}
                   className="space-y-3"
                 >
-                  {/* System connect / offline — placed at top for easy access */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (mqttConnected) {
-                        disconnectMQTT();
-                      } else {
-                        connectMQTT();
-                      }
-                    }}
-                    className={`w-full p-3.5 rounded-xl border flex items-center justify-between gap-3 active:scale-[0.99] transition-all ${
-                      mqttConnected
-                        ? 'bg-emerald-500/10 border-emerald-500/25 hover:bg-emerald-500/15'
-                        : mqttStatusMessage === 'Conectando...'
-                          ? 'bg-amber-500/10 border-amber-500/25'
-                          : 'bg-[#4398fa]/10 border-[#4398fa]/25 hover:bg-[#4398fa]/15'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 text-left min-w-0">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 ${
-                        mqttConnected
-                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                          : 'bg-[#4398fa]/15 border-[#4398fa]/30 text-[#4398fa]'
-                      }`}>
-                        {mqttConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                          Sistema remoto
-                        </p>
-                        <p className={`text-sm font-bold truncate ${
-                          mqttConnected
-                            ? 'text-emerald-400'
-                            : mqttStatusMessage === 'Conectando...'
-                              ? 'text-amber-400'
-                              : 'text-white'
-                        }`}>
-                          {mqttConnected
-                            ? 'Conectado — toque para deixar offline'
-                            : mqttStatusMessage === 'Conectando...'
-                              ? 'Conectando...'
-                              : 'Offline — toque para conectar'}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider border ${
-                      mqttConnected
-                        ? 'bg-rose-500/15 border-rose-500/25 text-rose-400'
-                        : 'bg-[#4398fa]/20 border-[#4398fa]/30 text-[#4398fa]'
-                    }`}>
-                      {mqttConnected ? 'Offline' : 'Conectar'}
-                    </span>
-                  </button>
-
                   {/* LED & TIMERS Status Indicators */}
                   <div className="grid grid-cols-2 gap-2">
                       {/* Left: LED Status Indicator */}

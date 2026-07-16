@@ -4,6 +4,7 @@ export interface SupabaseDevice {
   id: string;
   model: string;
   pairing_token?: string;
+  serial?: string;
   user_id: string;
 }
 
@@ -29,6 +30,7 @@ export async function registerDevice(
   deviceId: string,
   model: string,
   userId: string,
+  serial: string = '',
   pairingToken: string = ''
 ): Promise<SupabaseDevice | null> {
   try {
@@ -38,6 +40,7 @@ export async function registerDevice(
         id: deviceId,
         model: model,
         pairing_token: pairingToken || 'TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+        serial: serial || null,
         user_id: userId,
       })
       .select()
