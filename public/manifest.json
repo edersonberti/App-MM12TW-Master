@@ -20,18 +20,6 @@
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
-    },
-    {
-      "src": "/512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/logo(512 x 512 px).png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
     }
   ]
 }

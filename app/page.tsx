@@ -598,7 +598,7 @@ export default function PoolControllerPage() {
 
     if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
       console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
-      disconnectMQTT();
+      disconnectMQTT(true);
       const t = setTimeout(() => {
         connectMQTT();
       }, 300);
@@ -1090,14 +1090,21 @@ export default function PoolControllerPage() {
 
           // Fetch user's registered devices from Supabase
           const dbDevices = await fetchUserDevices(data.user.id);
-          setRegisteredEquipments(dbDevices.map(d => ({
+          const mappedDevices = dbDevices.map(d => ({
             id: d.id,
             model: d.model,
             pairing_token: d.pairing_token
-          })));
+          }));
+          setRegisteredEquipments(mappedDevices);
 
           if (dbDevices.length > 0) {
-            setDeviceId(dbDevices[0].id);
+            const storedDeviceId = localStorage.getItem('mqtt_device');
+            const selectedDevice = storedDeviceId
+              ? dbDevices.find(device => device.id.toLowerCase() === storedDeviceId.toLowerCase())
+              : null;
+            const selectedDeviceId = selectedDevice?.id || dbDevices[0].id;
+            setDeviceId(selectedDeviceId);
+            localStorage.setItem('mqtt_device', selectedDeviceId);
           }
 
           setActiveScreen('home');
@@ -1783,6 +1790,23 @@ export default function PoolControllerPage() {
     }, 300);
   };
 
+  const handleConnectEquipment = (equipmentId: string) => {
+    const selectedId = equipmentId.trim();
+    if (!selectedId) return;
+
+    localStorage.setItem('mqtt_device', selectedId);
+    setUserWantsMqtt(true);
+
+    if (selectedId.toLowerCase() === deviceId.toLowerCase()) {
+      setMqttStatusMessage('Reconectando...');
+      forceReconnectMQTT();
+      return;
+    }
+
+    setMqttStatusMessage('Conectando...');
+    setDeviceId(selectedId);
+  };
+
   function publishTopic(subTopic: string, payload: string) {
     if (isUpdatingData) {
       console.warn("Publish blocked: Data update in progress.");
@@ -1947,8 +1971,8 @@ export default function PoolControllerPage() {
       alert('Informe o modelo do equipamento.');
       return;
     }
-    if (!Number.isInteger(motorCount) || motorCount < 1 || motorCount > 8) {
-      alert('A quantidade de motores deve ser de 1 a 8.');
+    if (!Number.isInteger(motorCount) || motorCount < 0 || motorCount > 8) {
+      alert('A quantidade de motores deve ser de 0 a 8.');
       return;
     }
 
@@ -4151,23 +4175,28 @@ export default function PoolControllerPage() {
                                         </p>
                                       )}
                                       <p className="text-[9px] text-slate-500 font-semibold mt-0.5">
-                                        {isActive ? 'Equipamento selecionado' : 'Conexão offline/disponível'}
+                                        {isActive
+                                          ? mqttConnected
+                                            ? deviceOnline === true
+                                              ? 'Conectado e online'
+                                              : 'Conectado • aguardando equipamento'
+                                            : 'Selecionado • aguardando conexão'
+                                          : 'Disponível para conexão'}
                                       </p>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
-                                    {!isActive && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setDeviceId(eq.id);
-                                          localStorage.setItem('mqtt_device', eq.id);
-                                        }}
-                                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer"
-                                      >
-                                        Ativar
-                                      </button>
-                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConnectEquipment(eq.id)}
+                                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
+                                        isActive
+                                          ? 'bg-[#007AFF]/20 hover:bg-[#007AFF]/30 text-[#70b7ff] border border-[#007AFF]/20'
+                                          : 'bg-white/10 hover:bg-white/20 text-white'
+                                      }`}
+                                    >
+                                      {isActive ? 'Reconectar' : 'Conectar'}
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={async () => {
@@ -6052,10 +6081,10 @@ export default function PoolControllerPage() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-300">Motores (1 a 8)</label>
+                              <label className="text-[10px] font-bold text-slate-300">Motores (0 a 8)</label>
                               <input
                                 type="number"
-                                min={1}
+                                min={0}
                                 max={8}
                                 value={catalogMotorCount}
                                 onChange={(event) => setCatalogMotorCount(event.target.value)}
