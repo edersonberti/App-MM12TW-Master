@@ -771,7 +771,8 @@ export default function PoolControllerPage() {
             setRegisteredEquipments(dbDevices.map((d: any) => ({
               id: d.id,
               model: d.model,
-              pairing_token: d.pairing_token
+              pairing_token: d.pairing_token,
+              serial: d.serial || ''
             })));
 
             // Avoid stale localStorage device IDs (deleted / not owned) — they cause
@@ -1093,7 +1094,8 @@ export default function PoolControllerPage() {
           const mappedDevices = dbDevices.map(d => ({
             id: d.id,
             model: d.model,
-            pairing_token: d.pairing_token
+            pairing_token: d.pairing_token,
+            serial: d.serial || ''
           }));
           setRegisteredEquipments(mappedDevices);
 
@@ -2625,9 +2627,29 @@ export default function PoolControllerPage() {
     const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
     
     const trimmedId = finalId.trim();
+    const trimmedSerial = finalSerial.trim();
     const normalizedModel = finalModel.trim().toUpperCase();
     if (!trimmedId) {
       alert("Por favor, digite um ID de equipamento válido.");
+      return;
+    }
+
+    const duplicateId = registeredEquipments.some(
+      (equipment) => equipment.id.trim().toLowerCase() === trimmedId.toLowerCase()
+    );
+    const duplicateSerial = trimmedSerial
+      ? registeredEquipments.some(
+          (equipment) =>
+            equipment.serial?.trim().toLowerCase() === trimmedSerial.toLowerCase()
+        )
+      : false;
+
+    if (duplicateId || duplicateSerial) {
+      setQrScannerError(
+        duplicateId
+          ? 'Este ID de equipamento já está cadastrado.'
+          : 'Este número de série já está cadastrado em outro equipamento.'
+      );
       return;
     }
 
@@ -2653,7 +2675,7 @@ export default function PoolControllerPage() {
     const newItem = {
       id: trimmedId,
       model: normalizedModel,
-      serial: finalSerial,
+      serial: trimmedSerial,
       manufacturer: finalManufacturer,
       userEmail
     };
@@ -2662,16 +2684,19 @@ export default function PoolControllerPage() {
     // Previously this ran in the background, so the empty state could remain visible
     // (or a later auth refresh could overwrite the optimistic local list).
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      const registeredDevice = await registerDevice(
-        trimmedId,
-        normalizedModel as any,
-        currentUser.uid,
-        finalSerial
-      );
-
-      if (!registeredDevice) {
+      try {
+        await registerDevice(
+          trimmedId,
+          normalizedModel as any,
+          currentUser.uid,
+          trimmedSerial
+        );
+      } catch (error: any) {
+        const isDuplicate = error?.code === '23505';
         setQrScannerError(
-          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
+          isDuplicate
+            ? 'Já existe um equipamento cadastrado com este ID ou número de série.'
+            : error?.message || 'Não foi possível associar este equipamento à sua conta.'
         );
         return;
       }

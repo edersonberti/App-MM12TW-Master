@@ -4,7 +4,7 @@ export interface SupabaseDevice {
   id: string;
   model: string;
   pairing_token?: string;
-  serial?: string;
+  serial?: string | null;
   user_id: string;
 }
 
@@ -32,11 +32,11 @@ export async function registerDevice(
   userId: string,
   serial: string = '',
   pairingToken: string = ''
-): Promise<SupabaseDevice | null> {
+): Promise<SupabaseDevice> {
   try {
     const { data, error } = await supabase
       .from('devices')
-      .upsert({
+      .insert({
         id: deviceId,
         model: model,
         pairing_token: pairingToken || 'TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
@@ -48,12 +48,12 @@ export async function registerDevice(
 
     if (error) {
       console.error('[DeviceService] Error registering device:', error.message);
-      return null;
+      throw error;
     }
     return data;
   } catch (err) {
     console.error('[DeviceService] Register device error:', err);
-    return null;
+    throw err;
   }
 }
 
