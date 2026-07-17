@@ -33,7 +33,7 @@ const nextConfig: NextConfig = {
   },
   output: 'standalone',
   outputFileTracingIncludes: {
-    '/download/aab': ['./download/Master Lazer.aab'],
+    '/download/apk': ['./download/Master Lazer.apk'],
   },
   transpilePackages: ['motion'],
   webpack: (config, {dev}) => {

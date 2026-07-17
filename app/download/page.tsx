@@ -3,7 +3,7 @@ import { Download, ShieldCheck, Smartphone } from 'lucide-react';
 
 const LOGO_PATH = encodeURI('/logo(512 x 512 px).png');
 
-export default function AabDownloadPage() {
+export default function ApkDownloadPage() {
   return (
     <main className="relative flex min-h-screen w-full items-center justify-center overflow-hidden px-5 py-10">
       <div className="pointer-events-none absolute inset-0">
@@ -46,24 +46,25 @@ export default function AabDownloadPage() {
           </div>
           <div>
             <p className="text-sm font-bold text-slate-100">Aplicativo Android</p>
-            <p className="text-xs text-slate-500">Android App Bundle para download</p>
+            <p className="text-xs text-slate-500">Arquivo APK pronto para instalar</p>
           </div>
         </div>
 
         <a
-          href="/download/aab"
-          download="Master Lazer.aab"
+          href="/download/apk"
+          download="Master Lazer.apk"
           className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 px-6 py-4 text-base font-extrabold text-white shadow-xl shadow-blue-600/20 transition duration-200 hover:-translate-y-0.5 hover:shadow-blue-500/35 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40 active:translate-y-0"
         >
           <Download
             className="h-5 w-5 transition-transform group-hover:translate-y-0.5"
             aria-hidden="true"
           />
-          Baixar AAB
+          Baixar APK
         </a>
 
         <p className="mt-4 text-[11px] leading-5 text-slate-500">
-          O formato AAB é destinado à publicação do aplicativo no Google Play.
+          Ao concluir, abra o arquivo baixado e permita a instalação no seu
+          dispositivo.
         </p>
       </section>
     </main>
