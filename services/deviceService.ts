@@ -6,6 +6,8 @@ export interface SupabaseDevice {
   pairing_token?: string;
   serial?: string | null;
   user_id: string;
+  status: 'active' | 'deleted';
+  deleted_at: string | null;
 }
 
 export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]> {
@@ -13,7 +15,8 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     const { data, error } = await supabase
       .from('devices')
       .select('*')
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('status', 'active');
 
     if (error) {
       console.error('[DeviceService] Error fetching devices:', error.message);
@@ -22,6 +25,24 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     return data || [];
   } catch (err) {
     console.error('[DeviceService] Fetch devices error:', err);
+    return [];
+  }
+}
+
+export async function fetchAllDevices(): Promise<SupabaseDevice[]> {
+  try {
+    const { data, error } = await supabase
+      .from('devices')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[DeviceService] Error fetching all devices:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('[DeviceService] Fetch all devices error:', err);
     return [];
   }
 }
@@ -59,18 +80,34 @@ export async function registerDevice(
 
 export async function deleteDevice(deviceId: string): Promise<boolean> {
   try {
-    const { error } = await supabase
-      .from('devices')
-      .delete()
-      .eq('id', deviceId);
+    const { data, error } = await supabase.rpc('soft_delete_device', {
+      target_device_id: deviceId,
+    });
 
     if (error) {
-      console.error('[DeviceService] Error deleting device:', error.message);
+      console.error('[DeviceService] Error soft-deleting device:', error.message);
       return false;
     }
-    return true;
+    return data === true;
   } catch (err) {
-    console.error('[DeviceService] Delete device error:', err);
+    console.error('[DeviceService] Soft-delete device error:', err);
+    return false;
+  }
+}
+
+export async function hardDeleteDevice(deviceId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc('owner_hard_delete_device', {
+      target_device_id: deviceId,
+    });
+
+    if (error) {
+      console.error('[DeviceService] Hard-delete device error:', error.message);
+      return false;
+    }
+    return data === true;
+  } catch (err) {
+    console.error('[DeviceService] Hard-delete device error:', err);
     return false;
   }
 }

@@ -45,8 +45,9 @@ import {
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
-import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
-import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile, hardDeleteProfile, requestAccountDeletion } from '../services/profileService';
+import { fetchAllDevices, fetchUserDevices, registerDevice, deleteDevice, hardDeleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { fetchAuditEvents } from '../services/auditService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   createDeviceCatalogItem,
@@ -128,6 +129,17 @@ export default function PoolControllerPage() {
   };
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
+  const [adminDevices, setAdminDevices] = useState<{
+    id: string;
+    model: string;
+    serial?: string;
+    userId?: string;
+    userEmail?: string;
+    status: 'active' | 'deleted';
+    deletedAt?: string | null;
+  }[]>([]);
+  const [adminDataLoading, setAdminDataLoading] = useState(false);
+  const [adminLastUpdated, setAdminLastUpdated] = useState<Date | null>(null);
   const [adminSearchUser, setAdminSearchUser] = useState('');
   const [adminSearchEquip, setAdminSearchEquip] = useState('');
   const [userModalOpen, setUserModalOpen] = useState<'add' | 'edit' | null>(null);
@@ -244,7 +256,7 @@ export default function PoolControllerPage() {
     item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
   );
   const activeMotorCount = activeCatalogItem?.motor_count ?? 0;
-  const searchedEquip = registeredEquipments.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
+  const searchedEquip = adminDevices.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
   const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
@@ -755,12 +767,13 @@ export default function PoolControllerPage() {
       if (session?.user) {
         // Fetch user profile and role from profiles table
         const profile = await fetchProfile(session.user.id);
-        if (profile) {
+        if (profile?.status === 'active') {
           const loggedUser = {
             email: session.user.email,
             uid: session.user.id,
-            role: profile.role, // owner, admin, support, operator, installer, factory
+            role: profile.role,
             full_name: profile.full_name,
+            status: profile.status,
             isSupabase: true
           };
           setCurrentUser(loggedUser);
@@ -792,8 +805,11 @@ export default function PoolControllerPage() {
             setActiveScreen('home');
           }
         } else {
-          // No profile exists, show error and logout
-          setAuthErrorMessage('Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
+          setAuthErrorMessage(
+            profile?.status === 'deleted'
+              ? 'Esta conta foi excluída e não pode mais acessar o aplicativo. Crie uma nova conta para continuar.'
+              : 'Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.'
+          );
           signOut();
           setCurrentUser(null);
           setActiveScreen('login');
@@ -932,21 +948,105 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
-  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
+  // 3b. Keep the owner dashboard synchronized with profiles and devices in Supabase
   useEffect(() => {
-    if (activeScreen === 'admin' && isSupabaseConfigured()) {
-      const loadProfiles = async () => {
-        const profiles = await fetchAllProfiles();
+    if (activeScreen !== 'admin' || !isSupabaseConfigured()) return;
+
+    let cancelled = false;
+    let requestRunning = false;
+
+    const loadAdminData = async () => {
+      if (requestRunning) return;
+      requestRunning = true;
+      if (!cancelled) setAdminDataLoading(true);
+
+      try {
+        const [profiles, devices, auditEvents] = await Promise.all([
+          fetchAllProfiles(),
+          fetchAllDevices(),
+          fetchAuditEvents(),
+        ]);
+
+        if (cancelled) return;
+
+        const emailByUserId = new Map(
+          profiles.map((profile) => [profile.id, profile.email])
+        );
+
         setSimUsers(profiles.map(p => ({
           uid: p.id,
           email: p.email,
           full_name: p.full_name,
-          role: p.role
+          role: p.role,
+          status: p.status,
+          deleted_at: p.deleted_at,
         })));
-      };
-      loadProfiles();
-    }
-  }, [activeScreen]);
+
+        setAdminDevices(devices.map((device) => ({
+          id: device.id,
+          model: device.model,
+          serial: device.serial || '',
+          userId: device.user_id,
+          userEmail: emailByUserId.get(device.user_id) || '',
+          status: device.status,
+          deletedAt: device.deleted_at,
+        })));
+        const auditEventLabels: Record<string, string> = {
+          account_deletion_requested: 'Solicitou exclusão da própria conta',
+          operator_soft_deleted: 'Desativou um operador',
+          operator_hard_deleted: 'Excluiu definitivamente um operador',
+          device_soft_deleted: 'Desativou um equipamento',
+          device_hard_deleted: 'Excluiu definitivamente um equipamento',
+        };
+        const persistedLogs = auditEvents.map((event) => ({
+          id: `audit:${event.id}`,
+          timestamp: event.created_at,
+          email: event.actor_email || 'Sistema',
+          action: auditEventLabels[event.event_type] || event.event_type,
+          deviceId: event.entity_type === 'device' ? event.entity_id : 'CONTA',
+        }));
+        setUserLogs((current) => [
+          ...persistedLogs,
+          ...current.filter((log) => !String(log.id).startsWith('audit:')),
+        ].slice(0, 200));
+        setAdminLastUpdated(new Date());
+      } finally {
+        requestRunning = false;
+        if (!cancelled) setAdminDataLoading(false);
+      }
+    };
+
+    loadAdminData();
+
+    const channel = supabase
+      .channel(`owner-admin-dashboard-${currentUser?.uid || 'session'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        loadAdminData
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'devices' },
+        loadAdminData
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'audit_events' },
+        loadAdminData
+      )
+      .subscribe();
+
+    const refreshInterval = window.setInterval(loadAdminData, 15000);
+    window.addEventListener('focus', loadAdminData);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', loadAdminData);
+      supabase.removeChannel(channel);
+    };
+  }, [activeScreen, currentUser?.uid]);
 
   // 4. Color HSV to RGB Converter Math helper helper
   function hsvToRgb(h: number, s: number, v: number) {
@@ -1078,12 +1178,17 @@ export default function PoolControllerPage() {
             await signOut();
             throw new Error('Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           }
+          if (profile.status === 'deleted') {
+            await signOut();
+            throw new Error('Esta conta foi excluída e não pode mais acessar o aplicativo. Crie uma nova conta para continuar.');
+          }
 
           const loggedUser = {
             email: data.user.email,
             uid: data.user.id,
             role: profile.role,
             full_name: profile.full_name,
+            status: profile.status,
             isSupabase: true
           };
 
@@ -1175,6 +1280,32 @@ export default function PoolControllerPage() {
     setPasswordInput('');
     setActiveScreen('login');
     disconnectMQTT();
+  };
+
+  const handleRequestAccountDeletion = async () => {
+    if (!currentUser?.isSupabase || currentUser.role !== 'operator') return;
+    if (!confirm(
+      'Excluir sua conta? O acesso será encerrado, seus equipamentos serão desativados.'
+    )) return;
+    if (prompt('Para confirmar, digite EXCLUIR:') !== 'EXCLUIR') {
+      alert('Exclusão cancelada.');
+      return;
+    }
+
+    const deleted = await requestAccountDeletion();
+    if (!deleted) {
+      alert('Não foi possível excluir a conta. Tente novamente ou contate o proprietário.');
+      return;
+    }
+
+    disconnectMQTT();
+    await supabase.auth.signOut({ scope: 'local' });
+    localStorage.removeItem('sim_user');
+    localStorage.removeItem('mqtt_device');
+    setRegisteredEquipments([]);
+    setCurrentUser(null);
+    setActiveScreen('login');
+    setAuthErrorMessage('Conta excluída.');
   };
 
   // 6. MQTT Client Logic Wrapper
@@ -1899,10 +2030,13 @@ export default function PoolControllerPage() {
     e.preventDefault();
     if (!selectedUserForEdit) return;
 
-    const role = userFormRole; // owner, admin, support, operator, installer, factory
+    const role = userFormRole;
 
     try {
-      await updateProfileRole(selectedUserForEdit.uid, role);
+      const updatedProfile = await updateProfileRole(selectedUserForEdit.uid, role);
+      if (!updatedProfile) {
+        throw new Error('O banco de dados não confirmou a atualização.');
+      }
       
       // Reload list
       const profiles = await fetchAllProfiles();
@@ -1910,7 +2044,9 @@ export default function PoolControllerPage() {
         uid: p.id,
         email: p.email,
         full_name: p.full_name,
-        role: p.role
+        role: p.role,
+        status: p.status,
+        deleted_at: p.deleted_at,
       })));
       
       logUserAction(`Alterou permissão do usuário: ${selectedUserForEdit.email} para ${role}`);
@@ -1940,13 +2076,20 @@ export default function PoolControllerPage() {
 
     const targetUser = simUsers.find(u => u.uid === uid);
     if (!targetUser) return;
+    if (targetUser.role !== 'operator') {
+      alert('Somente usuários operadores podem ser excluídos.');
+      return;
+    }
 
-    if (!confirm(`Tem certeza que deseja excluir o perfil do usuário ${targetUser.email} do Supabase? Esta ação não pode ser desfeita.`)) {
+    if (!confirm(`Desativar o operador ${targetUser.email}?`)) {
       return;
     }
 
     try {
-      await deleteProfile(uid);
+      const deleted = await deleteProfile(uid);
+      if (!deleted) {
+        throw new Error('O banco de dados não permitiu excluir este operador.');
+      }
       
       // Reload list
       const profiles = await fetchAllProfiles();
@@ -1954,14 +2097,62 @@ export default function PoolControllerPage() {
         uid: p.id,
         email: p.email,
         full_name: p.full_name,
-        role: p.role
+        role: p.role,
+        status: p.status,
+        deleted_at: p.deleted_at,
       })));
       
-      logUserAction(`Removeu usuário: ${targetUser.email}`);
-      alert('Usuário removido com sucesso do Supabase!');
+      logUserAction(`Desativou usuário: ${targetUser.email}`);
+      setSelectedUserForEdit(null);
+      setUserModalOpen(null);
+      alert('Usuário desativado.');
     } catch (err: any) {
-      alert(`Erro ao remover usuário do Supabase: ${err.message}`);
+      alert(`Erro ao desativar usuário no Supabase: ${err.message}`);
     }
+  };
+
+  const handleHardDeleteUserAdmin = async (uid: string) => {
+    const targetUser = simUsers.find(u => u.uid === uid);
+    if (!targetUser || targetUser.role !== 'operator' || targetUser.status !== 'deleted') return;
+    if (prompt(`Esta ação apaga definitivamente o registro de ${targetUser.email} e seus equipamentos. Digite EXCLUIR DEFINITIVAMENTE:`) !== 'EXCLUIR DEFINITIVAMENTE') {
+      return;
+    }
+
+    const deleted = await hardDeleteProfile(uid);
+    if (!deleted) {
+      alert('O Supabase não permitiu a exclusão definitiva.');
+      return;
+    }
+
+    setSimUsers(current => current.filter(user => user.uid !== uid));
+    setAdminDevices(current => current.filter(device => device.userId !== uid));
+    setSelectedUserForEdit(null);
+    setUserModalOpen(null);
+    alert('Registro excluído definitivamente. O evento da exclusão permaneceu no log de auditoria.');
+  };
+
+  const handleDeleteDeviceAdmin = async (device: { id: string; status: 'active' | 'deleted' }) => {
+    if (device.status === 'deleted') {
+      if (prompt(`Excluir definitivamente o equipamento ${device.id}? Digite EXCLUIR DEFINITIVAMENTE:`) !== 'EXCLUIR DEFINITIVAMENTE') return;
+      const deleted = await hardDeleteDevice(device.id);
+      if (!deleted) {
+        alert('O Supabase não permitiu a exclusão definitiva do equipamento.');
+        return;
+      }
+      setAdminDevices(current => current.filter(item => item.id !== device.id));
+      alert('Equipamento excluído definitivamente. O evento permaneceu no log de auditoria.');
+      return;
+    }
+
+    if (!confirm(`Desativar o equipamento ${device.id}?`)) return;
+    const deleted = await deleteDevice(device.id);
+    if (!deleted) {
+      alert('Não foi possível desativar o equipamento.');
+      return;
+    }
+    setAdminDevices(current => current.map(item =>
+      item.id === device.id ? { ...item, status: 'deleted', deletedAt: new Date().toISOString() } : item
+    ));
   };
 
   const handleCreateCatalogItem = async () => {
@@ -2890,7 +3081,7 @@ export default function PoolControllerPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
+                  {currentUser?.role === 'owner' && (
                     <button
                       type="button"
                       onClick={() => setActiveScreen('admin')}
@@ -4225,18 +4416,27 @@ export default function PoolControllerPage() {
                                     <button
                                       type="button"
                                       onClick={async () => {
+                                        if (!confirm(`Remover o equipamento ${eq.id}?`)) return;
+                                        if (isSupabaseConfigured() && currentUser?.isSupabase) {
+                                          const deleted = await deleteDevice(eq.id);
+                                          if (!deleted) {
+                                            alert('Não foi possível desativar o equipamento.');
+                                            return;
+                                          }
+                                        }
                                         const filtered = registeredEquipments.filter(item => item.id !== eq.id);
                                         setRegisteredEquipments(filtered);
-                                        if (isSupabaseConfigured() && currentUser?.isSupabase) {
-                                          await deleteDevice(eq.id);
-                                        }
                                         if (isActive && filtered.length > 0) {
                                           setDeviceId(filtered[0].id);
                                           localStorage.setItem('mqtt_device', filtered[0].id);
+                                        } else if (isActive) {
+                                          disconnectMQTT();
+                                          setDeviceId('');
+                                          localStorage.removeItem('mqtt_device');
                                         }
                                       }}
                                       className="p-1 px-2 text-slate-400 hover:text-rose-400 transition-colors font-bold text-xs cursor-pointer"
-                                      title="Excluir equipamento"
+                                      title="Desativar equipamento"
                                     >
                                       ✕
                                     </button>
@@ -4249,6 +4449,25 @@ export default function PoolControllerPage() {
                       )}
                     </div>
                   </div>
+
+                  {currentUser?.isSupabase && currentUser.role === 'operator' && (
+                    <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/20 space-y-3 text-left">
+                      <div>
+                        <h3 className="text-xs font-bold text-rose-300">Excluir minha conta</h3>
+                        <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
+                          Seu acesso será encerrado e os equipamentos serão desativados.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRequestAccountDeletion}
+                        className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-300 text-xs font-bold transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Excluir minha conta
+                      </button>
+                    </div>
+                  )}
 
                   {/* Device Sync Info Summary */}
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs backdrop-blur-sm">
@@ -4501,24 +4720,40 @@ export default function PoolControllerPage() {
                     {/* Tab Home: Admin Panel Hub */}
                     {adminTab === 'home' && (
                       <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-2.5">
+                          <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                            <span className={`h-2 w-2 rounded-full ${adminDataLoading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+                            {adminDataLoading ? 'Atualizando dados do Supabase...' : 'Dados sincronizados com o Supabase'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {adminLastUpdated
+                              ? `Última atualização: ${adminLastUpdated.toLocaleTimeString('pt-BR')}`
+                              : 'Aguardando primeira atualização'}
+                          </span>
+                        </div>
+
                         {/* Welcome banner & Stats Overview */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div className="p-5 bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator').length}</span>
+                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator' && u.status === 'active').length}</span>
                               <span className="text-xs text-amber-400 font-semibold">Ativos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                              {simUsers.filter(u => u.role === 'operator' && u.status === 'deleted').length} excluído(s).
+                            </p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
-                              <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
+                              <span className="text-3xl font-extrabold text-white">{adminDevices.filter(device => device.status === 'active').length}</span>
+                              <span className="text-xs text-[#4398fa] font-semibold">Ativos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                              {adminDevices.filter(device => device.status === 'deleted').length} excluído(s).
+                            </p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-purple-500/10 to-pink-500/5 border border-purple-500/20 rounded-2xl flex flex-col justify-between">
@@ -4630,7 +4865,7 @@ export default function PoolControllerPage() {
                             <div className="flex items-center justify-between">
                               <div>
                                 <h3 className="text-sm font-bold text-white">Usuários Cadastrados</h3>
-                                <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários registrados neste navegador</p>
+                                <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários carregados de profiles</p>
                               </div>
                               <button
                                 onClick={() => {
@@ -4671,20 +4906,32 @@ export default function PoolControllerPage() {
                                     <label className="text-[10px] font-bold text-slate-300">Nível de Acesso (Role)</label>
                                     <select
                                       value={userFormRole}
+                                      disabled={selectedUserForEdit?.status === 'deleted'}
                                       onChange={(e: any) => setUserFormRole(e.target.value)}
-                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors"
+                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       <option value="owner" className="bg-[#121824]">Proprietário (owner)</option>
-                                      <option value="admin" className="bg-[#121824]">Administrador (admin)</option>
-                                      <option value="support" className="bg-[#121824]">Suporte (support)</option>
                                       <option value="operator" className="bg-[#121824]">Operador (operator)</option>
-                                      <option value="installer" className="bg-[#121824]">Instalador (installer)</option>
-                                      <option value="factory" className="bg-[#121824]">Fábrica (factory)</option>
                                     </select>
                                   </div>
                                 </div>
 
                                 <div className="flex justify-end gap-2 pt-1">
+                                  {userModalOpen === 'edit' &&
+                                    selectedUserForEdit?.role === 'operator' &&
+                                    selectedUserForEdit?.uid !== currentUser?.uid && (
+                                      <button
+                                        type="button"
+                                        onClick={() => selectedUserForEdit.status === 'deleted'
+                                          ? handleHardDeleteUserAdmin(selectedUserForEdit.uid)
+                                          : handleDeleteUserAdmin(selectedUserForEdit.uid)
+                                        }
+                                        className="mr-auto px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 text-xs font-bold rounded-lg flex items-center gap-1.5"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        {selectedUserForEdit.status === 'deleted' ? 'Excluir definitivamente' : 'Desativar operador'}
+                                      </button>
+                                    )}
                                   <button
                                     type="button"
                                     onClick={() => setUserModalOpen(null)}
@@ -4694,7 +4941,8 @@ export default function PoolControllerPage() {
                                   </button>
                                   <button
                                     type="submit"
-                                    className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-lg shadow-lg shadow-amber-400/10"
+                                    disabled={userModalOpen === 'edit' && selectedUserForEdit?.status === 'deleted'}
+                                    className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-lg shadow-lg shadow-amber-400/10 disabled:opacity-40 disabled:cursor-not-allowed"
                                   >
                                     {userModalOpen === 'add' ? 'Salvar Usuário' : 'Atualizar'}
                                   </button>
@@ -4743,7 +4991,7 @@ export default function PoolControllerPage() {
                                                 setAdminSearchEquip('');
                                               } else {
                                                 setSelectedUserForEquip(u.email);
-                                                const associatedEquip = registeredEquipments.find(
+                                                const associatedEquip = adminDevices.find(
                                                   eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
                                                 );
                                                 if (associatedEquip) {
@@ -4769,31 +5017,30 @@ export default function PoolControllerPage() {
                                               )}
                                             </div>
                                           </td>
-                                          <td className="p-3 font-mono text-emerald-400 text-[10px] font-semibold flex items-center gap-1">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                            Ativo (Supabase)
+                                          <td className="p-3 font-mono text-[10px] font-semibold">
+                                            <div className={`flex items-center gap-1 ${
+                                              u.status === 'deleted' ? 'text-rose-400' : 'text-emerald-400'
+                                            }`}>
+                                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                                u.status === 'deleted' ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'
+                                              }`}></span>
+                                              {u.status === 'deleted' ? 'Excluído (histórico)' : 'Ativo (Supabase)'}
+                                            </div>
+                                            {u.deleted_at && (
+                                              <div className="mt-1 text-[8px] text-slate-500">
+                                                {new Date(u.deleted_at).toLocaleString('pt-BR')}
+                                              </div>
+                                            )}
                                           </td>
                                           <td className="p-3">
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                               u.role === 'owner' 
                                                 ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' 
-                                                : u.role === 'admin'
-                                                  ? 'bg-blue-400/10 text-blue-400 border border-blue-400/20'
-                                                  : 'bg-slate-400/15 text-slate-300 border border-white/5'
+                                                : 'bg-slate-400/15 text-slate-300 border border-white/5'
                                             }`}>
                                               {u.role === 'owner' 
                                                 ? 'Proprietário' 
-                                                : u.role === 'admin' 
-                                                  ? 'Administrador' 
-                                                  : u.role === 'support'
-                                                    ? 'Suporte'
-                                                    : u.role === 'operator'
-                                                      ? 'Operador'
-                                                      : u.role === 'installer'
-                                                        ? 'Instalador'
-                                                        : u.role === 'factory'
-                                                          ? 'Fábrica'
-                                                          : u.role}
+                                                : 'Operador'}
                                             </span>
                                           </td>
                                           <td className="p-3 text-right">
@@ -4815,10 +5062,19 @@ export default function PoolControllerPage() {
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  handleDeleteUserAdmin(u.uid);
+                                                  u.status === 'deleted'
+                                                    ? handleHardDeleteUserAdmin(u.uid)
+                                                    : handleDeleteUserAdmin(u.uid);
                                                 }}
                                                 disabled={isRoot || isSelf}
-                                                title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
+                                                title={isRoot
+                                                  ? 'Usuário proprietário não pode ser removido'
+                                                  : isSelf
+                                                    ? 'Você não pode se deletar'
+                                                    : u.status === 'deleted'
+                                                      ? 'Excluir registro definitivamente'
+                                                      : 'Desativar usuário preservando histórico'
+                                                }
                                                 className={`p-1.5 rounded-lg border transition-colors ${
                                                   isRoot || isSelf
                                                     ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
@@ -4841,7 +5097,7 @@ export default function PoolControllerPage() {
                           <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                             <div>
                               <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
-                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
+                              <p className="text-[10px] text-slate-400">Total de {adminDevices.length} dispositivos cadastrados no banco</p>
                             </div>
 
                             <div className="relative">
@@ -4856,14 +5112,14 @@ export default function PoolControllerPage() {
                             </div>
 
                              <div className="space-y-2.5">
-                              {registeredEquipments
+                              {adminDevices
                                 .filter(eq => 
                                   eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
                                   eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
                                   (eq.userEmail || '').toLowerCase().includes(adminSearchEquip.toLowerCase())
                                 )
                                 .map((eq) => {
-                                  const isActive = deviceId.toLowerCase() === eq.id.toLowerCase();
+                                  const isActive = eq.status === 'active' && deviceId.toLowerCase() === eq.id.toLowerCase();
                                   const isUserEquip = selectedUserForEquip && (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
                                   return (
                                     <div
@@ -4885,6 +5141,9 @@ export default function PoolControllerPage() {
                                           {isActive && !isUserEquip && (
                                             <span className="text-[8px] bg-[#4398fa]/20 text-[#4398fa] border border-[#4398fa]/30 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">ATIVO</span>
                                           )}
+                                          {eq.status === 'deleted' && (
+                                            <span className="text-[8px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">EXCLUÍDO • HISTÓRICO</span>
+                                          )}
                                         </div>
                                         <div className="text-[10px] text-slate-400">
                                           Modelo: <span className="text-slate-200 font-semibold">{eq.model}</span>
@@ -4894,26 +5153,40 @@ export default function PoolControllerPage() {
                                             Vinculado: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
                                           </div>
                                         )}
+                                        {eq.deletedAt && (
+                                          <div className="text-[8px] text-rose-400/80 font-mono">
+                                            Excluído em {new Date(eq.deletedAt).toLocaleString('pt-BR')}
+                                          </div>
+                                        )}
                                       </div>
 
-                                      {!isActive && (
+                                      <div className="flex items-center gap-1.5">
+                                        {!isActive && eq.status === 'active' && (
+                                          <button
+                                            onClick={() => {
+                                              setDeviceId(eq.id);
+                                              localStorage.setItem('mqtt_device', eq.id);
+                                              logUserAction(`Ativou equipamento ID: ${eq.id}`);
+                                              alert(`Dispositivo ${eq.id} ativado com sucesso!`);
+                                            }}
+                                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
+                                          >
+                                            Ativar
+                                          </button>
+                                        )}
                                         <button
-                                          onClick={() => {
-                                            setDeviceId(eq.id);
-                                            localStorage.setItem('mqtt_device', eq.id);
-                                            logUserAction(`Ativou equipamento ID: ${eq.id}`);
-                                            alert(`Dispositivo ${eq.id} ativado com sucesso!`);
-                                          }}
-                                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
+                                          onClick={() => handleDeleteDeviceAdmin(eq)}
+                                          title={eq.status === 'deleted' ? 'Excluir definitivamente' : 'Desativar preservando histórico'}
+                                          className="p-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/25 text-rose-400"
                                         >
-                                          Ativar
+                                          <Trash2 className="w-3.5 h-3.5" />
                                         </button>
-                                      )}
+                                      </div>
                                     </div>
                                   );
                                 })}
 
-                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
+                              {selectedUserForEquip && !adminDevices.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
                                 <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
                                   <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
                                   <div className="flex flex-col gap-1.5 pt-1">
@@ -4929,10 +5202,10 @@ export default function PoolControllerPage() {
                                           return;
                                         }
 
-                                        const updated = registeredEquipments.map(eq => 
+                                        const updated = adminDevices.map(eq => 
                                           eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
                                         );
-                                        setRegisteredEquipments(updated);
+                                        setAdminDevices(updated);
                                         
                                         if (isSupabaseConfigured()) {
                                           await updateDeviceOwner(eqId, targetUser.uid);
@@ -4944,7 +5217,7 @@ export default function PoolControllerPage() {
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
                                       <option value="">Selecione um equipamento...</option>
-                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
+                                      {adminDevices.filter(eq => eq.status === 'active' && !eq.userEmail).map(eq => (
                                         <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
                                       ))}
                                     </select>
@@ -5006,7 +5279,7 @@ export default function PoolControllerPage() {
                           <div className="flex gap-2">
                             <button
                               onClick={() => {
-                                const found = registeredEquipments.find(
+                                const found = adminDevices.find(
                                   eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase()
                                 );
                                 if (found) {
@@ -5028,7 +5301,7 @@ export default function PoolControllerPage() {
                             Dispositivos Cadastrados (Clique para Consultar)
                           </span>
                           <div className="grid grid-cols-1 gap-2.5">
-                            {registeredEquipments.map((eq) => {
+                            {adminDevices.map((eq) => {
                               const isSelected = telemetrySearchId.trim().toLowerCase() === eq.id.toLowerCase();
                               return (
                                 <button
@@ -5055,7 +5328,7 @@ export default function PoolControllerPage() {
                                 </button>
                               );
                             })}
-                            {registeredEquipments.length === 0 && (
+                            {adminDevices.length === 0 && (
                               <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
                                 Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
                               </div>
@@ -5823,21 +6096,21 @@ export default function PoolControllerPage() {
                           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                             <div>
                               <h4 className="text-xs font-bold text-white uppercase tracking-wider">Histórico Detalhado de Operações</h4>
-                              <p className="text-[10px] text-slate-400">Relação completa de todos os gatilhos gerados</p>
+                              <p className="text-[10px] text-slate-400">Eventos de auditoria do Supabase são permanentes; apenas logs temporários podem ser limpos.</p>
                             </div>
                             {!showConfirmClearLogs ? (
                               <button
                                 onClick={() => setShowConfirmClearLogs(true)}
                                 className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 text-xs font-bold rounded-lg transition-colors text-center"
                               >
-                                Limpar Todos os Logs
+                                Limpar Logs Temporários
                               </button>
                             ) : (
                               <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5 animate-fadeIn">
                                 <span className="text-[10px] text-rose-300 font-medium px-1">Confirmar limpeza?</span>
                                 <button
                                   onClick={() => {
-                                    setUserLogs([]);
+                                    setUserLogs(current => current.filter(log => String(log.id).startsWith('audit:')));
                                     setShowConfirmClearLogs(false);
                                   }}
                                   className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded transition-colors"
