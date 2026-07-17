@@ -48,6 +48,12 @@ import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } fr
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
+import {
+  createDeviceCatalogItem,
+  deleteDeviceCatalogItem,
+  fetchDeviceCatalog,
+  type DeviceCatalogItem,
+} from '../services/deviceCatalogService';
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -109,8 +115,13 @@ export default function PoolControllerPage() {
   const [manualSuccessMsg, setManualSuccessMsg] = useState('');
 
   // Admin & Owner Dashboard states
-  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba2' | 'aba3' | 'aba4'>('home');
+  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba2' | 'aba3' | 'aba4' | 'aba5'>('home');
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
+  const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogItem[]>([]);
+  const [catalogModel, setCatalogModel] = useState('');
+  const [catalogMotorCount, setCatalogMotorCount] = useState('4');
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogSaving, setCatalogSaving] = useState(false);
 
   const handleBackToHome = () => {
     setActiveScreen('home');
@@ -229,6 +240,10 @@ export default function PoolControllerPage() {
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
   const activeModel = activeEquipment?.model || 'MM12TW';
+  const activeCatalogItem = deviceCatalog.find(
+    item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
+  );
+  const activeMotorCount = activeCatalogItem?.motor_count ?? 0;
   const searchedEquip = registeredEquipments.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
   const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
@@ -795,6 +810,28 @@ export default function PoolControllerPage() {
       subscription?.unsubscribe();
     };
   }, [supabaseStateLoaded, activeScreen]);
+
+  useEffect(() => {
+    if (!currentUser?.isSupabase) {
+      setDeviceCatalog([]);
+      return;
+    }
+
+    let cancelled = false;
+    setCatalogLoading(true);
+
+    fetchDeviceCatalog()
+      .then((items) => {
+        if (!cancelled) setDeviceCatalog(items);
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.uid, currentUser?.isSupabase]);
 
   // 3. Dynamic setup of Iro.js Color picker when active screen is 'led'
   useEffect(() => {
@@ -1901,6 +1938,56 @@ export default function PoolControllerPage() {
     }
   };
 
+  const handleCreateCatalogItem = async () => {
+    if (currentUser?.role !== 'owner') return;
+
+    const model = catalogModel.trim().toUpperCase();
+    const motorCount = Number(catalogMotorCount);
+    if (!model) {
+      alert('Informe o modelo do equipamento.');
+      return;
+    }
+    if (!Number.isInteger(motorCount) || motorCount < 1 || motorCount > 8) {
+      alert('A quantidade de motores deve ser de 1 a 8.');
+      return;
+    }
+
+    setCatalogSaving(true);
+    try {
+      const created = await createDeviceCatalogItem(model, motorCount);
+      if (created) {
+        setDeviceCatalog((current) =>
+          [...current, created].sort((a, b) => a.model.localeCompare(b.model))
+        );
+        setCatalogModel('');
+        setCatalogMotorCount('4');
+        alert(`Modelo ${created.model} adicionado ao catálogo.`);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Não foi possível adicionar o modelo ao catálogo.');
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
+  const handleDeleteCatalogItem = async (item: DeviceCatalogItem) => {
+    if (currentUser?.role !== 'owner') return;
+    if (!confirm(`Remover o modelo ${item.model} do catálogo?`)) return;
+
+    try {
+      await deleteDeviceCatalogItem(item.id);
+      setDeviceCatalog((current) =>
+        current.filter((catalogItem) => catalogItem.id !== item.id)
+      );
+    } catch (err: any) {
+      alert(
+        err?.code === '23503'
+          ? 'Este modelo não pode ser removido porque existem equipamentos vinculados a ele.'
+          : err?.message || 'Não foi possível remover o modelo do catálogo.'
+      );
+    }
+  };
+
   const setMotorName = (motorNum: MotorNumber, newName: string) => {
     const setters: Record<MotorNumber, React.Dispatch<React.SetStateAction<string>>> = {
       1: setMotor1Name,
@@ -2514,9 +2601,26 @@ export default function PoolControllerPage() {
     const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
     
     const trimmedId = finalId.trim();
+    const normalizedModel = finalModel.trim().toUpperCase();
     if (!trimmedId) {
       alert("Por favor, digite um ID de equipamento válido.");
       return;
+    }
+
+    if (isSupabaseConfigured() && currentUser?.isSupabase) {
+      const availableCatalog =
+        deviceCatalog.length > 0 ? deviceCatalog : await fetchDeviceCatalog();
+
+      if (deviceCatalog.length === 0 && availableCatalog.length > 0) {
+        setDeviceCatalog(availableCatalog);
+      }
+
+      if (!availableCatalog.some((item) => item.model.toUpperCase() === normalizedModel)) {
+        setQrScannerError(
+          `O modelo ${normalizedModel} não está cadastrado em devices_catalog. Cadastre o modelo no catálogo antes de associar o equipamento.`
+        );
+        return;
+      }
     }
     
     // Retrieve currently logged-in user's email
@@ -2524,7 +2628,7 @@ export default function PoolControllerPage() {
     
     const newItem = {
       id: trimmedId,
-      model: finalModel,
+      model: normalizedModel,
       serial: finalSerial,
       manufacturer: finalManufacturer,
       userEmail
@@ -2536,7 +2640,7 @@ export default function PoolControllerPage() {
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
       const registeredDevice = await registerDevice(
         trimmedId,
-        finalModel as any,
+        normalizedModel as any,
         currentUser.uid,
         finalSerial
       );
@@ -2577,7 +2681,7 @@ export default function PoolControllerPage() {
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
       ...prev,
-      `[REGISTRO] Equipamento salvo: ${finalModel}`,
+      `[REGISTRO] Equipamento salvo: ${normalizedModel}`,
       `[REGISTRO] ID único: ${trimmedId}`,
       `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
       `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
@@ -2585,7 +2689,7 @@ export default function PoolControllerPage() {
       `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
     
-    alert(`Equipamento ${finalModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
+    alert(`Equipamento ${normalizedModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
   };
 
   // Save Advanced Developer Config
@@ -2644,6 +2748,7 @@ export default function PoolControllerPage() {
     { number: 7, name: motor7Name, on: motor7, icon: 'power' },
     { number: 8, name: motor8Name, on: motor8, icon: 'power' },
   ];
+  const visibleMotorControls = motorControls.slice(0, activeMotorCount);
 
   return (
     <div className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-[100dvh] sm:h-auto'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`} id="pool-controller-app">
@@ -3282,70 +3387,25 @@ export default function PoolControllerPage() {
 
                     {/* Quick Status Block */}
                     <div className="grid grid-cols-2 gap-2 text-left">
+                      {visibleMotorControls.map(({ number, name, on }) => (
                       <button
-                        id="home-status-hidro"
+                          key={number}
+                          id={`home-status-motor${number}`}
                         onClick={() => setActiveScreen('aux')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
-                        title={`Ver controle: ${motor1Name}`}
+                          title={`Ver controle: ${name}`}
                       >
                         <div className="flex items-center justify-between w-full">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor1Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorHidro ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{name}</span>
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
                         </div>
                         <div className="mt-1">
-                          <p className={`text-xs font-bold ${motorHidro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
-                            {motorHidro ? 'LIGADO' : 'DESLIGADO'}
+                            <p className={`text-xs font-bold ${on ? 'text-[#4398fa]' : 'text-slate-500'}`}>
+                              {on ? 'LIGADO' : 'DESLIGADO'}
                           </p>
                         </div>
                       </button>
-                      <button
-                        id="home-status-filtro"
-                        onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-                        title={`Ver controle: ${motor2Name}`}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor2Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motorFiltro ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                        </div>
-                        <div className="mt-1">
-                          <p className={`text-xs font-bold ${motorFiltro ? 'text-[#4398fa]' : 'text-slate-500'}`}>
-                            {motorFiltro ? 'LIGADO' : 'DESLIGADO'}
-                          </p>
-                        </div>
-                      </button>
-                      <button
-                        id="home-status-motor3"
-                        onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-purple-500/50"
-                        title={`Ver controle: ${motor3Name}`}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor3Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motor3 ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                        </div>
-                        <div className="mt-1">
-                          <p className={`text-xs font-bold ${motor3 ? 'text-[#4398fa]' : 'text-slate-500'}`}>
-                            {motor3 ? 'LIGADO' : 'DESLIGADO'}
-                          </p>
-                        </div>
-                      </button>
-                      <button
-                        id="home-status-motor4"
-                        onClick={() => setActiveScreen('aux')}
-                        className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-amber-500/50"
-                        title={`Ver controle: ${motor4Name}`}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{motor4Name}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${motor4 ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                        </div>
-                        <div className="mt-1">
-                          <p className={`text-xs font-bold ${motor4 ? 'text-[#4398fa]' : 'text-slate-500'}`}>
-                            {motor4 ? 'LIGADO' : 'DESLIGADO'}
-                          </p>
-                        </div>
-                      </button>
+                      ))}
                     </div>
                 </motion.div>
               )}
@@ -3365,7 +3425,7 @@ export default function PoolControllerPage() {
                   <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl shadow-lg">
                     <div className="mb-3 pb-1.5 border-b border-white/10 flex items-center justify-between gap-2">
                       <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase flex items-center gap-1">
-                        <Sliders className="w-3.5 h-3.5" /> CONTROLE DE MOTORES
+                        <Sliders className="w-3.5 h-3.5" /> CONTROLE DE MOTORES ({activeMotorCount})
                       </h3>
                       <span className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-lg border ${
                         motorSettingsSaveState === 'saving'
@@ -3387,7 +3447,15 @@ export default function PoolControllerPage() {
                     </div>
 
                     <div className="space-y-3 my-2 max-h-[62vh] overflow-y-auto pr-1">
-                      {motorControls.map(({ number, name, on, icon }) => (
+                      {catalogLoading && (
+                        <p className="py-6 text-center text-xs text-slate-400">Carregando configuração do modelo...</p>
+                      )}
+                      {!catalogLoading && !activeCatalogItem && (
+                        <p className="py-6 text-center text-xs text-rose-300">
+                          O modelo {activeModel} não possui configuração em devices_catalog.
+                        </p>
+                      )}
+                      {visibleMotorControls.map(({ number, name, on, icon }) => (
                         <div key={number} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                           <div className="flex items-center gap-3 min-w-0">
                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all shrink-0 ${on ? 'bg-[#4398fa]/10 border-[#4398fa]/20 text-[#4398fa]' : 'bg-white/5 border-white/10 text-slate-400'}`}>
@@ -4359,6 +4427,17 @@ export default function PoolControllerPage() {
                     >
                       <Database className="w-4 h-4" />
                       Info Técnica & MQTT
+                    </button>
+                    <button
+                      onClick={() => setAdminTab('aba5')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'aba5'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Catálogo de Dispositivos
                     </button>
                   </div>
 
@@ -5940,6 +6019,95 @@ export default function PoolControllerPage() {
                           <ChevronRight className="w-4 h-4 rotate-180" />
                           Voltar para a Tela Inicial
                         </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tab 5: Device catalog */}
+                  {adminTab === 'aba5' && (
+                    <div className="space-y-6">
+                      <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                        <div>
+                          <h3 className="text-sm font-bold text-white">Catálogo de Dispositivos</h3>
+                          <p className="text-[10px] text-slate-400">
+                            A quantidade cadastrada aqui define quantos motores aparecem para cada modelo.
+                          </p>
+                        </div>
+
+                        {currentUser?.role === 'owner' && (
+                          <form
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              handleCreateCatalogItem();
+                            }}
+                            className="grid grid-cols-1 sm:grid-cols-[1fr_140px_auto] gap-3 items-end"
+                          >
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Modelo</label>
+                              <input
+                                value={catalogModel}
+                                onChange={(event) => setCatalogModel(event.target.value.toUpperCase())}
+                                placeholder="Ex.: MM12TW"
+                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white uppercase focus:outline-none focus:border-amber-400"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-300">Motores (1 a 8)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={8}
+                                value={catalogMotorCount}
+                                onChange={(event) => setCatalogMotorCount(event.target.value)}
+                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={catalogSaving}
+                              className="px-4 py-2 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center justify-center gap-2"
+                            >
+                              <Plus className="w-4 h-4" />
+                              {catalogSaving ? 'Salvando...' : 'Adicionar'}
+                            </button>
+                          </form>
+                        )}
+                      </div>
+
+                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
+                          <span className="text-xs font-bold text-white">Modelos cadastrados</span>
+                          <span className="text-[10px] text-slate-400">{deviceCatalog.length} modelos</span>
+                        </div>
+
+                        {catalogLoading ? (
+                          <p className="p-6 text-center text-xs text-slate-400">Carregando catálogo...</p>
+                        ) : deviceCatalog.length === 0 ? (
+                          <p className="p-6 text-center text-xs text-slate-400">Nenhum modelo cadastrado.</p>
+                        ) : (
+                          <div className="divide-y divide-white/5">
+                            {deviceCatalog.map((item) => (
+                              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                                <div>
+                                  <p className="text-xs font-bold text-white">{item.model}</p>
+                                  <p className="text-[10px] text-slate-400">
+                                    {item.motor_count} {item.motor_count === 1 ? 'motor' : 'motores'}
+                                  </p>
+                                </div>
+                                {currentUser?.role === 'owner' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCatalogItem(item)}
+                                    className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                    title="Excluir modelo"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
