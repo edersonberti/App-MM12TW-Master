@@ -5,15 +5,13 @@ export interface SupabaseProfile {
   email: string;
   full_name: string;
   role: string;
-  status: 'active' | 'deleted';
-  deleted_at: string | null;
 }
 
 export async function fetchProfile(userId: string): Promise<SupabaseProfile | null> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, status, deleted_at')
+      .select('id, email, full_name, role')
       .eq('id', userId)
       .maybeSingle();
 
@@ -52,7 +50,7 @@ export async function fetchAllProfiles(): Promise<SupabaseProfile[]> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, status, deleted_at');
+      .select('id, email, full_name, role');
 
     if (error) {
       console.error('[ProfileService] Error fetching all profiles:', error.message);
@@ -87,49 +85,18 @@ export async function updateProfileRole(userId: string, role: string): Promise<S
 
 export async function deleteProfile(userId: string): Promise<boolean> {
   try {
-    const { data, error } = await supabase.rpc('owner_soft_delete_operator', {
-      target_user_id: userId,
-    });
+    const { error } = await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', userId);
 
     if (error) {
-      console.error('[ProfileService] Error soft-deleting profile:', error.message);
+      console.error('[ProfileService] Error deleting profile:', error.message);
       return false;
     }
-    return data === true;
+    return true;
   } catch (err) {
-    console.error('[ProfileService] Soft-delete profile error:', err);
-    return false;
-  }
-}
-
-export async function requestAccountDeletion(): Promise<boolean> {
-  try {
-    const { data, error } = await supabase.rpc('request_account_deletion');
-
-    if (error) {
-      console.error('[ProfileService] Account deletion request error:', error.message);
-      return false;
-    }
-    return data === true;
-  } catch (err) {
-    console.error('[ProfileService] Account deletion request error:', err);
-    return false;
-  }
-}
-
-export async function hardDeleteProfile(userId: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase.rpc('owner_hard_delete_profile', {
-      target_user_id: userId,
-    });
-
-    if (error) {
-      console.error('[ProfileService] Hard-delete profile error:', error.message);
-      return false;
-    }
-    return data === true;
-  } catch (err) {
-    console.error('[ProfileService] Hard-delete profile error:', err);
+    console.error('[ProfileService] Delete profile error:', err);
     return false;
   }
 }

@@ -40,14 +40,16 @@ import {
   Search,
   MapPin,
   Compass,
-  Menu
+  Menu,
+  CheckCircle2,
+  PowerOff,
+  Cpu
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
-import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile, hardDeleteProfile, requestAccountDeletion } from '../services/profileService';
-import { fetchAllDevices, fetchUserDevices, registerDevice, deleteDevice, hardDeleteDevice, updateDeviceOwner } from '../services/deviceService';
-import { fetchAuditEvents } from '../services/auditService';
+import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
+import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   createDeviceCatalogItem,
@@ -68,18 +70,30 @@ declare global {
 // Initial state and localStorage helpers
 const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
 const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
-const DEFAULT_DEVICE_ID = 'MM12TW-000123'; // Matches new dynamic hardware architecture prefix
+const DEFAULT_DEVICE_ID = 'MM12TW-EEA39F-000003'; // Matches new dynamic hardware architecture prefix
 type MotorNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-000123-7c9ebd1a" -> "MM12TW-000123")
+// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003", or "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MLZ-MM12TW-EEA39F-000003")
 function cleanDeviceId(id: string): string {
   if (!id) return '';
-  const parts = id.trim().split('-');
-  // If there are 3 parts or more, the last part is the EfuseMac hex suffix
-  if (parts.length >= 3) {
-    return parts.slice(0, parts.length - 1).join('-');
+  const trimmed = id.trim();
+  const parts = trimmed.split('-');
+  const isMlzPrefixed = trimmed.toLowerCase().startsWith('mlz-');
+  
+  if (isMlzPrefixed) {
+    // Format with MLZ- prefix (e.g., MLZ-MM12TW-EEA39F-000003) has 4 parts.
+    // If it has 5 parts or more (e.g., with MAC suffix), strip the last part
+    if (parts.length >= 5) {
+      return parts.slice(0, 4).join('-');
+    }
+  } else {
+    // Standard format (e.g., MM12TW-EEA39F-000003) has 3 parts.
+    // If it has 4 parts or more (e.g., with MAC suffix), strip the last part
+    if (parts.length >= 4) {
+      return parts.slice(0, 3).join('-');
+    }
   }
-  return id;
+  return trimmed;
 }
 
 function escapeRegExp(str: string): string {
@@ -129,17 +143,6 @@ export default function PoolControllerPage() {
   };
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
-  const [adminDevices, setAdminDevices] = useState<{
-    id: string;
-    model: string;
-    serial?: string;
-    userId?: string;
-    userEmail?: string;
-    status: 'active' | 'deleted';
-    deletedAt?: string | null;
-  }[]>([]);
-  const [adminDataLoading, setAdminDataLoading] = useState(false);
-  const [adminLastUpdated, setAdminLastUpdated] = useState<Date | null>(null);
   const [adminSearchUser, setAdminSearchUser] = useState('');
   const [adminSearchEquip, setAdminSearchEquip] = useState('');
   const [userModalOpen, setUserModalOpen] = useState<'add' | 'edit' | null>(null);
@@ -237,7 +240,7 @@ export default function PoolControllerPage() {
   const [mqttErrorMsg, setMqttErrorMsg] = useState('');
   
   // BLE & Equipment IDs and Logs
-  const [bleDeviceId, setBleDeviceId] = useState('MM12TW-000123');
+  const [bleDeviceId, setBleDeviceId] = useState('MM12TW-EEA39F-000003');
   const [bleLog, setBleLog] = useState<string[]>([]);
 
   // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW or custom from QR)
@@ -256,7 +259,7 @@ export default function PoolControllerPage() {
     item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
   );
   const activeMotorCount = activeCatalogItem?.motor_count ?? 0;
-  const searchedEquip = adminDevices.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
+  const searchedEquip = registeredEquipments.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
   const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
@@ -265,6 +268,7 @@ export default function PoolControllerPage() {
   const [isScanningQr, setIsScanningQr] = useState(false);
   const [qrScannerError, setQrScannerError] = useState<string | null>(null);
   const [scannedData, setScannedData] = useState<any | null>(null);
+  const [confirmDeleteDeviceId, setConfirmDeleteDeviceId] = useState<string | null>(null);
   const qrScannerRef = useRef<any>(null);
   
   // Real-time Controls / Statuses
@@ -431,7 +435,7 @@ export default function PoolControllerPage() {
         }
       } else {
         const initialTelemetry = {
-          'MM12TW-000123': {
+          'MM12TW-EEA39F-000003': {
             mostUsedLedProgram: 'Arco-Íris Dinâmico',
             maxFilteringTime: 6,
             minFilteringTime: 2,
@@ -610,7 +614,7 @@ export default function PoolControllerPage() {
 
     if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
       console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
-      disconnectMQTT(true);
+      disconnectMQTT();
       const t = setTimeout(() => {
         connectMQTT();
       }, 300);
@@ -621,15 +625,17 @@ export default function PoolControllerPage() {
 
   // 1e. Fetch Supabase device settings (e.g. motor names) when active device changes
   useEffect(() => {
-    setMotor1Name('Motor 01');
-    setMotor2Name('Motor 02');
-    setMotor3Name('Motor 03');
-    setMotor4Name('Motor 04');
-    setMotor5Name('Motor 05');
-    setMotor6Name('Motor 06');
-    setMotor7Name('Motor 07');
-    setMotor8Name('Motor 08');
-    setMotorSettingsSaveState('idle');
+    Promise.resolve().then(() => {
+      setMotor1Name('Motor 01');
+      setMotor2Name('Motor 02');
+      setMotor3Name('Motor 03');
+      setMotor4Name('Motor 04');
+      setMotor5Name('Motor 05');
+      setMotor6Name('Motor 06');
+      setMotor7Name('Motor 07');
+      setMotor8Name('Motor 08');
+      setMotorSettingsSaveState('idle');
+    });
 
     const deviceIsRegistered = registeredEquipments.some(
       (eq) => eq.id.toLowerCase() === (deviceId || '').toLowerCase()
@@ -767,13 +773,12 @@ export default function PoolControllerPage() {
       if (session?.user) {
         // Fetch user profile and role from profiles table
         const profile = await fetchProfile(session.user.id);
-        if (profile?.status === 'active') {
+        if (profile) {
           const loggedUser = {
             email: session.user.email,
             uid: session.user.id,
-            role: profile.role,
+            role: profile.role, // owner, admin, support, operator, installer, factory
             full_name: profile.full_name,
-            status: profile.status,
             isSupabase: true
           };
           setCurrentUser(loggedUser);
@@ -784,8 +789,8 @@ export default function PoolControllerPage() {
             setRegisteredEquipments(dbDevices.map((d: any) => ({
               id: d.id,
               model: d.model,
-              pairing_token: d.pairing_token,
-              serial: d.serial || ''
+              serial: d.serial || d.id,
+              pairing_token: d.pairing_token
             })));
 
             // Avoid stale localStorage device IDs (deleted / not owned) — they cause
@@ -805,11 +810,8 @@ export default function PoolControllerPage() {
             setActiveScreen('home');
           }
         } else {
-          setAuthErrorMessage(
-            profile?.status === 'deleted'
-              ? 'Esta conta foi excluída e não pode mais acessar o aplicativo. Crie uma nova conta para continuar.'
-              : 'Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.'
-          );
+          // No profile exists, show error and logout
+          setAuthErrorMessage('Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           signOut();
           setCurrentUser(null);
           setActiveScreen('login');
@@ -830,11 +832,14 @@ export default function PoolControllerPage() {
 
   useEffect(() => {
     if (!currentUser?.isSupabase) {
-      setDeviceCatalog([]);
+      Promise.resolve().then(() => {
+        setDeviceCatalog([]);
+      });
       return;
     }
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCatalogLoading(true);
 
     fetchDeviceCatalog()
@@ -948,105 +953,21 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
-  // 3b. Keep the owner dashboard synchronized with profiles and devices in Supabase
+  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
   useEffect(() => {
-    if (activeScreen !== 'admin' || !isSupabaseConfigured()) return;
-
-    let cancelled = false;
-    let requestRunning = false;
-
-    const loadAdminData = async () => {
-      if (requestRunning) return;
-      requestRunning = true;
-      if (!cancelled) setAdminDataLoading(true);
-
-      try {
-        const [profiles, devices, auditEvents] = await Promise.all([
-          fetchAllProfiles(),
-          fetchAllDevices(),
-          fetchAuditEvents(),
-        ]);
-
-        if (cancelled) return;
-
-        const emailByUserId = new Map(
-          profiles.map((profile) => [profile.id, profile.email])
-        );
-
+    if (activeScreen === 'admin' && isSupabaseConfigured()) {
+      const loadProfiles = async () => {
+        const profiles = await fetchAllProfiles();
         setSimUsers(profiles.map(p => ({
           uid: p.id,
           email: p.email,
           full_name: p.full_name,
-          role: p.role,
-          status: p.status,
-          deleted_at: p.deleted_at,
+          role: p.role
         })));
-
-        setAdminDevices(devices.map((device) => ({
-          id: device.id,
-          model: device.model,
-          serial: device.serial || '',
-          userId: device.user_id,
-          userEmail: emailByUserId.get(device.user_id) || '',
-          status: device.status,
-          deletedAt: device.deleted_at,
-        })));
-        const auditEventLabels: Record<string, string> = {
-          account_deletion_requested: 'Solicitou exclusão da própria conta',
-          operator_soft_deleted: 'Desativou um operador',
-          operator_hard_deleted: 'Excluiu definitivamente um operador',
-          device_soft_deleted: 'Desativou um equipamento',
-          device_hard_deleted: 'Excluiu definitivamente um equipamento',
-        };
-        const persistedLogs = auditEvents.map((event) => ({
-          id: `audit:${event.id}`,
-          timestamp: event.created_at,
-          email: event.actor_email || 'Sistema',
-          action: auditEventLabels[event.event_type] || event.event_type,
-          deviceId: event.entity_type === 'device' ? event.entity_id : 'CONTA',
-        }));
-        setUserLogs((current) => [
-          ...persistedLogs,
-          ...current.filter((log) => !String(log.id).startsWith('audit:')),
-        ].slice(0, 200));
-        setAdminLastUpdated(new Date());
-      } finally {
-        requestRunning = false;
-        if (!cancelled) setAdminDataLoading(false);
-      }
-    };
-
-    loadAdminData();
-
-    const channel = supabase
-      .channel(`owner-admin-dashboard-${currentUser?.uid || 'session'}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles' },
-        loadAdminData
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'devices' },
-        loadAdminData
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'audit_events' },
-        loadAdminData
-      )
-      .subscribe();
-
-    const refreshInterval = window.setInterval(loadAdminData, 15000);
-    window.addEventListener('focus', loadAdminData);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(refreshInterval);
-      window.removeEventListener('focus', loadAdminData);
-      supabase.removeChannel(channel);
-    };
-  }, [activeScreen, currentUser?.uid]);
+      };
+      loadProfiles();
+    }
+  }, [activeScreen]);
 
   // 4. Color HSV to RGB Converter Math helper helper
   function hsvToRgb(h: number, s: number, v: number) {
@@ -1178,17 +1099,12 @@ export default function PoolControllerPage() {
             await signOut();
             throw new Error('Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           }
-          if (profile.status === 'deleted') {
-            await signOut();
-            throw new Error('Esta conta foi excluída e não pode mais acessar o aplicativo. Crie uma nova conta para continuar.');
-          }
 
           const loggedUser = {
             email: data.user.email,
             uid: data.user.id,
             role: profile.role,
             full_name: profile.full_name,
-            status: profile.status,
             isSupabase: true
           };
 
@@ -1196,22 +1112,15 @@ export default function PoolControllerPage() {
 
           // Fetch user's registered devices from Supabase
           const dbDevices = await fetchUserDevices(data.user.id);
-          const mappedDevices = dbDevices.map(d => ({
+          setRegisteredEquipments(dbDevices.map(d => ({
             id: d.id,
             model: d.model,
-            pairing_token: d.pairing_token,
-            serial: d.serial || ''
-          }));
-          setRegisteredEquipments(mappedDevices);
+            serial: d.serial || d.id,
+            pairing_token: d.pairing_token
+          })));
 
           if (dbDevices.length > 0) {
-            const storedDeviceId = localStorage.getItem('mqtt_device');
-            const selectedDevice = storedDeviceId
-              ? dbDevices.find(device => device.id.toLowerCase() === storedDeviceId.toLowerCase())
-              : null;
-            const selectedDeviceId = selectedDevice?.id || dbDevices[0].id;
-            setDeviceId(selectedDeviceId);
-            localStorage.setItem('mqtt_device', selectedDeviceId);
+            setDeviceId(dbDevices[0].id);
           }
 
           setActiveScreen('home');
@@ -1280,32 +1189,6 @@ export default function PoolControllerPage() {
     setPasswordInput('');
     setActiveScreen('login');
     disconnectMQTT();
-  };
-
-  const handleRequestAccountDeletion = async () => {
-    if (!currentUser?.isSupabase || currentUser.role !== 'operator') return;
-    if (!confirm(
-      'Excluir sua conta? O acesso será encerrado, seus equipamentos serão desativados.'
-    )) return;
-    if (prompt('Para confirmar, digite EXCLUIR:') !== 'EXCLUIR') {
-      alert('Exclusão cancelada.');
-      return;
-    }
-
-    const deleted = await requestAccountDeletion();
-    if (!deleted) {
-      alert('Não foi possível excluir a conta. Tente novamente ou contate o proprietário.');
-      return;
-    }
-
-    disconnectMQTT();
-    await supabase.auth.signOut({ scope: 'local' });
-    localStorage.removeItem('sim_user');
-    localStorage.removeItem('mqtt_device');
-    setRegisteredEquipments([]);
-    setCurrentUser(null);
-    setActiveScreen('login');
-    setAuthErrorMessage('Conta excluída.');
   };
 
   // 6. MQTT Client Logic Wrapper
@@ -1397,7 +1280,10 @@ export default function PoolControllerPage() {
           cleanMsgDeviceId === cleanActiveId || 
           rawMsgDeviceId === rawActiveId || 
           cleanMsgDeviceId === rawActiveId ||
-          rawMsgDeviceId === cleanActiveId
+          rawMsgDeviceId === cleanActiveId ||
+          (cleanMsgDeviceId && cleanActiveId &&
+           cleanMsgDeviceId.toLowerCase().startsWith('mlz-') && cleanActiveId.toLowerCase().startsWith('mlz-') &&
+           cleanMsgDeviceId.split('-').slice(0, 3).join('-') === cleanActiveId.split('-').slice(0, 3).join('-'))
         );
 
         if (!isTargetDevice) {
@@ -1414,7 +1300,10 @@ export default function PoolControllerPage() {
 
         // Any telemetry received from the active device indicates it is powered on and sending data
         lastMessageTimeRef.current = Date.now();
-        if (lowerRelative !== 'status' && lowerRelative !== 'state') {
+        const isExplicitOffline = (lowerRelative === 'status' || lowerRelative === 'state') && 
+          (payload === 'offline' || payload === '0' || payload.toUpperCase() === 'OFF');
+          
+        if (!isExplicitOffline) {
           setDeviceOnline(true);
         }
 
@@ -1784,8 +1673,24 @@ export default function PoolControllerPage() {
             'hidro/tmr/cfg'
           ];
 
-          const topicsToSubscribeSet = new Set<string>();
+          const idsToProcess = new Set<string>();
           [activeCleanId, deviceId].forEach((id) => {
+            if (id) {
+              idsToProcess.add(id);
+              if (id.toLowerCase().startsWith('mlz-')) {
+                const parts = id.split('-');
+                if (parts.length >= 3) {
+                  idsToProcess.add(parts.slice(0, 3).join('-'));
+                }
+              }
+            }
+          });
+
+          const topicsToSubscribeSet = new Set<string>();
+          const idsToSubscribe = Array.from(idsToProcess);
+          idsToSubscribe.push('+'); // Add wildcard level for maximum resilience
+
+          idsToSubscribe.forEach((id) => {
             if (!id) return;
             relativePaths.forEach((path) => {
               topicsToSubscribeSet.add(`${id}/${path}`);
@@ -1809,7 +1714,7 @@ export default function PoolControllerPage() {
 
           // Send query commands to request immediate status update from hardware
           const queryTopicsSet = new Set<string>();
-          [activeCleanId, deviceId].forEach((id) => {
+          Array.from(idsToProcess).forEach((id) => {
             if (!id) return;
             ['get', 'cmd', 'status/get'].forEach((cmdPath) => {
               queryTopicsSet.add(`${id}/${cmdPath}`);
@@ -1923,23 +1828,6 @@ export default function PoolControllerPage() {
     }, 300);
   };
 
-  const handleConnectEquipment = (equipmentId: string) => {
-    const selectedId = equipmentId.trim();
-    if (!selectedId) return;
-
-    localStorage.setItem('mqtt_device', selectedId);
-    setUserWantsMqtt(true);
-
-    if (selectedId.toLowerCase() === deviceId.toLowerCase()) {
-      setMqttStatusMessage('Reconectando...');
-      forceReconnectMQTT();
-      return;
-    }
-
-    setMqttStatusMessage('Conectando...');
-    setDeviceId(selectedId);
-  };
-
   function publishTopic(subTopic: string, payload: string) {
     if (isUpdatingData) {
       console.warn("Publish blocked: Data update in progress.");
@@ -1950,19 +1838,32 @@ export default function PoolControllerPage() {
         const rawId = (deviceId || '').trim();
         const cleanId = cleanDeviceId(deviceId).trim();
 
+        const idVariations = new Set<string>();
+        if (rawId) idVariations.add(rawId);
+        if (cleanId) idVariations.add(cleanId);
+        if (rawId && rawId.toLowerCase().startsWith('mlz-')) {
+          const parts = rawId.split('-');
+          if (parts.length >= 3) {
+            idVariations.add(parts.slice(0, 3).join('-'));
+          }
+        }
+
         const uniqueTopics = new Set<string>();
 
         // 1. Add original subTopic to our list of targets
         uniqueTopics.add(subTopic);
 
-        // 2. If rawId and cleanId differ, we generate respective alternate versions
-        if (rawId && cleanId && rawId.toLowerCase() !== cleanId.toLowerCase()) {
-          const replacedWithClean = subTopic.replace(new RegExp(escapeRegExp(rawId), 'gi'), cleanId);
-          uniqueTopics.add(replacedWithClean);
+        // 2. Generate alternate versions for each variation of the ID
+        idVariations.forEach((altId) => {
+          if (!altId) return;
+          const replacedWithRawAlt = subTopic.replace(new RegExp(escapeRegExp(rawId), 'gi'), altId);
+          uniqueTopics.add(replacedWithRawAlt);
 
-          const replacedWithRaw = subTopic.replace(new RegExp(escapeRegExp(cleanId), 'gi'), rawId);
-          uniqueTopics.add(replacedWithRaw);
-        }
+          if (cleanId) {
+            const replacedWithCleanAlt = subTopic.replace(new RegExp(escapeRegExp(cleanId), 'gi'), altId);
+            uniqueTopics.add(replacedWithCleanAlt);
+          }
+        });
 
         // 3. For each topic, ensure we send with standard, custom manufacturer, and no prefix
         const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
@@ -2030,13 +1931,10 @@ export default function PoolControllerPage() {
     e.preventDefault();
     if (!selectedUserForEdit) return;
 
-    const role = userFormRole;
+    const role = userFormRole; // owner, admin, support, operator, installer, factory
 
     try {
-      const updatedProfile = await updateProfileRole(selectedUserForEdit.uid, role);
-      if (!updatedProfile) {
-        throw new Error('O banco de dados não confirmou a atualização.');
-      }
+      await updateProfileRole(selectedUserForEdit.uid, role);
       
       // Reload list
       const profiles = await fetchAllProfiles();
@@ -2044,9 +1942,7 @@ export default function PoolControllerPage() {
         uid: p.id,
         email: p.email,
         full_name: p.full_name,
-        role: p.role,
-        status: p.status,
-        deleted_at: p.deleted_at,
+        role: p.role
       })));
       
       logUserAction(`Alterou permissão do usuário: ${selectedUserForEdit.email} para ${role}`);
@@ -2076,20 +1972,13 @@ export default function PoolControllerPage() {
 
     const targetUser = simUsers.find(u => u.uid === uid);
     if (!targetUser) return;
-    if (targetUser.role !== 'operator') {
-      alert('Somente usuários operadores podem ser excluídos.');
-      return;
-    }
 
-    if (!confirm(`Desativar o operador ${targetUser.email}?`)) {
+    if (!confirm(`Tem certeza que deseja excluir o perfil do usuário ${targetUser.email} do Supabase? Esta ação não pode ser desfeita.`)) {
       return;
     }
 
     try {
-      const deleted = await deleteProfile(uid);
-      if (!deleted) {
-        throw new Error('O banco de dados não permitiu excluir este operador.');
-      }
+      await deleteProfile(uid);
       
       // Reload list
       const profiles = await fetchAllProfiles();
@@ -2097,62 +1986,14 @@ export default function PoolControllerPage() {
         uid: p.id,
         email: p.email,
         full_name: p.full_name,
-        role: p.role,
-        status: p.status,
-        deleted_at: p.deleted_at,
+        role: p.role
       })));
       
-      logUserAction(`Desativou usuário: ${targetUser.email}`);
-      setSelectedUserForEdit(null);
-      setUserModalOpen(null);
-      alert('Usuário desativado.');
+      logUserAction(`Removeu usuário: ${targetUser.email}`);
+      alert('Usuário removido com sucesso do Supabase!');
     } catch (err: any) {
-      alert(`Erro ao desativar usuário no Supabase: ${err.message}`);
+      alert(`Erro ao remover usuário do Supabase: ${err.message}`);
     }
-  };
-
-  const handleHardDeleteUserAdmin = async (uid: string) => {
-    const targetUser = simUsers.find(u => u.uid === uid);
-    if (!targetUser || targetUser.role !== 'operator' || targetUser.status !== 'deleted') return;
-    if (prompt(`Esta ação apaga definitivamente o registro de ${targetUser.email} e seus equipamentos. Digite EXCLUIR DEFINITIVAMENTE:`) !== 'EXCLUIR DEFINITIVAMENTE') {
-      return;
-    }
-
-    const deleted = await hardDeleteProfile(uid);
-    if (!deleted) {
-      alert('O Supabase não permitiu a exclusão definitiva.');
-      return;
-    }
-
-    setSimUsers(current => current.filter(user => user.uid !== uid));
-    setAdminDevices(current => current.filter(device => device.userId !== uid));
-    setSelectedUserForEdit(null);
-    setUserModalOpen(null);
-    alert('Registro excluído definitivamente. O evento da exclusão permaneceu no log de auditoria.');
-  };
-
-  const handleDeleteDeviceAdmin = async (device: { id: string; status: 'active' | 'deleted' }) => {
-    if (device.status === 'deleted') {
-      if (prompt(`Excluir definitivamente o equipamento ${device.id}? Digite EXCLUIR DEFINITIVAMENTE:`) !== 'EXCLUIR DEFINITIVAMENTE') return;
-      const deleted = await hardDeleteDevice(device.id);
-      if (!deleted) {
-        alert('O Supabase não permitiu a exclusão definitiva do equipamento.');
-        return;
-      }
-      setAdminDevices(current => current.filter(item => item.id !== device.id));
-      alert('Equipamento excluído definitivamente. O evento permaneceu no log de auditoria.');
-      return;
-    }
-
-    if (!confirm(`Desativar o equipamento ${device.id}?`)) return;
-    const deleted = await deleteDevice(device.id);
-    if (!deleted) {
-      alert('Não foi possível desativar o equipamento.');
-      return;
-    }
-    setAdminDevices(current => current.map(item =>
-      item.id === device.id ? { ...item, status: 'deleted', deletedAt: new Date().toISOString() } : item
-    ));
   };
 
   const handleCreateCatalogItem = async () => {
@@ -2164,8 +2005,8 @@ export default function PoolControllerPage() {
       alert('Informe o modelo do equipamento.');
       return;
     }
-    if (!Number.isInteger(motorCount) || motorCount < 0 || motorCount > 8) {
-      alert('A quantidade de motores deve ser de 0 a 8.');
+    if (!Number.isInteger(motorCount) || motorCount < 1 || motorCount > 8) {
+      alert('A quantidade de motores deve ser de 1 a 8.');
       return;
     }
 
@@ -2701,14 +2542,19 @@ export default function PoolControllerPage() {
       
       // Handle the new custom QR code standard (v, serial, token, local)
       if (parsed && typeof parsed === 'object') {
+        // Discard 'local' property as requested (only used for equipment installation)
+        if ('local' in parsed) {
+          delete parsed.local;
+        }
+
+        // Map token to pairing_token if present
+        if (parsed.token && !parsed.pairing_token) {
+          parsed.pairing_token = parsed.token;
+        }
+
         if (parsed.serial && !parsed.deviceId) {
           // Use serial as the deviceId internally
           parsed.deviceId = parsed.serial;
-          
-          // Discard 'local' property as requested (only used for equipment installation)
-          if ('local' in parsed) {
-            delete parsed.local;
-          }
           
           // Extract model from the serial (e.g. MLZ-MM12TW-3F296847-0005 -> MM12TW)
           const modelMatch = parsed.serial.match(/(MM\d+T?S?W?)/i);
@@ -2766,7 +2612,13 @@ export default function PoolControllerPage() {
       }
 
       // Automatically save and activate the device immediately
-      handleSaveEquipment(parsed.deviceId, finalModel, parsed.serial || '', parsed.manufacturer || 'MASTERLAZER');
+      handleSaveEquipment(
+        parsed.deviceId, 
+        finalModel, 
+        parsed.serial || '', 
+        parsed.manufacturer || 'MASTERLAZER',
+        parsed.pairing_token || ''
+      );
 
       stopQrScanner();
     } catch (err) {
@@ -2811,36 +2663,16 @@ export default function PoolControllerPage() {
   }, []);
 
   // Save specific equipment
-  async function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string) {
+  async function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string, pairingTokenOverride?: string) {
     const finalId = idOverride || bleDeviceId;
     const finalModel = modelOverride || selectedEquipmentModel;
     const finalSerial = serialOverride !== undefined ? serialOverride : equipmentSerial;
     const finalManufacturer = manufacturerOverride !== undefined ? manufacturerOverride : equipmentManufacturer;
     
     const trimmedId = finalId.trim();
-    const trimmedSerial = finalSerial.trim();
     const normalizedModel = finalModel.trim().toUpperCase();
     if (!trimmedId) {
       alert("Por favor, digite um ID de equipamento válido.");
-      return;
-    }
-
-    const duplicateId = registeredEquipments.some(
-      (equipment) => equipment.id.trim().toLowerCase() === trimmedId.toLowerCase()
-    );
-    const duplicateSerial = trimmedSerial
-      ? registeredEquipments.some(
-          (equipment) =>
-            equipment.serial?.trim().toLowerCase() === trimmedSerial.toLowerCase()
-        )
-      : false;
-
-    if (duplicateId || duplicateSerial) {
-      setQrScannerError(
-        duplicateId
-          ? 'Este ID de equipamento já está cadastrado.'
-          : 'Este número de série já está cadastrado em outro equipamento.'
-      );
       return;
     }
 
@@ -2866,7 +2698,8 @@ export default function PoolControllerPage() {
     const newItem = {
       id: trimmedId,
       model: normalizedModel,
-      serial: trimmedSerial,
+      serial: finalSerial,
+      pairing_token: pairingTokenOverride,
       manufacturer: finalManufacturer,
       userEmail
     };
@@ -2875,19 +2708,17 @@ export default function PoolControllerPage() {
     // Previously this ran in the background, so the empty state could remain visible
     // (or a later auth refresh could overwrite the optimistic local list).
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      try {
-        await registerDevice(
-          trimmedId,
-          normalizedModel as any,
-          currentUser.uid,
-          trimmedSerial
-        );
-      } catch (error: any) {
-        const isDuplicate = error?.code === '23505';
+      const registeredDevice = await registerDevice(
+        trimmedId,
+        normalizedModel as any,
+        currentUser.uid,
+        finalSerial,
+        pairingTokenOverride
+      );
+
+      if (!registeredDevice) {
         setQrScannerError(
-          isDuplicate
-            ? 'Já existe um equipamento cadastrado com este ID ou número de série.'
-            : error?.message || 'Não foi possível associar este equipamento à sua conta.'
+          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
         );
         return;
       }
@@ -2898,17 +2729,19 @@ export default function PoolControllerPage() {
     // Functional update always uses the latest list and immediately removes the
     // "Nenhum equipamento cadastrado" state.
     setRegisteredEquipments((current) => {
-      const exists = current.some(
-        (eq) => eq.id.toLowerCase() === trimmedId.toLowerCase()
-      );
+      const cleanNew = cleanDeviceId(trimmedId).toLowerCase();
+      const exists = current.some((eq) => {
+        const cleanEq = cleanDeviceId(eq.id).toLowerCase();
+        return eq.id.toLowerCase() === trimmedId.toLowerCase() || (cleanNew && cleanEq === cleanNew);
+      });
 
       if (!exists) return [...current, newItem];
 
-      return current.map((eq) =>
-        eq.id.toLowerCase() === trimmedId.toLowerCase()
-          ? { ...eq, ...newItem }
-          : eq
-      );
+      return current.map((eq) => {
+        const cleanEq = cleanDeviceId(eq.id).toLowerCase();
+        const isMatch = eq.id.toLowerCase() === trimmedId.toLowerCase() || (cleanNew && cleanEq === cleanNew);
+        return isMatch ? { ...eq, ...newItem } : eq;
+      });
     });
     
     // Also make this the active device under control!
@@ -3081,7 +2914,7 @@ export default function PoolControllerPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {currentUser?.role === 'owner' && (
+                  {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
                     <button
                       type="button"
                       onClick={() => setActiveScreen('admin')}
@@ -4324,7 +4157,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer);
+                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer, scannedData.pairing_token || scannedData.token);
                               setScannedData(null);
                             }}
                             className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -4356,118 +4189,166 @@ export default function PoolControllerPage() {
                         </div>
                       )}
 
-                      {/* List of registered equipment if exists */}
-                      {registeredEquipments.length > 0 && (
-                        <div className="pt-2.5 border-t border-white/5 space-y-2">
-                          <label className="text-[10px] text-slate-300 font-extrabold block uppercase tracking-wider">Meus Equipamentos Cadastrados</label>
-                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {/* Registered Equipment List below QR Code scanner */}
+                      <div className="pt-3 border-t border-white/10 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-cyan-300 font-extrabold uppercase tracking-wider flex items-center gap-1.5">
+                            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Equipamentos Cadastrados</span>
+                          </label>
+                          <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-cyan-500/30">
+                            {registeredEquipments.length} {registeredEquipments.length === 1 ? 'equipamento' : 'equipamentos'}
+                          </span>
+                        </div>
+
+                        {registeredEquipments.length === 0 ? (
+                          <div className="p-4 rounded-xl bg-slate-900/40 border border-white/5 text-center space-y-1">
+                            <p className="text-xs text-slate-300 font-medium">Nenhum equipamento cadastrado ainda.</p>
+                            <p className="text-[10px] text-slate-500">Escaneie o QR Code acima para vincular e gerenciar seu equipamento.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                             {registeredEquipments.map((eq) => {
-                              const isActive = eq.id.toLowerCase() === deviceId.toLowerCase();
+                              const cleanEqId = cleanDeviceId(eq.id).toLowerCase();
+                              const cleanActiveId = cleanDeviceId(deviceId).toLowerCase();
+                              const isActive = eq.id.toLowerCase() === deviceId.toLowerCase() || (cleanActiveId && cleanEqId === cleanActiveId);
+
                               return (
                                 <div 
                                   key={eq.id} 
-                                  className={`flex items-center justify-between p-2 rounded-xl transition-all border ${
+                                  className={`flex items-center justify-between p-3 rounded-xl transition-all border ${
                                     isActive 
-                                      ? 'bg-gradient-to-r from-[#007AFF]/10 to-[#4398fa]/10 border-[#007AFF]/30 shadow-sm' 
-                                      : 'bg-white/5 border-transparent hover:bg-white/10'
+                                      ? 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                                      : 'bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
                                   }`}
                                 >
-                                  <div className="min-w-0 flex-1">
+                                  <div className="min-w-0 flex-1 pr-2">
                                     <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-mono text-xs font-bold text-white truncate">{eq.id}</span>
-                                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-extrabold text-[#4398fa]">{eq.model}</span>
+                                      <span className="font-mono text-xs font-extrabold text-white break-all select-all">{eq.id}</span>
+                                      <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[9px] font-extrabold text-cyan-300 border border-cyan-500/30">{eq.model}</span>
+                                      {isActive ? (
+                                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                          Ativo
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[9px] font-bold border border-slate-700">
+                                          Inativo
+                                        </span>
+                                      )}
                                     </div>
+
                                     <div className="mt-1 flex flex-col gap-0.5 text-left">
-                                      {(eq.serial || eq.manufacturer) && (
-                                        <p className="text-[9px] text-slate-400 font-semibold">
-                                          Série: <span className="font-mono text-slate-300">{eq.serial || 'N/A'}</span> • Fab: <span className="text-slate-300">{eq.manufacturer || 'N/A'}</span>
-                                        </p>
-                                      )}
-                                      {eq.userEmail && (
-                                        <p className="text-[8.5px] text-cyan-400/90 font-semibold flex items-center gap-1">
-                                          <span className="inline-block w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
-                                          Usuário: <span className="font-mono text-cyan-300">{eq.userEmail}</span> 
-                                          {eq.userPassword ? ' (Credenciais OK)' : ''}
-                                        </p>
-                                      )}
-                                      <p className="text-[9px] text-slate-500 font-semibold mt-0.5">
-                                        {isActive
-                                          ? mqttConnected
-                                            ? deviceOnline === true
-                                              ? 'Conectado e online'
-                                              : 'Conectado • aguardando equipamento'
-                                            : 'Selecionado • aguardando conexão'
-                                          : 'Disponível para conexão'}
+                                      <p className="text-[10px] text-slate-300 font-medium break-all">
+                                        Série: <span className="font-mono text-white font-bold select-all">{eq.serial || eq.id}</span> • Fab: <span className="text-slate-200">{eq.manufacturer || 'MASTERLAZER'}</span>
                                       </p>
+                                      {eq.userEmail && (
+                                        <p className="text-[9px] text-cyan-400/90 font-medium flex items-center gap-1">
+                                          Usuário: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
+
+                                  {/* Action Controls: Ativar/Desativar & Excluir */}
                                   <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleConnectEquipment(eq.id)}
-                                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
-                                        isActive
-                                          ? 'bg-[#007AFF]/20 hover:bg-[#007AFF]/30 text-[#70b7ff] border border-[#007AFF]/20'
-                                          : 'bg-white/10 hover:bg-white/20 text-white'
-                                      }`}
-                                    >
-                                      {isActive ? 'Reconectar' : 'Conectar'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        if (!confirm(`Remover o equipamento ${eq.id}?`)) return;
-                                        if (isSupabaseConfigured() && currentUser?.isSupabase) {
-                                          const deleted = await deleteDevice(eq.id);
-                                          if (!deleted) {
-                                            alert('Não foi possível desativar o equipamento.');
-                                            return;
-                                          }
-                                        }
-                                        const filtered = registeredEquipments.filter(item => item.id !== eq.id);
-                                        setRegisteredEquipments(filtered);
-                                        if (isActive && filtered.length > 0) {
-                                          setDeviceId(filtered[0].id);
-                                          localStorage.setItem('mqtt_device', filtered[0].id);
-                                        } else if (isActive) {
-                                          disconnectMQTT();
+                                    {isActive ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
                                           setDeviceId('');
                                           localStorage.removeItem('mqtt_device');
-                                        }
-                                      }}
-                                      className="p-1 px-2 text-slate-400 hover:text-rose-400 transition-colors font-bold text-xs cursor-pointer"
-                                      title="Desativar equipamento"
-                                    >
-                                      ✕
-                                    </button>
+                                        }}
+                                        className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        title="Desativar equipamento ativo"
+                                      >
+                                        <PowerOff className="w-3 h-3 text-amber-400" />
+                                        <span>Desativar</span>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDeviceId(eq.id);
+                                          localStorage.setItem('mqtt_device', eq.id);
+                                        }}
+                                        className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                        title="Ativar equipamento para controle"
+                                      >
+                                        <CheckCircle2 className="w-3 h-3" />
+                                        <span>Ativar</span>
+                                      </button>
+                                    )}
+
+                                    {confirmDeleteDeviceId === eq.id ? (
+                                      <div className="flex items-center gap-1.5 animate-fadeIn">
+                                        <button
+                                          type="button"
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const targetClean = cleanDeviceId(eq.id).toLowerCase();
+                                            const filtered = registeredEquipments.filter(item => {
+                                              const itemClean = cleanDeviceId(item.id).toLowerCase();
+                                              return item.id !== eq.id && (targetClean === '' || itemClean !== targetClean);
+                                            });
+                                            setRegisteredEquipments(filtered);
+                                            setConfirmDeleteDeviceId(null);
+
+                                            if (isSupabaseConfigured() && currentUser?.isSupabase) {
+                                              await deleteDevice(eq.id, currentUser?.id);
+                                            }
+
+                                            if (isActive) {
+                                              const nextId = filtered.length > 0 ? filtered[0].id : '';
+                                              setDeviceId(nextId);
+                                              if (nextId) {
+                                                localStorage.setItem('mqtt_device', nextId);
+                                              } else {
+                                                localStorage.removeItem('mqtt_device');
+                                              }
+                                            }
+                                          }}
+                                          className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
+                                          title="Confirmar exclusão deste equipamento"
+                                        >
+                                          <Trash2 className="w-3 h-3 text-white" />
+                                          <span>Confirmar?</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setConfirmDeleteDeviceId(null);
+                                          }}
+                                          className="p-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                          title="Cancelar"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setConfirmDeleteDeviceId(eq.id);
+                                        }}
+                                        className="p-1.5 px-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                                        title="Excluir equipamento"
+                                      >
+                                        <Trash2 className="w-3 h-3 text-rose-400" />
+                                        <span>Excluir</span>
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
-
-                  {currentUser?.isSupabase && currentUser.role === 'operator' && (
-                    <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/20 space-y-3 text-left">
-                      <div>
-                        <h3 className="text-xs font-bold text-rose-300">Excluir minha conta</h3>
-                        <p className="mt-1 text-[10px] text-slate-400 leading-relaxed">
-                          Seu acesso será encerrado e os equipamentos serão desativados.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRequestAccountDeletion}
-                        className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-300 text-xs font-bold transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Excluir minha conta
-                      </button>
-                    </div>
-                  )}
 
                   {/* Device Sync Info Summary */}
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs backdrop-blur-sm">
@@ -4720,40 +4601,24 @@ export default function PoolControllerPage() {
                     {/* Tab Home: Admin Panel Hub */}
                     {adminTab === 'home' && (
                       <div className="space-y-6">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-2.5">
-                          <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                            <span className={`h-2 w-2 rounded-full ${adminDataLoading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
-                            {adminDataLoading ? 'Atualizando dados do Supabase...' : 'Dados sincronizados com o Supabase'}
-                          </span>
-                          <span className="text-[10px] text-slate-500">
-                            {adminLastUpdated
-                              ? `Última atualização: ${adminLastUpdated.toLocaleTimeString('pt-BR')}`
-                              : 'Aguardando primeira atualização'}
-                          </span>
-                        </div>
-
                         {/* Welcome banner & Stats Overview */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div className="p-5 bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator' && u.status === 'active').length}</span>
+                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator').length}</span>
                               <span className="text-xs text-amber-400 font-semibold">Ativos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">
-                              {simUsers.filter(u => u.role === 'operator' && u.status === 'deleted').length} excluído(s).
-                            </p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{adminDevices.filter(device => device.status === 'active').length}</span>
-                              <span className="text-xs text-[#4398fa] font-semibold">Ativos</span>
+                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
+                              <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">
-                              {adminDevices.filter(device => device.status === 'deleted').length} excluído(s).
-                            </p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-purple-500/10 to-pink-500/5 border border-purple-500/20 rounded-2xl flex flex-col justify-between">
@@ -4865,7 +4730,7 @@ export default function PoolControllerPage() {
                             <div className="flex items-center justify-between">
                               <div>
                                 <h3 className="text-sm font-bold text-white">Usuários Cadastrados</h3>
-                                <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários carregados de profiles</p>
+                                <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários registrados neste navegador</p>
                               </div>
                               <button
                                 onClick={() => {
@@ -4906,32 +4771,20 @@ export default function PoolControllerPage() {
                                     <label className="text-[10px] font-bold text-slate-300">Nível de Acesso (Role)</label>
                                     <select
                                       value={userFormRole}
-                                      disabled={selectedUserForEdit?.status === 'deleted'}
                                       onChange={(e: any) => setUserFormRole(e.target.value)}
-                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      className="w-full px-2.5 py-1.5 bg-black/20 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 transition-colors"
                                     >
                                       <option value="owner" className="bg-[#121824]">Proprietário (owner)</option>
+                                      <option value="admin" className="bg-[#121824]">Administrador (admin)</option>
+                                      <option value="support" className="bg-[#121824]">Suporte (support)</option>
                                       <option value="operator" className="bg-[#121824]">Operador (operator)</option>
+                                      <option value="installer" className="bg-[#121824]">Instalador (installer)</option>
+                                      <option value="factory" className="bg-[#121824]">Fábrica (factory)</option>
                                     </select>
                                   </div>
                                 </div>
 
                                 <div className="flex justify-end gap-2 pt-1">
-                                  {userModalOpen === 'edit' &&
-                                    selectedUserForEdit?.role === 'operator' &&
-                                    selectedUserForEdit?.uid !== currentUser?.uid && (
-                                      <button
-                                        type="button"
-                                        onClick={() => selectedUserForEdit.status === 'deleted'
-                                          ? handleHardDeleteUserAdmin(selectedUserForEdit.uid)
-                                          : handleDeleteUserAdmin(selectedUserForEdit.uid)
-                                        }
-                                        className="mr-auto px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 text-xs font-bold rounded-lg flex items-center gap-1.5"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        {selectedUserForEdit.status === 'deleted' ? 'Excluir definitivamente' : 'Desativar operador'}
-                                      </button>
-                                    )}
                                   <button
                                     type="button"
                                     onClick={() => setUserModalOpen(null)}
@@ -4941,8 +4794,7 @@ export default function PoolControllerPage() {
                                   </button>
                                   <button
                                     type="submit"
-                                    disabled={userModalOpen === 'edit' && selectedUserForEdit?.status === 'deleted'}
-                                    className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-lg shadow-lg shadow-amber-400/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-lg shadow-lg shadow-amber-400/10"
                                   >
                                     {userModalOpen === 'add' ? 'Salvar Usuário' : 'Atualizar'}
                                   </button>
@@ -4991,7 +4843,7 @@ export default function PoolControllerPage() {
                                                 setAdminSearchEquip('');
                                               } else {
                                                 setSelectedUserForEquip(u.email);
-                                                const associatedEquip = adminDevices.find(
+                                                const associatedEquip = registeredEquipments.find(
                                                   eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
                                                 );
                                                 if (associatedEquip) {
@@ -5017,30 +4869,31 @@ export default function PoolControllerPage() {
                                               )}
                                             </div>
                                           </td>
-                                          <td className="p-3 font-mono text-[10px] font-semibold">
-                                            <div className={`flex items-center gap-1 ${
-                                              u.status === 'deleted' ? 'text-rose-400' : 'text-emerald-400'
-                                            }`}>
-                                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                                u.status === 'deleted' ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'
-                                              }`}></span>
-                                              {u.status === 'deleted' ? 'Excluído (histórico)' : 'Ativo (Supabase)'}
-                                            </div>
-                                            {u.deleted_at && (
-                                              <div className="mt-1 text-[8px] text-slate-500">
-                                                {new Date(u.deleted_at).toLocaleString('pt-BR')}
-                                              </div>
-                                            )}
+                                          <td className="p-3 font-mono text-emerald-400 text-[10px] font-semibold flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                            Ativo (Supabase)
                                           </td>
                                           <td className="p-3">
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                               u.role === 'owner' 
                                                 ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' 
-                                                : 'bg-slate-400/15 text-slate-300 border border-white/5'
+                                                : u.role === 'admin'
+                                                  ? 'bg-blue-400/10 text-blue-400 border border-blue-400/20'
+                                                  : 'bg-slate-400/15 text-slate-300 border border-white/5'
                                             }`}>
                                               {u.role === 'owner' 
                                                 ? 'Proprietário' 
-                                                : 'Operador'}
+                                                : u.role === 'admin' 
+                                                  ? 'Administrador' 
+                                                  : u.role === 'support'
+                                                    ? 'Suporte'
+                                                    : u.role === 'operator'
+                                                      ? 'Operador'
+                                                      : u.role === 'installer'
+                                                        ? 'Instalador'
+                                                        : u.role === 'factory'
+                                                          ? 'Fábrica'
+                                                          : u.role}
                                             </span>
                                           </td>
                                           <td className="p-3 text-right">
@@ -5062,19 +4915,10 @@ export default function PoolControllerPage() {
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  u.status === 'deleted'
-                                                    ? handleHardDeleteUserAdmin(u.uid)
-                                                    : handleDeleteUserAdmin(u.uid);
+                                                  handleDeleteUserAdmin(u.uid);
                                                 }}
                                                 disabled={isRoot || isSelf}
-                                                title={isRoot
-                                                  ? 'Usuário proprietário não pode ser removido'
-                                                  : isSelf
-                                                    ? 'Você não pode se deletar'
-                                                    : u.status === 'deleted'
-                                                      ? 'Excluir registro definitivamente'
-                                                      : 'Desativar usuário preservando histórico'
-                                                }
+                                                title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
                                                 className={`p-1.5 rounded-lg border transition-colors ${
                                                   isRoot || isSelf
                                                     ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
@@ -5097,7 +4941,7 @@ export default function PoolControllerPage() {
                           <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                             <div>
                               <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
-                              <p className="text-[10px] text-slate-400">Total de {adminDevices.length} dispositivos cadastrados no banco</p>
+                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
                             </div>
 
                             <div className="relative">
@@ -5112,14 +4956,14 @@ export default function PoolControllerPage() {
                             </div>
 
                              <div className="space-y-2.5">
-                              {adminDevices
+                              {registeredEquipments
                                 .filter(eq => 
                                   eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
                                   eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
                                   (eq.userEmail || '').toLowerCase().includes(adminSearchEquip.toLowerCase())
                                 )
                                 .map((eq) => {
-                                  const isActive = eq.status === 'active' && deviceId.toLowerCase() === eq.id.toLowerCase();
+                                  const isActive = deviceId.toLowerCase() === eq.id.toLowerCase();
                                   const isUserEquip = selectedUserForEquip && (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
                                   return (
                                     <div
@@ -5141,9 +4985,6 @@ export default function PoolControllerPage() {
                                           {isActive && !isUserEquip && (
                                             <span className="text-[8px] bg-[#4398fa]/20 text-[#4398fa] border border-[#4398fa]/30 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">ATIVO</span>
                                           )}
-                                          {eq.status === 'deleted' && (
-                                            <span className="text-[8px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">EXCLUÍDO • HISTÓRICO</span>
-                                          )}
                                         </div>
                                         <div className="text-[10px] text-slate-400">
                                           Modelo: <span className="text-slate-200 font-semibold">{eq.model}</span>
@@ -5153,40 +4994,26 @@ export default function PoolControllerPage() {
                                             Vinculado: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
                                           </div>
                                         )}
-                                        {eq.deletedAt && (
-                                          <div className="text-[8px] text-rose-400/80 font-mono">
-                                            Excluído em {new Date(eq.deletedAt).toLocaleString('pt-BR')}
-                                          </div>
-                                        )}
                                       </div>
 
-                                      <div className="flex items-center gap-1.5">
-                                        {!isActive && eq.status === 'active' && (
-                                          <button
-                                            onClick={() => {
-                                              setDeviceId(eq.id);
-                                              localStorage.setItem('mqtt_device', eq.id);
-                                              logUserAction(`Ativou equipamento ID: ${eq.id}`);
-                                              alert(`Dispositivo ${eq.id} ativado com sucesso!`);
-                                            }}
-                                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
-                                          >
-                                            Ativar
-                                          </button>
-                                        )}
+                                      {!isActive && (
                                         <button
-                                          onClick={() => handleDeleteDeviceAdmin(eq)}
-                                          title={eq.status === 'deleted' ? 'Excluir definitivamente' : 'Desativar preservando histórico'}
-                                          className="p-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/25 text-rose-400"
+                                          onClick={() => {
+                                            setDeviceId(eq.id);
+                                            localStorage.setItem('mqtt_device', eq.id);
+                                            logUserAction(`Ativou equipamento ID: ${eq.id}`);
+                                            alert(`Dispositivo ${eq.id} ativado com sucesso!`);
+                                          }}
+                                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
                                         >
-                                          <Trash2 className="w-3.5 h-3.5" />
+                                          Ativar
                                         </button>
-                                      </div>
+                                      )}
                                     </div>
                                   );
                                 })}
 
-                              {selectedUserForEquip && !adminDevices.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
+                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
                                 <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
                                   <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
                                   <div className="flex flex-col gap-1.5 pt-1">
@@ -5202,10 +5029,10 @@ export default function PoolControllerPage() {
                                           return;
                                         }
 
-                                        const updated = adminDevices.map(eq => 
+                                        const updated = registeredEquipments.map(eq => 
                                           eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
                                         );
-                                        setAdminDevices(updated);
+                                        setRegisteredEquipments(updated);
                                         
                                         if (isSupabaseConfigured()) {
                                           await updateDeviceOwner(eqId, targetUser.uid);
@@ -5217,7 +5044,7 @@ export default function PoolControllerPage() {
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
                                       <option value="">Selecione um equipamento...</option>
-                                      {adminDevices.filter(eq => eq.status === 'active' && !eq.userEmail).map(eq => (
+                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
                                         <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
                                       ))}
                                     </select>
@@ -5261,7 +5088,7 @@ export default function PoolControllerPage() {
                             <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
                             <input
                               type="text"
-                              placeholder="Insira o ID do Equipamento (Ex: MM12TW-000123)"
+                              placeholder="Insira o ID do Equipamento (Ex: MM12TW-EEA39F-000003)"
                               value={telemetrySearchId}
                               onChange={(e) => setTelemetrySearchId(e.target.value)}
                               className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
@@ -5279,7 +5106,7 @@ export default function PoolControllerPage() {
                           <div className="flex gap-2">
                             <button
                               onClick={() => {
-                                const found = adminDevices.find(
+                                const found = registeredEquipments.find(
                                   eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase()
                                 );
                                 if (found) {
@@ -5301,7 +5128,7 @@ export default function PoolControllerPage() {
                             Dispositivos Cadastrados (Clique para Consultar)
                           </span>
                           <div className="grid grid-cols-1 gap-2.5">
-                            {adminDevices.map((eq) => {
+                            {registeredEquipments.map((eq) => {
                               const isSelected = telemetrySearchId.trim().toLowerCase() === eq.id.toLowerCase();
                               return (
                                 <button
@@ -5328,7 +5155,7 @@ export default function PoolControllerPage() {
                                 </button>
                               );
                             })}
-                            {adminDevices.length === 0 && (
+                            {registeredEquipments.length === 0 && (
                               <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
                                 Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
                               </div>
@@ -6096,21 +5923,21 @@ export default function PoolControllerPage() {
                           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                             <div>
                               <h4 className="text-xs font-bold text-white uppercase tracking-wider">Histórico Detalhado de Operações</h4>
-                              <p className="text-[10px] text-slate-400">Eventos de auditoria do Supabase são permanentes; apenas logs temporários podem ser limpos.</p>
+                              <p className="text-[10px] text-slate-400">Relação completa de todos os gatilhos gerados</p>
                             </div>
                             {!showConfirmClearLogs ? (
                               <button
                                 onClick={() => setShowConfirmClearLogs(true)}
                                 className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 text-xs font-bold rounded-lg transition-colors text-center"
                               >
-                                Limpar Logs Temporários
+                                Limpar Todos os Logs
                               </button>
                             ) : (
                               <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5 animate-fadeIn">
                                 <span className="text-[10px] text-rose-300 font-medium px-1">Confirmar limpeza?</span>
                                 <button
                                   onClick={() => {
-                                    setUserLogs(current => current.filter(log => String(log.id).startsWith('audit:')));
+                                    setUserLogs([]);
                                     setShowConfirmClearLogs(false);
                                   }}
                                   className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded transition-colors"
@@ -6379,10 +6206,10 @@ export default function PoolControllerPage() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-300">Motores (0 a 8)</label>
+                              <label className="text-[10px] font-bold text-slate-300">Motores (1 a 8)</label>
                               <input
                                 type="number"
-                                min={0}
+                                min={1}
                                 max={8}
                                 value={catalogMotorCount}
                                 onChange={(event) => setCatalogMotorCount(event.target.value)}

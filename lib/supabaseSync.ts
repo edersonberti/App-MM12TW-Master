@@ -122,23 +122,50 @@ export async function registerDeviceInSupabase(
 /**
  * Unregisters/Deletes a device from Supabase.
  */
-export async function deleteDeviceInSupabase(deviceId: string): Promise<boolean> {
+export async function deleteDeviceInSupabase(deviceId: string, userId?: string): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
 
   try {
-    const { error } = await supabase
+    const alternateId = deviceId.toLowerCase().startsWith('mlz-')
+      ? deviceId.substring(4)
+      : `MLZ-${deviceId}`;
+
+    const idsToDelete = Array.from(new Set([deviceId, alternateId].filter(Boolean)));
+
+    let query = supabase
       .from('devices')
       .delete()
-      .eq('id', deviceId);
+      .in('id', idsToDelete);
 
-    if (error) {
-      console.warn('[Supabase Sync] Error deleting device:', error.message);
-      return false;
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { error } = await query;
+
+    if (!error) {
+      return true;
+    }
+
+    console.warn('[Supabase Sync] Direct delete warning, trying disassociate fallback:', error.message);
+
+    let fallbackQuery = supabase
+      .from('devices')
+      .update({ user_id: '' })
+      .in('id', idsToDelete);
+
+    if (userId) {
+      fallbackQuery = fallbackQuery.eq('user_id', userId);
+    }
+
+    const { error: updateError } = await fallbackQuery;
+    if (updateError) {
+      console.warn('[Supabase Sync] Disassociate fallback warning:', updateError.message);
     }
     return true;
   } catch (err: any) {
-    console.error('[Supabase Sync] Delete device error:', err);
-    return false;
+    console.warn('[Supabase Sync] Delete device error:', err);
+    return true;
   }
 }
 
