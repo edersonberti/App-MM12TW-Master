@@ -110,44 +110,121 @@ export async function registerDevice(
   }
 }
 
+function cleanDeviceIdStr(id: string): string {
+  if (!id) return '';
+  const trimmed = id.trim();
+  const parts = trimmed.split('-');
+  const isMlzPrefixed = trimmed.toLowerCase().startsWith('mlz-');
+  
+  if (isMlzPrefixed && parts.length >= 4) {
+    return parts.slice(0, 4).join('-');
+  } else if (!isMlzPrefixed && parts.length >= 3) {
+    return parts.slice(0, 3).join('-');
+  }
+  return trimmed;
+}
+
 export async function deleteDevice(deviceId: string, userId?: string): Promise<boolean> {
   try {
-    const alternateId = deviceId.toLowerCase().startsWith('mlz-')
-      ? deviceId.substring(4)
-      : `MLZ-${deviceId}`;
+    const rawId = (deviceId || '').trim();
+    if (!rawId) return true;
 
-    const idsToDelete = Array.from(new Set([deviceId, alternateId].filter(Boolean)));
+    const clean = cleanDeviceIdStr(rawId);
+    const isMlz = rawId.toLowerCase().startsWith('mlz-');
+    const withoutMlz = isMlz ? rawId.substring(4) : rawId;
+    const withMlz = isMlz ? rawId : `MLZ-${rawId}`;
+    const cleanWithoutMlz = cleanDeviceIdStr(withoutMlz);
+    const cleanWithMlz = `MLZ-${cleanWithoutMlz}`;
 
-    let query = supabase
-      .from('devices')
-      .delete()
-      .in('id', idsToDelete);
+    const candidates = new Set<string>([
+      rawId,
+      rawId.toLowerCase(),
+      rawId.toUpperCase(),
+      clean,
+      clean.toLowerCase(),
+      clean.toUpperCase(),
+      withoutMlz,
+      withoutMlz.toLowerCase(),
+      withoutMlz.toUpperCase(),
+      withMlz,
+      withMlz.toLowerCase(),
+      withMlz.toUpperCase(),
+      cleanWithoutMlz,
+      cleanWithoutMlz.toLowerCase(),
+      cleanWithoutMlz.toUpperCase(),
+      cleanWithMlz,
+      cleanWithMlz.toLowerCase(),
+      cleanWithMlz.toUpperCase(),
+    ]);
 
-    if (userId) {
-      query = query.eq('user_id', userId);
+    // Query Supabase to find any device IDs that match by clean ID
+    const dbIdsToDelete = Array.from(candidates);
+    try {
+      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
+      if (dbDevices && dbDevices.length > 0) {
+        const cleanTarget = clean.toLowerCase();
+        const withoutMlzLower = withoutMlz.toLowerCase();
+        for (const d of dbDevices) {
+          const dClean = cleanDeviceIdStr(d.id).toLowerCase();
+          const dLower = d.id.toLowerCase();
+          if (
+            dLower === rawId.toLowerCase() ||
+            (cleanTarget && dClean === cleanTarget) ||
+            (cleanTarget && dLower.includes(cleanTarget)) ||
+            (withoutMlzLower && dLower.includes(withoutMlzLower))
+          ) {
+            dbIdsToDelete.push(d.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[DeviceService] Query devices for deletion warning:', e);
     }
 
-    const { error } = await query;
+    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
 
-    if (!error) {
+    // 1. Delete associated settings first to prevent foreign key constraint failures
+    try {
+      await supabase
+        .from('device_settings')
+        .delete()
+        .in('device_id', uniqueIds);
+    } catch (e) {
+      console.warn('[DeviceService] Delete device_settings warning:', e);
+    }
+
+    // 2. Delete devices from devices table (first try with userId filter if provided)
+    if (userId) {
+      try {
+        await supabase
+          .from('devices')
+          .delete()
+          .in('id', uniqueIds)
+          .eq('user_id', userId);
+      } catch (e) {
+        console.warn('[DeviceService] User-filtered delete warning:', e);
+      }
+    }
+
+    // Direct delete by id in case user_id is null or different in DB
+    const { error: directDeleteError } = await supabase
+      .from('devices')
+      .delete()
+      .in('id', uniqueIds);
+
+    if (!directDeleteError) {
+      console.log('[DeviceService] Successfully deleted device(s) from Supabase by ID:', uniqueIds);
       return true;
     }
 
-    console.warn('[DeviceService] Direct delete warning, trying disassociate fallback:', error.message);
+    console.warn('[DeviceService] Direct delete error, trying disassociate user_id = null fallback:', directDeleteError.message);
 
-    let fallbackQuery = supabase
+    // 3. Fallback: disassociate user_id = null so it stops appearing for this user
+    await supabase
       .from('devices')
-      .update({ user_id: '' })
-      .in('id', idsToDelete);
+      .update({ user_id: null })
+      .in('id', uniqueIds);
 
-    if (userId) {
-      fallbackQuery = fallbackQuery.eq('user_id', userId);
-    }
-
-    const { error: updateError } = await fallbackQuery;
-    if (updateError) {
-      console.warn('[DeviceService] Disassociate fallback warning:', updateError.message);
-    }
     return true;
   } catch (err) {
     console.warn('[DeviceService] Delete device exception:', err);

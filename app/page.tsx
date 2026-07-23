@@ -50,6 +50,7 @@ import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigErr
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   createDeviceCatalogItem,
@@ -94,6 +95,27 @@ function cleanDeviceId(id: string): string {
     }
   }
   return trimmed;
+}
+
+function areDeviceIdsMatching(id1: string, id2: string): boolean {
+  if (!id1 || !id2) return false;
+  const raw1 = id1.trim().toLowerCase();
+  const raw2 = id2.trim().toLowerCase();
+  if (raw1 === raw2) return true;
+
+  const clean1 = cleanDeviceId(id1).toLowerCase();
+  const clean2 = cleanDeviceId(id2).toLowerCase();
+  if (clean1 && clean2 && clean1 === clean2) return true;
+
+  const noMlz1 = raw1.startsWith('mlz-') ? raw1.substring(4) : raw1;
+  const noMlz2 = raw2.startsWith('mlz-') ? raw2.substring(4) : raw2;
+  if (noMlz1 === noMlz2) return true;
+
+  const cleanNoMlz1 = cleanDeviceId(noMlz1).toLowerCase();
+  const cleanNoMlz2 = cleanDeviceId(noMlz2).toLowerCase();
+  if (cleanNoMlz1 && cleanNoMlz2 && cleanNoMlz1 === cleanNoMlz2) return true;
+
+  return false;
 }
 
 function escapeRegExp(str: string): string {
@@ -425,6 +447,18 @@ export default function PoolControllerPage() {
       }
       localStorage.removeItem('supabase_url_cache');
       localStorage.removeItem('supabase_anon_key_cache');
+
+      const storedEquips = localStorage.getItem('registered_equipments');
+      if (storedEquips) {
+        try {
+          const parsed = JSON.parse(storedEquips);
+          if (Array.isArray(parsed)) {
+            setRegisteredEquipments(parsed);
+          }
+        } catch (e) {
+          console.error('[Storage] Error loading registered_equipments:', e);
+        }
+      }
 
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
       if (storedTelemetry) {
@@ -783,27 +817,55 @@ export default function PoolControllerPage() {
           };
           setCurrentUser(loggedUser);
           
-          // Load devices for the user strictly from Supabase
+          // Load devices for the user from Supabase and merge with local state
           const dbDevices = await fetchUserDevices(session.user.id);
-          if (dbDevices && dbDevices.length > 0) {
-            setRegisteredEquipments(dbDevices.map((d: any) => ({
+          const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+          
+          let rawLocal: any[] = [];
+          try {
+            rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
+          } catch (e) {
+            rawLocal = [];
+          }
+
+          const isDeleted = (id: string) => {
+            if (!id) return false;
+            const idLower = id.toLowerCase();
+            const cleanLower = cleanDeviceId(id).toLowerCase();
+            return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
+          };
+
+          const mappedDb = (dbDevices || [])
+            .filter((d: any) => !isDeleted(d.id))
+            .map((d: any) => ({
               id: d.id,
               model: d.model,
               serial: d.serial || d.id,
               pairing_token: d.pairing_token
-            })));
+            }));
 
-            // Avoid stale localStorage device IDs (deleted / not owned) — they cause
-            // device_settings INSERT to fail with RLS 42501 in production.
+          const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
+
+          // Combine DB devices and valid local devices avoiding duplicates
+          const combined: any[] = [...mappedDb];
+          for (const item of validLocal) {
+            const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
+            if (!exists) {
+              combined.push(item);
+            }
+          }
+
+          setRegisteredEquipments(combined);
+          localStorage.setItem('registered_equipments', JSON.stringify(combined));
+
+          if (combined.length > 0) {
             const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
-            const matched = dbDevices.find(
-              (d: any) => d.id.toLowerCase() === storedDevice.toLowerCase()
+            const matched = combined.find(
+              (d: any) => areDeviceIdsMatching(d.id, storedDevice)
             );
-            const nextDeviceId = matched?.id || dbDevices[0].id;
+            const nextDeviceId = matched?.id || combined[0].id;
             setDeviceId(nextDeviceId);
             localStorage.setItem('mqtt_device', nextDeviceId);
-          } else {
-            setRegisteredEquipments([]);
           }
           
           if (activeScreen === 'login' || activeScreen === 'register') {
@@ -2729,19 +2791,25 @@ export default function PoolControllerPage() {
     // Functional update always uses the latest list and immediately removes the
     // "Nenhum equipamento cadastrado" state.
     setRegisteredEquipments((current) => {
-      const cleanNew = cleanDeviceId(trimmedId).toLowerCase();
-      const exists = current.some((eq) => {
-        const cleanEq = cleanDeviceId(eq.id).toLowerCase();
-        return eq.id.toLowerCase() === trimmedId.toLowerCase() || (cleanNew && cleanEq === cleanNew);
-      });
+      const exists = current.some((eq) => areDeviceIdsMatching(eq.id, trimmedId));
 
-      if (!exists) return [...current, newItem];
+      const nextList = !exists
+        ? [...current, newItem]
+        : current.map((eq) => {
+            const isMatch = areDeviceIdsMatching(eq.id, trimmedId);
+            return isMatch ? { ...eq, ...newItem } : eq;
+          });
 
-      return current.map((eq) => {
-        const cleanEq = cleanDeviceId(eq.id).toLowerCase();
-        const isMatch = eq.id.toLowerCase() === trimmedId.toLowerCase() || (cleanNew && cleanEq === cleanNew);
-        return isMatch ? { ...eq, ...newItem } : eq;
-      });
+      localStorage.setItem('registered_equipments', JSON.stringify(nextList));
+
+      // Remove from deleted_device_ids in localStorage if re-registering
+      try {
+        const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+        const updatedDeleted = deletedIds.filter(d => !areDeviceIdsMatching(d, trimmedId));
+        localStorage.setItem('deleted_device_ids', JSON.stringify(updatedDeleted));
+      } catch (e) {}
+
+      return nextList;
     });
     
     // Also make this the active device under control!
@@ -4286,16 +4354,32 @@ export default function PoolControllerPage() {
                                           type="button"
                                           onClick={async (e) => {
                                             e.stopPropagation();
+                                            const targetRaw = eq.id.toLowerCase();
                                             const targetClean = cleanDeviceId(eq.id).toLowerCase();
-                                            const filtered = registeredEquipments.filter(item => {
-                                              const itemClean = cleanDeviceId(item.id).toLowerCase();
-                                              return item.id !== eq.id && (targetClean === '' || itemClean !== targetClean);
-                                            });
+                                            const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
+
+                                            const filtered = registeredEquipments.filter(item => !areDeviceIdsMatching(item.id, eq.id));
                                             setRegisteredEquipments(filtered);
+                                            localStorage.setItem('registered_equipments', JSON.stringify(filtered));
+
+                                            try {
+                                              const existingDeleted: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+                                              const newDeleted = Array.from(new Set([
+                                                ...existingDeleted,
+                                                targetRaw,
+                                                targetClean,
+                                                targetNoMlz,
+                                                `mlz-${targetNoMlz}`
+                                              ].filter(Boolean)));
+                                              localStorage.setItem('deleted_device_ids', JSON.stringify(newDeleted));
+                                            } catch (err) {}
+
                                             setConfirmDeleteDeviceId(null);
 
-                                            if (isSupabaseConfigured() && currentUser?.isSupabase) {
-                                              await deleteDevice(eq.id, currentUser?.id);
+                                            if (isSupabaseConfigured()) {
+                                              const userIdentifier = currentUser?.uid || currentUser?.id;
+                                              await deleteDevice(eq.id, userIdentifier);
+                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
                                             }
 
                                             if (isActive) {

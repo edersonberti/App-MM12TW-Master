@@ -122,50 +122,119 @@ export async function registerDeviceInSupabase(
 /**
  * Unregisters/Deletes a device from Supabase.
  */
+function cleanDeviceIdStr(id: string): string {
+  if (!id) return '';
+  const trimmed = id.trim();
+  const parts = trimmed.split('-');
+  const isMlzPrefixed = trimmed.toLowerCase().startsWith('mlz-');
+  
+  if (isMlzPrefixed && parts.length >= 4) {
+    return parts.slice(0, 4).join('-');
+  } else if (!isMlzPrefixed && parts.length >= 3) {
+    return parts.slice(0, 3).join('-');
+  }
+  return trimmed;
+}
+
 export async function deleteDeviceInSupabase(deviceId: string, userId?: string): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
 
   try {
-    const alternateId = deviceId.toLowerCase().startsWith('mlz-')
-      ? deviceId.substring(4)
-      : `MLZ-${deviceId}`;
+    const rawId = (deviceId || '').trim();
+    if (!rawId) return true;
 
-    const idsToDelete = Array.from(new Set([deviceId, alternateId].filter(Boolean)));
+    const clean = cleanDeviceIdStr(rawId);
+    const isMlz = rawId.toLowerCase().startsWith('mlz-');
+    const withoutMlz = isMlz ? rawId.substring(4) : rawId;
+    const withMlz = isMlz ? rawId : `MLZ-${rawId}`;
+    const cleanWithoutMlz = cleanDeviceIdStr(withoutMlz);
+    const cleanWithMlz = `MLZ-${cleanWithoutMlz}`;
 
-    let query = supabase
-      .from('devices')
-      .delete()
-      .in('id', idsToDelete);
+    const candidates = new Set<string>([
+      rawId,
+      rawId.toLowerCase(),
+      rawId.toUpperCase(),
+      clean,
+      clean.toLowerCase(),
+      clean.toUpperCase(),
+      withoutMlz,
+      withoutMlz.toLowerCase(),
+      withoutMlz.toUpperCase(),
+      withMlz,
+      withMlz.toLowerCase(),
+      withMlz.toUpperCase(),
+      cleanWithoutMlz,
+      cleanWithoutMlz.toLowerCase(),
+      cleanWithoutMlz.toUpperCase(),
+      cleanWithMlz,
+      cleanWithMlz.toLowerCase(),
+      cleanWithMlz.toUpperCase(),
+    ]);
 
-    if (userId) {
-      query = query.eq('user_id', userId);
+    const dbIdsToDelete = Array.from(candidates);
+    try {
+      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
+      if (dbDevices && dbDevices.length > 0) {
+        const cleanTarget = clean.toLowerCase();
+        const withoutMlzLower = withoutMlz.toLowerCase();
+        for (const d of dbDevices) {
+          const dClean = cleanDeviceIdStr(d.id).toLowerCase();
+          const dLower = d.id.toLowerCase();
+          if (
+            dLower === rawId.toLowerCase() ||
+            (cleanTarget && dClean === cleanTarget) ||
+            (cleanTarget && dLower.includes(cleanTarget)) ||
+            (withoutMlzLower && dLower.includes(withoutMlzLower))
+          ) {
+            dbIdsToDelete.push(d.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Supabase Sync] Query devices for deletion warning:', e);
     }
 
-    const { error } = await query;
+    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
 
-    if (!error) {
+    try {
+      await supabase
+        .from('device_settings')
+        .delete()
+        .in('device_id', uniqueIds);
+    } catch (e) {
+      console.warn('[Supabase Sync] Delete device_settings warning:', e);
+    }
+
+    if (userId) {
+      try {
+        await supabase
+          .from('devices')
+          .delete()
+          .in('id', uniqueIds)
+          .eq('user_id', userId);
+      } catch (e) {
+        console.warn('[Supabase Sync] User-filtered delete warning:', e);
+      }
+    }
+
+    const { error: deleteError } = await supabase
+      .from('devices')
+      .delete()
+      .in('id', uniqueIds);
+
+    if (!deleteError) {
       return true;
     }
 
-    console.warn('[Supabase Sync] Direct delete warning, trying disassociate fallback:', error.message);
-
-    let fallbackQuery = supabase
+    await supabase
       .from('devices')
-      .update({ user_id: '' })
-      .in('id', idsToDelete);
+      .update({ user_id: null })
+      .in('id', uniqueIds);
 
-    if (userId) {
-      fallbackQuery = fallbackQuery.eq('user_id', userId);
-    }
-
-    const { error: updateError } = await fallbackQuery;
-    if (updateError) {
-      console.warn('[Supabase Sync] Disassociate fallback warning:', updateError.message);
-    }
     return true;
-  } catch (err: any) {
-    console.warn('[Supabase Sync] Delete device error:', err);
-    return true;
+  } catch (err) {
+    console.warn('[Supabase Sync] Delete device exception:', err);
+    return false;
   }
 }
 
