@@ -6,6 +6,8 @@ export interface SupabaseDevice {
   pairing_token?: string;
   serial?: string;
   user_id: string;
+  status?: 'active' | 'deleted';
+  deleted_at?: string | null;
 }
 
 export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]> {
@@ -13,7 +15,8 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     const { data, error } = await supabase
       .from('devices')
       .select('*')
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('status', 'active');
 
     if (error) {
       console.error('[DeviceService] Error fetching devices:', error.message);
@@ -42,6 +45,8 @@ export async function registerDevice(
         pairing_token: pairingToken || 'TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
         serial: serial || null,
         user_id: userId,
+        status: 'active',
+        deleted_at: null,
       })
       .select()
       .single();
@@ -58,6 +63,8 @@ export async function registerDevice(
       .update({
         user_id: userId,
         model: model,
+        status: 'active',
+        deleted_at: null,
         ...(serial ? { serial } : {}),
         ...(pairingToken ? { pairing_token: pairingToken } : {})
       })
@@ -79,6 +86,8 @@ export async function registerDevice(
       .update({
         user_id: userId,
         model: model,
+        status: 'active',
+        deleted_at: null,
         ...(serial ? { serial } : {}),
         ...(pairingToken ? { pairing_token: pairingToken } : {})
       })
@@ -97,6 +106,8 @@ export async function registerDevice(
       serial: serial || undefined,
       pairing_token: pairingToken || undefined,
       user_id: userId,
+      status: 'active',
+      deleted_at: null,
     };
   } catch (err) {
     console.warn('[DeviceService] Register device exception, fallback to local instance:', err);
@@ -106,6 +117,8 @@ export async function registerDevice(
       serial: serial || undefined,
       pairing_token: pairingToken || undefined,
       user_id: userId,
+      status: 'active',
+      deleted_at: null,
     };
   }
 }
@@ -124,6 +137,10 @@ function cleanDeviceIdStr(id: string): string {
   return trimmed;
 }
 
+/**
+ * Soft-deletes a device (status = deleted). Keeps the row in Supabase
+ * so the equipment can be reassociated later without a hard DELETE.
+ */
 export async function deleteDevice(deviceId: string, userId?: string): Promise<boolean> {
   try {
     const rawId = (deviceId || '').trim();
@@ -157,10 +174,13 @@ export async function deleteDevice(deviceId: string, userId?: string): Promise<b
       cleanWithMlz.toUpperCase(),
     ]);
 
-    // Query Supabase to find any device IDs that match by clean ID
-    const dbIdsToDelete = Array.from(candidates);
+    const dbIdsToSoftDelete = Array.from(candidates);
     try {
-      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
+      let query = supabase.from('devices').select('id, user_id, status');
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+      const { data: dbDevices } = await query;
       if (dbDevices && dbDevices.length > 0) {
         const cleanTarget = clean.toLowerCase();
         const withoutMlzLower = withoutMlz.toLowerCase();
@@ -173,62 +193,42 @@ export async function deleteDevice(deviceId: string, userId?: string): Promise<b
             (cleanTarget && dLower.includes(cleanTarget)) ||
             (withoutMlzLower && dLower.includes(withoutMlzLower))
           ) {
-            dbIdsToDelete.push(d.id);
+            dbIdsToSoftDelete.push(d.id);
           }
         }
       }
     } catch (e) {
-      console.warn('[DeviceService] Query devices for deletion warning:', e);
+      console.warn('[DeviceService] Query devices for soft-delete warning:', e);
     }
 
-    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
+    const uniqueIds = Array.from(new Set(dbIdsToSoftDelete.filter(Boolean)));
+    const softDeletePayload = {
+      status: 'deleted',
+      deleted_at: new Date().toISOString(),
+    };
 
-    // 1. Delete associated settings first to prevent foreign key constraint failures
-    try {
-      await supabase
-        .from('device_settings')
-        .delete()
-        .in('device_id', uniqueIds);
-    } catch (e) {
-      console.warn('[DeviceService] Delete device_settings warning:', e);
-    }
+    let updateQuery = supabase
+      .from('devices')
+      .update(softDeletePayload)
+      .in('id', uniqueIds)
+      .eq('status', 'active');
 
-    // 2. Delete devices from devices table (first try with userId filter if provided)
     if (userId) {
-      try {
-        await supabase
-          .from('devices')
-          .delete()
-          .in('id', uniqueIds)
-          .eq('user_id', userId);
-      } catch (e) {
-        console.warn('[DeviceService] User-filtered delete warning:', e);
-      }
+      updateQuery = updateQuery.eq('user_id', userId);
     }
 
-    // Direct delete by id in case user_id is null or different in DB
-    const { error: directDeleteError } = await supabase
-      .from('devices')
-      .delete()
-      .in('id', uniqueIds);
+    const { error: softDeleteError, data } = await updateQuery.select('id');
 
-    if (!directDeleteError) {
-      console.log('[DeviceService] Successfully deleted device(s) from Supabase by ID:', uniqueIds);
-      return true;
+    if (softDeleteError) {
+      console.warn('[DeviceService] Soft-delete error:', softDeleteError.message);
+      return false;
     }
 
-    console.warn('[DeviceService] Direct delete error, trying disassociate user_id = null fallback:', directDeleteError.message);
-
-    // 3. Fallback: disassociate user_id = null so it stops appearing for this user
-    await supabase
-      .from('devices')
-      .update({ user_id: null })
-      .in('id', uniqueIds);
-
+    console.log('[DeviceService] Soft-deleted device(s):', data?.map((d) => d.id) || uniqueIds);
     return true;
   } catch (err) {
-    console.warn('[DeviceService] Delete device exception:', err);
-    return true;
+    console.warn('[DeviceService] Soft-delete device exception:', err);
+    return false;
   }
 }
 
@@ -236,7 +236,11 @@ export async function updateDeviceOwner(deviceId: string, userId: string): Promi
   try {
     const { data, error } = await supabase
       .from('devices')
-      .update({ user_id: userId })
+      .update({
+        user_id: userId,
+        status: 'active',
+        deleted_at: null,
+      })
       .eq('id', deviceId)
       .select()
       .single();

@@ -12,6 +12,8 @@ export interface SupabaseDevice {
   model: string;
   pairing_token?: string;
   user_id: string;
+  status?: 'active' | 'deleted';
+  deleted_at?: string | null;
 }
 
 export interface SupabaseDeviceSettings {
@@ -72,7 +74,8 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     const { data, error } = await supabase
       .from('devices')
       .select('*')
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('status', 'active');
 
     if (error) {
       console.warn('[Supabase Sync] Error fetching devices:', error.message);
@@ -104,6 +107,8 @@ export async function registerDeviceInSupabase(
         model: model,
         pairing_token: pairingToken || 'TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
         user_id: userId,
+        status: 'active',
+        deleted_at: null,
       })
       .select()
       .single();
@@ -120,7 +125,7 @@ export async function registerDeviceInSupabase(
 }
 
 /**
- * Unregisters/Deletes a device from Supabase.
+ * Soft-deletes a device in Supabase (status = deleted). Does not remove the row.
  */
 function cleanDeviceIdStr(id: string): string {
   if (!id) return '';
@@ -171,9 +176,13 @@ export async function deleteDeviceInSupabase(deviceId: string, userId?: string):
       cleanWithMlz.toUpperCase(),
     ]);
 
-    const dbIdsToDelete = Array.from(candidates);
+    const dbIdsToSoftDelete = Array.from(candidates);
     try {
-      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
+      let query = supabase.from('devices').select('id, user_id, status');
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+      const { data: dbDevices } = await query;
       if (dbDevices && dbDevices.length > 0) {
         const cleanTarget = clean.toLowerCase();
         const withoutMlzLower = withoutMlz.toLowerCase();
@@ -186,54 +195,40 @@ export async function deleteDeviceInSupabase(deviceId: string, userId?: string):
             (cleanTarget && dLower.includes(cleanTarget)) ||
             (withoutMlzLower && dLower.includes(withoutMlzLower))
           ) {
-            dbIdsToDelete.push(d.id);
+            dbIdsToSoftDelete.push(d.id);
           }
         }
       }
     } catch (e) {
-      console.warn('[Supabase Sync] Query devices for deletion warning:', e);
+      console.warn('[Supabase Sync] Query devices for soft-delete warning:', e);
     }
 
-    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
+    const uniqueIds = Array.from(new Set(dbIdsToSoftDelete.filter(Boolean)));
+    const softDeletePayload = {
+      status: 'deleted',
+      deleted_at: new Date().toISOString(),
+    };
 
-    try {
-      await supabase
-        .from('device_settings')
-        .delete()
-        .in('device_id', uniqueIds);
-    } catch (e) {
-      console.warn('[Supabase Sync] Delete device_settings warning:', e);
-    }
+    let updateQuery = supabase
+      .from('devices')
+      .update(softDeletePayload)
+      .in('id', uniqueIds)
+      .eq('status', 'active');
 
     if (userId) {
-      try {
-        await supabase
-          .from('devices')
-          .delete()
-          .in('id', uniqueIds)
-          .eq('user_id', userId);
-      } catch (e) {
-        console.warn('[Supabase Sync] User-filtered delete warning:', e);
-      }
+      updateQuery = updateQuery.eq('user_id', userId);
     }
 
-    const { error: deleteError } = await supabase
-      .from('devices')
-      .delete()
-      .in('id', uniqueIds);
+    const { error: softDeleteError } = await updateQuery.select('id');
 
-    if (!deleteError) {
-      return true;
+    if (softDeleteError) {
+      console.warn('[Supabase Sync] Soft-delete error:', softDeleteError.message);
+      return false;
     }
-
-    await supabase
-      .from('devices')
-      .update({ user_id: null })
-      .in('id', uniqueIds);
 
     return true;
   } catch (err) {
-    console.warn('[Supabase Sync] Delete device exception:', err);
+    console.warn('[Supabase Sync] Soft-delete device exception:', err);
     return false;
   }
 }
@@ -267,6 +262,7 @@ async function assertManagedDevice(deviceId: string): Promise<boolean> {
     .from('devices')
     .select('id')
     .eq('id', deviceId)
+    .eq('status', 'active')
     .maybeSingle();
 
   if (error) {

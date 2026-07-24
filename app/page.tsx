@@ -50,7 +50,6 @@ import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigErr
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
-import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   createDeviceCatalogItem,
@@ -4618,8 +4617,8 @@ export default function PoolControllerPage() {
 
                                             if (isSupabaseConfigured()) {
                                               const userIdentifier = currentUser?.uid || currentUser?.id;
+                                              // Soft-delete: marca status=deleted (não remove a linha no Supabase)
                                               await deleteDevice(eq.id, userIdentifier);
-                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
                                             }
 
                                             if (isActive) {
