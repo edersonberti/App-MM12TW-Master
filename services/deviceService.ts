@@ -224,7 +224,7 @@ export async function deleteDevice(deviceId: string, userId?: string): Promise<b
       return false;
     }
 
-    console.log('[DeviceService] Soft-deleted device(s):', data?.map((d) => d.id) || uniqueIds);
+    console.log('[DeviceService] Soft-deleted device(s):', data?.map((d: { id: string }) => d.id) || uniqueIds);
     return true;
   } catch (err) {
     console.warn('[DeviceService] Soft-delete device exception:', err);
