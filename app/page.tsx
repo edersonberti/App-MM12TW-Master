@@ -69,15 +69,15 @@ declare global {
 }
 
 // Initial state and localStorage helpers
-const DEFAULT_MQTT_BROKER = 'broker.emqx.io';
-const DEFAULT_MQTT_PORT = '8084'; // 8084 is secure WebSockets over SSL (wss://) essential for HTTPS
+const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
+const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) matching test.mosquitto.org port 1883
 const DEFAULT_DEVICE_ID = 'MLZ-MM12TW-EEA39F-000003'; // Matches new dynamic hardware architecture prefix
 type MotorNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 const FALLBACK_BROKERS = [
+  { broker: 'test.mosquitto.org', port: '8081' },
   { broker: 'broker.emqx.io', port: '8084' },
-  { broker: 'broker.hivemq.com', port: '8884' },
-  { broker: 'test.mosquitto.org', port: '8081' }
+  { broker: 'broker.hivemq.com', port: '8884' }
 ];
 
 // Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003", or "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MLZ-MM12TW-EEA39F-000003")
@@ -2368,12 +2368,36 @@ export default function PoolControllerPage() {
 
     setters[motorNum](checked);
     const payloadON_OFF = checked ? 'ON' : 'OFF';
+    const payload1_0 = checked ? '1' : '0';
+    const payloadLIG_DESL = checked ? 'LIG' : 'DESL';
     logUserAction(`Togglou ${names[motorNum]} para ${checked ? 'LIGADO' : 'DESLIGADO'}`);
 
+    // 1. Direct subtopics for motor
     publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payloadON_OFF);
     publishTopic(`${deviceId}/mt${motorNum}`, payloadON_OFF);
     publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}/state`, payloadON_OFF);
     publishTopic(`${deviceId}/mt${motorNum}/state`, payloadON_OFF);
+
+    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payload1_0);
+    publishTopic(`${deviceId}/mt${motorNum}`, payload1_0);
+
+    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payloadLIG_DESL);
+    publishTopic(`${deviceId}/mt${motorNum}`, payloadLIG_DESL);
+
+    // 2. String commands to /cmd topic
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `mt${motorNum}=${payloadON_OFF}`);
+    publishTopic(`${deviceId}/cmd`, `mt${motorNum}=${payloadON_OFF}`);
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `mt${motorNum} ${payloadON_OFF}`);
+    publishTopic(`${deviceId}/cmd`, `mt${motorNum} ${payloadON_OFF}`);
+
+    // 3. JSON commands to /cmd and /set topics
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: checked ? 1 : 0 }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: checked ? 1 : 0 }));
+
+    publishTopic(`MASTERLAZER/${deviceId}/set`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
+    publishTopic(`${deviceId}/set`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
   };
 
   // LED Commands
@@ -2393,8 +2417,16 @@ export default function PoolControllerPage() {
     }
     setCurrentProgram(nextProg);
     
-    // Única publicação necessária
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "INC");
+    publishTopic(`${deviceId}/led/ctrl`, "INC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "INC");
+    publishTopic(`${deviceId}/led/cmd`, "INC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "INC");
+    publishTopic(`${deviceId}/cmd`, "INC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=INC");
+    publishTopic(`${deviceId}/cmd`, "led=INC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "INC", led_ctrl: "INC" }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "INC", led_ctrl: "INC" }));
   };
 
   const handleProgramDec = () => {
@@ -2411,31 +2443,63 @@ export default function PoolControllerPage() {
     }
     setCurrentProgram(prevProg);
     
-    // Única publicação necessária
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DEC");
+    publishTopic(`${deviceId}/led/ctrl`, "DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "DEC");
+    publishTopic(`${deviceId}/led/cmd`, "DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "DEC");
+    publishTopic(`${deviceId}/cmd`, "DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=DEC");
+    publishTopic(`${deviceId}/cmd`, "led=DEC");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "DEC", led_ctrl: "DEC" }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "DEC", led_ctrl: "DEC" }));
   };
 
   const handleDirectProgramSelect = (progNum: number) => {
     setCurrentProgram(progNum);
     
-    // Única publicação necessária
     publishTopic(`MASTERLAZER/${deviceId}/led/pg`, String(progNum));
+    publishTopic(`${deviceId}/led/pg`, String(progNum));
+    publishTopic(`MASTERLAZER/${deviceId}/led/program`, String(progNum));
+    publishTopic(`${deviceId}/led/program`, String(progNum));
+    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, String(progNum));
+    publishTopic(`${deviceId}/led/ctrl`, String(progNum));
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `led_pg=${progNum}`);
+    publishTopic(`${deviceId}/cmd`, `led_pg=${progNum}`);
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led_pg: progNum, program: progNum }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led_pg: progNum, program: progNum }));
   };
 
   const handleProgramOff = () => {
     setCurrentProgram('---');
     
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "OFF");
+    publishTopic(`${deviceId}/led/ctrl`, "OFF");
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DESL");
+    publishTopic(`${deviceId}/led/ctrl`, "DESL");
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "0");
+    publishTopic(`${deviceId}/led/ctrl`, "0");
     publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "0");
+    publishTopic(`${deviceId}/led/pg`, "0");
     publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "OFF");
+    publishTopic(`${deviceId}/led/cmd`, "OFF");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=OFF");
+    publishTopic(`${deviceId}/cmd`, "led=OFF");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "OFF", led_ctrl: "OFF", led_pg: 0 }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "OFF", led_ctrl: "OFF", led_pg: 0 }));
   };
 
   const handleProgramSave = () => {
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SAVE");
+    publishTopic(`${deviceId}/led/ctrl`, "SAVE");
     publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SALVAR");
+    publishTopic(`${deviceId}/led/ctrl`, "SALVAR");
     publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "SAVE");
+    publishTopic(`${deviceId}/led/cmd`, "SAVE");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "SAVE");
+    publishTopic(`${deviceId}/cmd`, "SAVE");
+    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "SAVE", led_ctrl: "SAVE" }));
+    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "SAVE", led_ctrl: "SAVE" }));
     alert('Configuração de LED persistida em memória interna!');
   };
 
