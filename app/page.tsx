@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import Script from 'next/script';
 import { motion, AnimatePresence } from 'motion/react';
@@ -69,10 +69,16 @@ declare global {
 }
 
 // Initial state and localStorage helpers
-const DEFAULT_MQTT_BROKER = 'test.mosquitto.org';
-const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://) essential for HTTPS
-const DEFAULT_DEVICE_ID = 'MM12TW-EEA39F-000003'; // Matches new dynamic hardware architecture prefix
+const DEFAULT_MQTT_BROKER = 'broker.emqx.io';
+const DEFAULT_MQTT_PORT = '8084'; // 8084 is secure WebSockets over SSL (wss://) essential for HTTPS
+const DEFAULT_DEVICE_ID = 'MLZ-MM12TW-EEA39F-000003'; // Matches new dynamic hardware architecture prefix
 type MotorNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+const FALLBACK_BROKERS = [
+  { broker: 'broker.emqx.io', port: '8084' },
+  { broker: 'broker.hivemq.com', port: '8884' },
+  { broker: 'test.mosquitto.org', port: '8081' }
+];
 
 // Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003", or "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MLZ-MM12TW-EEA39F-000003")
 function cleanDeviceId(id: string): string {
@@ -262,7 +268,7 @@ export default function PoolControllerPage() {
   const [mqttErrorMsg, setMqttErrorMsg] = useState('');
   
   // BLE & Equipment IDs and Logs
-  const [bleDeviceId, setBleDeviceId] = useState('MM12TW-EEA39F-000003');
+  const [bleDeviceId, setBleDeviceId] = useState('MLZ-MM12TW-EEA39F-000003');
   const [bleLog, setBleLog] = useState<string[]>([]);
 
   // Registered Equipments (unique ID for each, with choices of MM12TW, MM03TW, MM08TSW or custom from QR)
@@ -275,13 +281,13 @@ export default function PoolControllerPage() {
     userPassword?: string;
   }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
-  const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+  const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
   const activeModel = activeEquipment?.model || 'MM12TW';
   const activeCatalogItem = deviceCatalog.find(
     item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
   );
   const activeMotorCount = activeCatalogItem?.motor_count ?? 0;
-  const searchedEquip = registeredEquipments.find(eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase());
+  const searchedEquip = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim()));
   const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
@@ -390,12 +396,36 @@ export default function PoolControllerPage() {
   const reconnectTimeoutRef = useRef<any>(null);
   const iroPickerRef = useRef<any>(null);
   const pickerContainerId = 'iro-color-picker-target';
+  const recentOutboundPublishesRef = useRef<Map<string, number>>(new Map());
+
+  const recordOutboundPublish = useCallback((topic: string, payload: string) => {
+    if (!topic) return;
+    const now = Date.now();
+    const cleanTopic = topic.trim();
+    const cleanPayload = (payload || '').trim();
+    const key = `${cleanTopic}::${cleanPayload}`;
+    recentOutboundPublishesRef.current.set(key, now);
+
+    const parts = cleanTopic.split('/');
+    if (parts.length >= 2) {
+      const relTopic = parts.slice(1).join('/');
+      recentOutboundPublishesRef.current.set(`${relTopic}::${cleanPayload}`, now);
+    }
+
+    // Prune entries older than 10 seconds
+    for (const [k, time] of recentOutboundPublishesRef.current.entries()) {
+      if (now - time > 10000) {
+        recentOutboundPublishesRef.current.delete(k);
+      }
+    }
+  }, []);
 
   const [pahoLoaded, setPahoLoaded] = useState(false);
   const [userWantsMqtt, setUserWantsMqttState] = useState(true);
   const userWantsMqttRef = useRef(true);
   const lastMessageTimeRef = useRef<number>(0);
   const consecutiveAutoReconnectsRef = useRef<number>(0);
+  const failedAttemptsRef = useRef<number>(0);
   
   const [isUpdatingData, setIsUpdatingData] = useState(true);
   const [showUpdatedMessage, setShowUpdatedMessage] = useState(false);
@@ -449,15 +479,38 @@ export default function PoolControllerPage() {
       localStorage.removeItem('supabase_anon_key_cache');
 
       const storedEquips = localStorage.getItem('registered_equipments');
+      const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+      const isDefaultDeleted = deletedIds.some(del => areDeviceIdsMatching(del, 'MLZ-MM12TW-EEA39F-000003'));
+
       if (storedEquips) {
         try {
           const parsed = JSON.parse(storedEquips);
-          if (Array.isArray(parsed)) {
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setRegisteredEquipments(parsed);
+          } else if (Array.isArray(parsed) && parsed.length === 0 && !isDefaultDeleted) {
+            const defaultList = [{
+              id: 'MLZ-MM12TW-EEA39F-000003',
+              model: 'MM12TW',
+              serial: 'MLZ-MM12TW-EEA39F-000003',
+              manufacturer: 'MASTERLAZER'
+            }];
+            setRegisteredEquipments(defaultList);
+            localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
+          } else if (Array.isArray(parsed)) {
             setRegisteredEquipments(parsed);
           }
         } catch (e) {
           console.error('[Storage] Error loading registered_equipments:', e);
         }
+      } else if (!isDefaultDeleted) {
+        const defaultList = [{
+          id: 'MLZ-MM12TW-EEA39F-000003',
+          model: 'MM12TW',
+          serial: 'MLZ-MM12TW-EEA39F-000003',
+          manufacturer: 'MASTERLAZER'
+        }];
+        setRegisteredEquipments(defaultList);
+        localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
       }
 
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
@@ -469,6 +522,14 @@ export default function PoolControllerPage() {
         }
       } else {
         const initialTelemetry = {
+          'MLZ-MM12TW-EEA39F-000003': {
+            mostUsedLedProgram: 'Arco-Íris Dinâmico',
+            maxFilteringTime: 6,
+            minFilteringTime: 2,
+            hydroTimerUsageMinutes: 30,
+            latitude: -23.5505,
+            longitude: -46.6333
+          },
           'MM12TW-EEA39F-000003': {
             mostUsedLedProgram: 'Arco-Íris Dinâmico',
             maxFilteringTime: 6,
@@ -634,7 +695,7 @@ export default function PoolControllerPage() {
       setShowUpdatedMessage(false);
       setDeviceIp('---');
       setDeviceMac('---');
-      const matched = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+      const matched = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
       if (matched) {
         setDeviceModelo(matched.model || '---');
         setDeviceSerial(matched.serial || '---');
@@ -799,6 +860,83 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt]);
 
+  // Sync equipment from Supabase for logged-in user
+  const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string) => {
+    if (!isSupabaseConfigured() || !userId) return [];
+
+    const dbDevices = await fetchUserDevices(userId);
+    const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+
+    const isDeleted = (id: string) => {
+      if (!id) return false;
+      const idLower = id.toLowerCase();
+      const cleanLower = cleanDeviceId(id).toLowerCase();
+      return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
+    };
+
+    let rawLocal: any[] = [];
+    try {
+      rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
+    } catch (e) {
+      rawLocal = [];
+    }
+
+    const mappedDb = (dbDevices || [])
+      .filter((d: any) => !isDeleted(d.id))
+      .map((d: any) => ({
+        id: d.id,
+        model: d.model || 'MM12TW',
+        serial: d.serial || d.id,
+        pairing_token: d.pairing_token,
+        manufacturer: 'MASTERLAZER',
+        userEmail: userEmail || ''
+      }));
+
+    const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
+
+    // Combine DB devices and valid local devices avoiding duplicates
+    const combined: any[] = [...mappedDb];
+    for (const item of validLocal) {
+      const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
+      if (!exists) {
+        combined.push(item);
+      }
+    }
+
+    // Auto-seed default equipment if user has 0 devices and default equipment hasn't been deleted
+    const defaultId = 'MLZ-MM12TW-EEA39F-000003';
+    if (combined.length === 0 && !isDeleted(defaultId)) {
+      const defaultDevice = {
+        id: defaultId,
+        model: 'MM12TW',
+        serial: defaultId,
+        manufacturer: 'MASTERLAZER',
+        userEmail: userEmail || ''
+      };
+
+      try {
+        await registerDevice(defaultId, 'MM12TW', userId, defaultId);
+      } catch (e) {
+        console.warn('[Supabase] Auto-seed device error:', e);
+      }
+
+      combined.push(defaultDevice);
+    }
+
+    setRegisteredEquipments(combined);
+    localStorage.setItem('registered_equipments', JSON.stringify(combined));
+
+    if (combined.length > 0) {
+      const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
+      const matched = combined.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
+      const nextDeviceId = matched?.id || combined[0].id;
+      setDeviceId(nextDeviceId);
+      localStorage.setItem('mqtt_device', nextDeviceId);
+    }
+
+    return combined;
+  }, [deviceId]);
+
   // 2. Initialize Supabase Auth state observer
   useEffect(() => {
     if (!supabaseStateLoaded || !isSupabaseConfigured()) return;
@@ -817,56 +955,8 @@ export default function PoolControllerPage() {
           };
           setCurrentUser(loggedUser);
           
-          // Load devices for the user from Supabase and merge with local state
-          const dbDevices = await fetchUserDevices(session.user.id);
-          const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
-          
-          let rawLocal: any[] = [];
-          try {
-            rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
-          } catch (e) {
-            rawLocal = [];
-          }
-
-          const isDeleted = (id: string) => {
-            if (!id) return false;
-            const idLower = id.toLowerCase();
-            const cleanLower = cleanDeviceId(id).toLowerCase();
-            return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
-          };
-
-          const mappedDb = (dbDevices || [])
-            .filter((d: any) => !isDeleted(d.id))
-            .map((d: any) => ({
-              id: d.id,
-              model: d.model,
-              serial: d.serial || d.id,
-              pairing_token: d.pairing_token
-            }));
-
-          const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
-
-          // Combine DB devices and valid local devices avoiding duplicates
-          const combined: any[] = [...mappedDb];
-          for (const item of validLocal) {
-            const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
-            if (!exists) {
-              combined.push(item);
-            }
-          }
-
-          setRegisteredEquipments(combined);
-          localStorage.setItem('registered_equipments', JSON.stringify(combined));
-
-          if (combined.length > 0) {
-            const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
-            const matched = combined.find(
-              (d: any) => areDeviceIdsMatching(d.id, storedDevice)
-            );
-            const nextDeviceId = matched?.id || combined[0].id;
-            setDeviceId(nextDeviceId);
-            localStorage.setItem('mqtt_device', nextDeviceId);
-          }
+          // Load devices for the user from Supabase and sync state
+          await syncUserDevicesFromSupabase(session.user.id, session.user.email);
           
           if (activeScreen === 'login' || activeScreen === 'register') {
             setActiveScreen('home');
@@ -890,6 +980,7 @@ export default function PoolControllerPage() {
     return () => {
       subscription?.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabaseStateLoaded, activeScreen]);
 
   useEffect(() => {
@@ -1172,18 +1263,8 @@ export default function PoolControllerPage() {
 
           setCurrentUser(loggedUser);
 
-          // Fetch user's registered devices from Supabase
-          const dbDevices = await fetchUserDevices(data.user.id);
-          setRegisteredEquipments(dbDevices.map(d => ({
-            id: d.id,
-            model: d.model,
-            serial: d.serial || d.id,
-            pairing_token: d.pairing_token
-          })));
-
-          if (dbDevices.length > 0) {
-            setDeviceId(dbDevices[0].id);
-          }
+          // Fetch user's registered devices from Supabase & sync
+          await syncUserDevicesFromSupabase(data.user.id, data.user.email);
 
           setActiveScreen('home');
         }
@@ -1279,11 +1360,23 @@ export default function PoolControllerPage() {
 
       // standard secure configuration fallback
       const clientId = 'web_masterlazer_' + Math.floor(Math.random() * 1000000);
-      const host = mqttBroker || DEFAULT_MQTT_BROKER;
+      const host = (mqttBroker || DEFAULT_MQTT_BROKER).trim();
       const port = parseInt(mqttPort) || parseInt(DEFAULT_MQTT_PORT);
-      const isSSL = port === 8081 || port === 443;
+      const isSSL = port === 8081 || port === 8084 || port === 8884 || port === 443 || port === 8883 || (typeof window !== 'undefined' && window.location.protocol === 'https:');
 
-      const client = new window.Paho.MQTT.Client(host, port, clientId);
+      // Safely disconnect any stale existing client before instantiating
+      if (mqttClientRef.current) {
+        try {
+          if (mqttClientRef.current.isConnected()) {
+            mqttClientRef.current.disconnect();
+          }
+        } catch (e) {
+          // ignore cleanup exception
+        }
+        mqttClientRef.current = null;
+      }
+
+      const client = new window.Paho.MQTT.Client(host, port, "/mqtt", clientId);
       mqttClientRef.current = client;
 
       client.onConnectionLost = (responseObject: any) => {
@@ -1309,7 +1402,25 @@ export default function PoolControllerPage() {
       client.onMessageArrived = (message: any) => {
         const dest = message.destinationName;
         const payload = (message.payloadString || '').trim();
-        console.log('Received Message From Hardware:', dest, payload);
+
+        // 1. Filter out self-echo messages sent by this web application client
+        const echoKey = `${dest}::${payload}`;
+        const publishedTime = recentOutboundPublishesRef.current.get(echoKey);
+        if (publishedTime && Date.now() - publishedTime < 6000) {
+          console.log('Ignored self-echo MQTT message from web app:', dest, payload);
+          return;
+        }
+
+        const relParts = dest.split('/');
+        if (relParts.length >= 2) {
+          const relTopic = relParts.slice(1).join('/');
+          const relEchoKey = `${relTopic}::${payload}`;
+          const relPublishedTime = recentOutboundPublishesRef.current.get(relEchoKey);
+          if (relPublishedTime && Date.now() - relPublishedTime < 6000) {
+            console.log('Ignored self-echo relative MQTT message from web app:', dest, payload);
+            return;
+          }
+        }
 
         const cleanActiveId = cleanDeviceId(deviceId).toLowerCase();
         const rawActiveId = (deviceId || '').toLowerCase().trim();
@@ -1318,20 +1429,19 @@ export default function PoolControllerPage() {
         let devicePartOfMessage = '';
         let relativeTopic = dest;
 
-        const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+        const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
         const parts = dest.split('/');
         
-        if (parts.length >= 2 && (
-          parts[0].toUpperCase() === 'MASTERLAZER' || 
-          (activeEquipment?.manufacturer && parts[0].toUpperCase() === activeEquipment.manufacturer.toUpperCase())
-        )) {
+        const p0Upper = (parts[0] || '').toUpperCase();
+        const isKnownPrefix = p0Upper === 'MASTERLAZER' || p0Upper === 'MLZ' || 
+          (activeEquipment?.manufacturer && p0Upper === activeEquipment.manufacturer.toUpperCase());
+
+        if (parts.length >= 2 && isKnownPrefix) {
           devicePartOfMessage = parts[1];
           relativeTopic = parts.slice(2).join('/');
-        } else {
-          if (parts.length >= 1) {
-            devicePartOfMessage = parts[0];
-            relativeTopic = parts.slice(1).join('/');
-          }
+        } else if (parts.length >= 1) {
+          devicePartOfMessage = parts[0];
+          relativeTopic = parts.slice(1).join('/');
         }
 
         const cleanMsgDeviceId = cleanDeviceId(devicePartOfMessage).toLowerCase();
@@ -1339,6 +1449,9 @@ export default function PoolControllerPage() {
 
         // Verify this message is indeed for our current active device context
         const isTargetDevice = (
+          areDeviceIdsMatching(devicePartOfMessage, deviceId) ||
+          areDeviceIdsMatching(devicePartOfMessage, cleanActiveId) ||
+          areDeviceIdsMatching(devicePartOfMessage, rawActiveId) ||
           cleanMsgDeviceId === cleanActiveId || 
           rawMsgDeviceId === rawActiveId || 
           cleanMsgDeviceId === rawActiveId ||
@@ -1349,9 +1462,11 @@ export default function PoolControllerPage() {
         );
 
         if (!isTargetDevice) {
-          // Message belongs to another device sequence, ignore
+          // Message belongs to another device or public topic, ignore silently
           return;
         }
+
+        console.log('Received Message From Hardware:', dest, payload);
 
         // Successfully received target device message, complete the update sequence
         setIsUpdatingData(false);
@@ -1473,6 +1588,15 @@ export default function PoolControllerPage() {
             if (data.satMultiplier !== undefined) setSatMultiplier(Number(data.satMultiplier));
             if (data.brightMultiplier !== undefined) setBrightMultiplier(Number(data.brightMultiplier));
 
+            // Device IP / MAC / Model / Serial from JSON
+            if (data.ip !== undefined) { setDeviceIp(String(data.ip)); setDeviceOnline(true); lastMessageTimeRef.current = Date.now(); }
+            else if (data.deviceIp !== undefined) { setDeviceIp(String(data.deviceIp)); setDeviceOnline(true); lastMessageTimeRef.current = Date.now(); }
+            if (data.mac !== undefined) { setDeviceMac(String(data.mac)); setDeviceOnline(true); lastMessageTimeRef.current = Date.now(); }
+            else if (data.deviceMac !== undefined) { setDeviceMac(String(data.deviceMac)); setDeviceOnline(true); lastMessageTimeRef.current = Date.now(); }
+            if (data.modelo !== undefined) setDeviceModelo(String(data.modelo));
+            else if (data.model !== undefined) setDeviceModelo(String(data.model));
+            if (data.serial !== undefined) setDeviceSerial(String(data.serial));
+
             return; // processed successfully as JSON
           } catch (e) {
             console.warn('Payload starts/ends with curly braces but is not valid JSON status:', e);
@@ -1490,19 +1614,23 @@ export default function PoolControllerPage() {
         }
 
         // 2. Listen for equipment info topics
-        if (lowerRelative === 'info/ip') {
+        if (lowerRelative === 'info/ip' || lowerRelative === 'ip') {
           setDeviceIp(payload);
+          setDeviceOnline(true);
+          lastMessageTimeRef.current = Date.now();
           return;
         }
-        if (lowerRelative === 'info/mac') {
+        if (lowerRelative === 'info/mac' || lowerRelative === 'mac') {
           setDeviceMac(payload);
+          setDeviceOnline(true);
+          lastMessageTimeRef.current = Date.now();
           return;
         }
-        if (lowerRelative === 'info/modelo') {
+        if (lowerRelative === 'info/modelo' || lowerRelative === 'modelo') {
           setDeviceModelo(payload);
           return;
         }
-        if (lowerRelative === 'info/serial') {
+        if (lowerRelative === 'info/serial' || lowerRelative === 'serial') {
           setDeviceSerial(payload);
           return;
         }
@@ -1692,9 +1820,11 @@ export default function PoolControllerPage() {
 
       const options: any = {
         useSSL: isSSL,
-        keepAliveInterval: 20, // Send ping every 20 seconds to keep connection alive on mobile/cellular
-        timeout: 8,            // 8s connect timeout
+        cleanSession: true,
+        keepAliveInterval: 25, // Send ping every 25 seconds to keep connection alive
+        timeout: 10,            // 10s connect timeout
         onSuccess: () => {
+          failedAttemptsRef.current = 0;
           console.log('MQTT Connected Successfully to ' + host + ':' + port);
           setMqttConnected(true);
           setMqttStatusMessage('Conectado');
@@ -1744,23 +1874,52 @@ export default function PoolControllerPage() {
                 if (parts.length >= 3) {
                   idsToProcess.add(parts.slice(0, 3).join('-'));
                 }
+                idsToProcess.add(id.substring(4));
+              } else {
+                idsToProcess.add(`MLZ-${id}`);
               }
+            }
+          });
+
+          registeredEquipments.forEach((eq) => {
+            if (eq && eq.id) {
+              const cleanEqId = cleanDeviceId(eq.id);
+              [cleanEqId, eq.id].forEach((id) => {
+                if (id) {
+                  idsToProcess.add(id);
+                  if (id.toLowerCase().startsWith('mlz-')) {
+                    const parts = id.split('-');
+                    if (parts.length >= 3) {
+                      idsToProcess.add(parts.slice(0, 3).join('-'));
+                    }
+                    idsToProcess.add(id.substring(4));
+                  } else {
+                    idsToProcess.add(`MLZ-${id}`);
+                  }
+                }
+              });
             }
           });
 
           const topicsToSubscribeSet = new Set<string>();
           const idsToSubscribe = Array.from(idsToProcess);
-          idsToSubscribe.push('+'); // Add wildcard level for maximum resilience
 
           idsToSubscribe.forEach((id) => {
             if (!id) return;
             relativePaths.forEach((path) => {
               topicsToSubscribeSet.add(`${id}/${path}`);
+              topicsToSubscribeSet.add(`MLZ/${id}/${path}`);
               topicsToSubscribeSet.add(`MASTERLAZER/${id}/${path}`);
               if (activeEquipment?.manufacturer) {
                 topicsToSubscribeSet.add(`${activeEquipment.manufacturer}/${id}/${path}`);
               }
             });
+            topicsToSubscribeSet.add(`${id}/#`);
+            topicsToSubscribeSet.add(`MLZ/${id}/#`);
+            topicsToSubscribeSet.add(`MASTERLAZER/${id}/#`);
+            if (activeEquipment?.manufacturer) {
+              topicsToSubscribeSet.add(`${activeEquipment.manufacturer}/${id}/#`);
+            }
           });
 
           const topicsToSubscribe = Array.from(topicsToSubscribeSet);
@@ -1778,8 +1937,9 @@ export default function PoolControllerPage() {
           const queryTopicsSet = new Set<string>();
           Array.from(idsToProcess).forEach((id) => {
             if (!id) return;
-            ['get', 'cmd', 'status/get'].forEach((cmdPath) => {
+            ['get', 'cmd', 'status/get', 'status', 'state'].forEach((cmdPath) => {
               queryTopicsSet.add(`${id}/${cmdPath}`);
+              queryTopicsSet.add(`MLZ/${id}/${cmdPath}`);
               queryTopicsSet.add(`MASTERLAZER/${id}/${cmdPath}`);
               if (activeEquipment?.manufacturer) {
                 queryTopicsSet.add(`${activeEquipment.manufacturer}/${id}/${cmdPath}`);
@@ -1792,17 +1952,12 @@ export default function PoolControllerPage() {
           queryTopics.forEach((qt) => {
             try {
               // Send various common MQTT request patterns to ensure compatibility
-              const msgStatus = new window.Paho.MQTT.Message("STATUS");
-              msgStatus.destinationName = qt;
-              client.send(msgStatus);
-
-              const msgGet = new window.Paho.MQTT.Message("GET");
-              msgGet.destinationName = qt;
-              client.send(msgGet);
-
-              const msgRead = new window.Paho.MQTT.Message("read");
-              msgRead.destinationName = qt;
-              client.send(msgRead);
+              ['STATUS', 'GET', 'read', '1'].forEach((cmdPayload) => {
+                const msg = new window.Paho.MQTT.Message(cmdPayload);
+                msg.destinationName = qt;
+                recordOutboundPublish(qt, cmdPayload);
+                client.send(msg);
+              });
             } catch (err) {
               console.warn(`Initial query failed on ${qt}:`, err);
             }
@@ -1830,7 +1985,25 @@ export default function PoolControllerPage() {
             friendlyMsg += ` Detalhes: ${err}`;
           }
 
-          friendlyMsg += ' Dica: Se o Mosquitto falhar, tente usar presets (HiveMQ ou EMQX) nas Definições!';
+          failedAttemptsRef.current += 1;
+
+          // Auto-failover broker if connection fails multiple times
+          if (failedAttemptsRef.current >= 2) {
+            const currentIdx = FALLBACK_BROKERS.findIndex(b => b.broker.toLowerCase() === host.toLowerCase());
+            const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % FALLBACK_BROKERS.length : 0;
+            const nextBroker = FALLBACK_BROKERS[nextIdx];
+            console.warn(`MQTT auto-failover activated. Switching to backup broker: ${nextBroker.broker}:${nextBroker.port}`);
+            setMqttBroker(nextBroker.broker);
+            setMqttPort(nextBroker.port);
+            try {
+              localStorage.setItem('mqtt_broker', nextBroker.broker);
+              localStorage.setItem('mqtt_port', nextBroker.port);
+            } catch (e) {}
+            friendlyMsg += ` Alternando automaticamente para servidor reserva (${nextBroker.broker}:${nextBroker.port})...`;
+          } else {
+            friendlyMsg += ' Reconectando automaticamente...';
+          }
+
           setMqttErrorMsg(friendlyMsg);
 
           // Retry connection if user wants connectivity
@@ -1839,7 +2012,7 @@ export default function PoolControllerPage() {
             reconnectTimeoutRef.current = setTimeout(() => {
               console.log('Automated Reconnection onFailure target triggered...');
               connectMQTT();
-            }, 5000);
+            }, 3000);
           }
         }
       };
@@ -1891,10 +2064,6 @@ export default function PoolControllerPage() {
   };
 
   function publishTopic(subTopic: string, payload: string) {
-    if (isUpdatingData) {
-      console.warn("Publish blocked: Data update in progress.");
-      return;
-    }
     if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
       try {
         const rawId = (deviceId || '').trim();
@@ -1903,11 +2072,16 @@ export default function PoolControllerPage() {
         const idVariations = new Set<string>();
         if (rawId) idVariations.add(rawId);
         if (cleanId) idVariations.add(cleanId);
-        if (rawId && rawId.toLowerCase().startsWith('mlz-')) {
-          const parts = rawId.split('-');
-          if (parts.length >= 3) {
-            idVariations.add(parts.slice(0, 3).join('-'));
-          }
+
+        const noMlz = rawId.toLowerCase().startsWith('mlz-') ? rawId.substring(4) : rawId;
+        const parts = noMlz.split('-');
+        if (parts.length >= 2) {
+          idVariations.add(parts.join('-')); // MM12TW-EEA39F-000003
+          idVariations.add(parts.slice(1).join('-')); // EEA39F-000003
+          idVariations.add(parts[1]); // EEA39F
+        }
+        if (!rawId.toLowerCase().startsWith('mlz-')) {
+          idVariations.add(`MLZ-${rawId}`);
         }
 
         const uniqueTopics = new Set<string>();
@@ -1927,8 +2101,8 @@ export default function PoolControllerPage() {
           }
         });
 
-        // 3. For each topic, ensure we send with standard, custom manufacturer, and no prefix
-        const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+        // 3. For each topic, ensure we send with standard MLZ/, MASTERLAZER/, custom manufacturer, and no prefix
+        const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
         const topicsToSend = new Set<string>();
         uniqueTopics.forEach((t) => {
           topicsToSend.add(t);
@@ -1936,22 +2110,26 @@ export default function PoolControllerPage() {
           let relativePart = t;
           if (t.startsWith('MASTERLAZER/')) {
             relativePart = t.substring('MASTERLAZER/'.length);
+          } else if (t.startsWith('MLZ/')) {
+            relativePart = t.substring('MLZ/'.length);
           } else if (activeEquipment?.manufacturer && t.toUpperCase().startsWith(activeEquipment.manufacturer.toUpperCase() + '/')) {
             relativePart = t.substring(activeEquipment.manufacturer.length + 1);
           }
           
           topicsToSend.add(relativePart);
+          topicsToSend.add(`MLZ/${relativePart}`);
           topicsToSend.add(`MASTERLAZER/${relativePart}`);
           if (activeEquipment?.manufacturer) {
             topicsToSend.add(`${activeEquipment.manufacturer}/${relativePart}`);
           }
         });
 
-        // 4. Send the messages to all computed topic targets
+        // 4. Send the messages to all computed topic targets & record outbound publish to ignore local self-echoes
         topicsToSend.forEach((t) => {
           try {
             const message = new window.Paho.MQTT.Message(payload);
             message.destinationName = t;
+            recordOutboundPublish(t, payload);
             mqttClientRef.current.send(message);
             console.log(`MQTT Published topic [${t}]: ${payload}`);
           } catch (innerErr) {
@@ -2976,7 +3154,7 @@ export default function PoolControllerPage() {
                   <div>
                     <h1 className="text-xs font-bold tracking-tight text-[#4398fa] m-1 leading-none">MASTER LAZER</h1>
                     <p className="text-[8px] text-[#4398fa] font-mono tracking-widest uppercase mt-2 leading-none">
-                      AUTO • {registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase())?.model || 'MM12TW'}
+                      AUTO • {registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId))?.model || 'MM12TW'}
                     </p>
                   </div>
                 </div>
@@ -4277,9 +4455,7 @@ export default function PoolControllerPage() {
                         ) : (
                           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                             {registeredEquipments.map((eq) => {
-                              const cleanEqId = cleanDeviceId(eq.id).toLowerCase();
-                              const cleanActiveId = cleanDeviceId(deviceId).toLowerCase();
-                              const isActive = eq.id.toLowerCase() === deviceId.toLowerCase() || (cleanActiveId && cleanEqId === cleanActiveId);
+                              const isActive = areDeviceIdsMatching(eq.id, deviceId);
 
                               return (
                                 <div 
@@ -5047,7 +5223,7 @@ export default function PoolControllerPage() {
                                   (eq.userEmail || '').toLowerCase().includes(adminSearchEquip.toLowerCase())
                                 )
                                 .map((eq) => {
-                                  const isActive = deviceId.toLowerCase() === eq.id.toLowerCase();
+                                  const isActive = areDeviceIdsMatching(deviceId, eq.id);
                                   const isUserEquip = selectedUserForEquip && (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
                                   return (
                                     <div
@@ -5172,7 +5348,7 @@ export default function PoolControllerPage() {
                             <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
                             <input
                               type="text"
-                              placeholder="Insira o ID do Equipamento (Ex: MM12TW-EEA39F-000003)"
+                              placeholder="Insira o ID do Equipamento (Ex: MLZ-MM12TW-EEA39F-000003)"
                               value={telemetrySearchId}
                               onChange={(e) => setTelemetrySearchId(e.target.value)}
                               className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
@@ -5191,7 +5367,7 @@ export default function PoolControllerPage() {
                             <button
                               onClick={() => {
                                 const found = registeredEquipments.find(
-                                  eq => eq.id.toLowerCase() === telemetrySearchId.trim().toLowerCase()
+                                  eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim())
                                 );
                                 if (found) {
                                   setTelemetrySearchId(found.id);
@@ -5213,7 +5389,7 @@ export default function PoolControllerPage() {
                           </span>
                           <div className="grid grid-cols-1 gap-2.5">
                             {registeredEquipments.map((eq) => {
-                              const isSelected = telemetrySearchId.trim().toLowerCase() === eq.id.toLowerCase();
+                              const isSelected = areDeviceIdsMatching(telemetrySearchId.trim(), eq.id);
                               return (
                                 <button
                                   key={eq.id}
