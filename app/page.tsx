@@ -394,6 +394,7 @@ export default function PoolControllerPage() {
   // MQTT instance reference
   const mqttClientRef = useRef<any>(null);
   const reconnectTimeoutRef = useRef<any>(null);
+  const prevDeviceIdRef = useRef<string>('');
   const iroPickerRef = useRef<any>(null);
   const pickerContainerId = 'iro-color-picker-target';
   const recentOutboundPublishesRef = useRef<Map<string, number>>(new Map());
@@ -718,14 +719,18 @@ export default function PoolControllerPage() {
     }, 0);
     lastMessageTimeRef.current = 0;
 
-    if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
-      console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
-      disconnectMQTT();
-      const t = setTimeout(() => {
-        connectMQTT();
-      }, 300);
-      return () => clearTimeout(t);
+    if (prevDeviceIdRef.current && prevDeviceIdRef.current !== deviceId) {
+      if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
+        console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
+        disconnectMQTT(true);
+        const t = setTimeout(() => {
+          connectMQTT();
+        }, 300);
+        prevDeviceIdRef.current = deviceId;
+        return () => clearTimeout(t);
+      }
     }
+    prevDeviceIdRef.current = deviceId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, registeredEquipments]);
 
@@ -840,14 +845,16 @@ export default function PoolControllerPage() {
 
     let lastFocusReconnect = 0;
     const handleFocusOrVisibility = () => {
-      if (document.visibilityState === 'visible' || document.hasFocus()) {
+      if (document.visibilityState === 'visible') {
         if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
-          const now = Date.now();
-          // Rate-limit auto-reconnect to at most once every 12 seconds to prevent spam
-          if (now - lastFocusReconnect > 12000) {
-            console.log('Tab visibility change or focus detected. Checking if MQTT needs connection refresh...');
-            lastFocusReconnect = now;
-            forceReconnectMQTT();
+          const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
+          if (!isConn) {
+            const now = Date.now();
+            if (now - lastFocusReconnect > 5000) {
+              console.log('Tab visibility change detected and MQTT is offline. Connecting...');
+              lastFocusReconnect = now;
+              connectMQTT();
+            }
           }
         }
       }
@@ -855,17 +862,18 @@ export default function PoolControllerPage() {
 
     const handleNetworkRecovery = () => {
       if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
-        console.log('Internet connection restored. Forcing MQTT reconnection to stabilize communication...');
-        forceReconnectMQTT();
+        const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
+        if (!isConn) {
+          console.log('Internet connection restored and MQTT is offline. Connecting...');
+          connectMQTT();
+        }
       }
     };
 
     document.addEventListener('visibilitychange', handleFocusOrVisibility);
-    window.addEventListener('focus', handleFocusOrVisibility);
     window.addEventListener('online', handleNetworkRecovery);
     return () => {
       document.removeEventListener('visibilitychange', handleFocusOrVisibility);
-      window.removeEventListener('focus', handleFocusOrVisibility);
       window.removeEventListener('online', handleNetworkRecovery);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2075,7 +2083,9 @@ export default function PoolControllerPage() {
   };
 
   function publishTopic(subTopic: string, payload: string) {
-    if (mqttClientRef.current && mqttClientRef.current.isConnected()) {
+    const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
+
+    if (isConn) {
       try {
         const rawId = (deviceId || '').trim();
         const cleanId = cleanDeviceId(deviceId).trim();
@@ -2151,7 +2161,11 @@ export default function PoolControllerPage() {
         console.warn('Publish error:', err);
       }
     } else {
-      console.warn('MQTT client is offline. Skipping write operation on topic:', subTopic);
+      console.warn('App Warning: MQTT client is offline. Skipping write operation on topic:', subTopic);
+      if (userWantsMqttRef.current && (!mqttClientRef.current || !mqttConnected)) {
+        console.log('Publish attempted while offline. Triggering MQTT reconnect...');
+        connectMQTT();
+      }
     }
   }
 
