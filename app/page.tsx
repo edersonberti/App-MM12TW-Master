@@ -50,6 +50,7 @@ import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigErr
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   createDeviceCatalogItem,
@@ -438,15 +439,26 @@ export default function PoolControllerPage() {
   useEffect(() => {
     // Resolve states from Storage helper to avoid SSR hydration issues and comply with ESLint constraints
     setTimeout(() => {
-      const storedBroker = localStorage.getItem('mqtt_broker') || DEFAULT_MQTT_BROKER;
-      const storedPort = localStorage.getItem('mqtt_port') || DEFAULT_MQTT_PORT;
+      // Auto-migrate legacy cached broker settings to newly updated default hardware broker
+      const configVersion = localStorage.getItem('app_config_version');
+      let storedBroker = localStorage.getItem('mqtt_broker');
+      let storedPort = localStorage.getItem('mqtt_port');
+
+      if (!configVersion || configVersion !== '2026_07_24_v2_mosquitto' || storedBroker === 'broker.emqx.io' || storedBroker === 'broker.hivemq.com') {
+        storedBroker = DEFAULT_MQTT_BROKER;
+        storedPort = DEFAULT_MQTT_PORT;
+        localStorage.setItem('mqtt_broker', DEFAULT_MQTT_BROKER);
+        localStorage.setItem('mqtt_port', DEFAULT_MQTT_PORT);
+        localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
+      }
+
       let storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
 
       const storedMqttUser = localStorage.getItem('mqtt_user') || '';
       const storedMqttPass = localStorage.getItem('mqtt_pass') || '';
 
-      setMqttBroker(storedBroker);
-      setMqttPort(storedPort);
+      setMqttBroker(storedBroker || DEFAULT_MQTT_BROKER);
+      setMqttPort(storedPort || DEFAULT_MQTT_PORT);
       setDeviceId(storedDevice);
       setMqttUser(storedMqttUser);
       setMqttPassword(storedMqttPass);
@@ -1928,7 +1940,7 @@ export default function PoolControllerPage() {
               client.subscribe(t);
               console.log(`Subscribed to status channel: ${t}`);
             } catch (err) {
-              console.error(`Subscription failed for ${t}:`, err);
+              console.warn(`Subscription failed for ${t}:`, err);
             }
           });
 
@@ -1963,7 +1975,7 @@ export default function PoolControllerPage() {
           });
         },
         onFailure: (err: any) => {
-          console.error('MQTT Connection Failure:', err);
+          console.warn('MQTT Connection Failure:', err);
           setMqttConnected(false);
           setMqttStatusMessage('Falha na Conectividade');
           
@@ -2136,7 +2148,7 @@ export default function PoolControllerPage() {
           }
         });
       } catch (err) {
-        console.error('Publish error:', err);
+        console.warn('Publish error:', err);
       }
     } else {
       console.warn('MQTT client is offline. Skipping write operation on topic:', subTopic);
@@ -3081,9 +3093,24 @@ export default function PoolControllerPage() {
     localStorage.setItem('mqtt_device', deviceId);
     localStorage.setItem('mqtt_user', mqttUser);
     localStorage.setItem('mqtt_pass', mqttPassword);
+    localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
-    alert('Configurações armazenadas com sucesso no navegador! Conecte novamente.');
+    alert('Configurações armazenadas com sucesso no navegador! Conectando novamente...');
     setActiveScreen('home');
+  };
+
+  const handleResetToDefaultConfig = () => {
+    setMqttBroker(DEFAULT_MQTT_BROKER);
+    setMqttPort(DEFAULT_MQTT_PORT);
+    setMqttUser('');
+    setMqttPassword('');
+    localStorage.setItem('mqtt_broker', DEFAULT_MQTT_BROKER);
+    localStorage.setItem('mqtt_port', DEFAULT_MQTT_PORT);
+    localStorage.removeItem('mqtt_user');
+    localStorage.removeItem('mqtt_pass');
+    localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
+
+    alert(`Configuração atualizada redefinida para os parâmetros padrão atualizados (${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT})!`);
   };
 
   const isCurrentlyAdmin = activeScreen === 'admin';
@@ -4617,8 +4644,8 @@ export default function PoolControllerPage() {
 
                                             if (isSupabaseConfigured()) {
                                               const userIdentifier = currentUser?.uid || currentUser?.id;
-                                              // Soft-delete: marca status=deleted (não remove a linha no Supabase)
                                               await deleteDevice(eq.id, userIdentifier);
+                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
                                             }
 
                                             if (isActive) {
@@ -4781,9 +4808,16 @@ export default function PoolControllerPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={handleBackToHome}
-                      className="flex-1 py-2.5 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-xs font-semibold rounded-xl transition-all"
+                      className="py-2.5 px-4 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-xs font-semibold rounded-xl transition-all"
                     >
                       Voltar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetToDefaultConfig}
+                      className="py-2.5 px-3 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold rounded-xl transition-all"
+                    >
+                      Restaurar Padrão
                     </button>
                     <button
                       onClick={handleSaveDevConfig}
@@ -6405,6 +6439,15 @@ export default function PoolControllerPage() {
                           </div>
 
                           <div className="flex justify-end gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={handleResetToDefaultConfig}
+                              className="px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 rounded-xl text-xs font-semibold transition-all"
+                              title="Restaurar endereço padrão do hardware (test.mosquitto.org:8081)"
+                            >
+                              Restaurar Padrão
+                            </button>
+
                             {mqttConnected ? (
                               <button
                                 type="button"

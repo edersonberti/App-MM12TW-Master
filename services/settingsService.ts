@@ -23,7 +23,6 @@ async function assertManagedDevice(deviceId: string): Promise<boolean> {
     .from('devices')
     .select('id')
     .eq('id', deviceId)
-    .eq('status', 'active')
     .maybeSingle();
 
   if (error) {
