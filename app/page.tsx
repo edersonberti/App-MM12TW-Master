@@ -1096,8 +1096,9 @@ export default function PoolControllerPage() {
               
               if (currentProgramRef.current === '---') {
                 setCurrentProgram(1);
-                publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+                publishTopic(`MLZ/${cleanId}/led/ctrl`, "ON");
+                publishTopic(`MLZ/${cleanId}/led/pg`, "1");
               }
 
               if (mqttConnected) {
@@ -1194,16 +1195,12 @@ export default function PoolControllerPage() {
     const effectiveSat = (s * satMult) / 100;
     const effectiveVal = (v * brightMult) / 100;
     const rgb = hsvToRgb(h, effectiveSat, effectiveVal);
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
     
-    // Core command channels
-    publishTopic(`MASTERLAZER/${deviceId}/pwm/r`, String(rgb.r));
-    publishTopic(`MASTERLAZER/${deviceId}/pwm/g`, String(rgb.g));
-    publishTopic(`MASTERLAZER/${deviceId}/pwm/b`, String(rgb.b));
-
-    // Fallbacks
-    publishTopic(`${deviceId}/pwm/r`, String(rgb.r));
-    publishTopic(`${deviceId}/pwm/g`, String(rgb.g));
-    publishTopic(`${deviceId}/pwm/b`, String(rgb.b));
+    // Send single clean RGB PWM values
+    publishTopic(`MLZ/${cleanId}/pwm/r`, String(rgb.r));
+    publishTopic(`MLZ/${cleanId}/pwm/g`, String(rgb.g));
+    publishTopic(`MLZ/${cleanId}/pwm/b`, String(rgb.b));
   }
 
   function throttledPublishColor(h: number, s: number, v: number, satMult: number, brightMult: number) {
@@ -2088,65 +2085,32 @@ export default function PoolControllerPage() {
     if (isConn) {
       try {
         const rawId = (deviceId || '').trim();
-        const cleanId = cleanDeviceId(deviceId).trim();
-
-        const idVariations = new Set<string>();
-        if (rawId) idVariations.add(rawId);
-        if (cleanId) idVariations.add(cleanId);
-
-        const noMlz = rawId.toLowerCase().startsWith('mlz-') ? rawId.substring(4) : rawId;
-        const parts = noMlz.split('-');
-        if (parts.length >= 2) {
-          idVariations.add(parts.join('-')); // MM12TW-EEA39F-000003
-          idVariations.add(parts.slice(1).join('-')); // EEA39F-000003
-          idVariations.add(parts[1]); // EEA39F
-        }
-        if (!rawId.toLowerCase().startsWith('mlz-')) {
-          idVariations.add(`MLZ-${rawId}`);
-        }
+        const cleanId = cleanDeviceId(deviceId).trim() || rawId;
 
         const uniqueTopics = new Set<string>();
 
-        // 1. Add original subTopic to our list of targets
-        uniqueTopics.add(subTopic);
+        // 1. Add exact subTopic if provided
+        if (subTopic) uniqueTopics.add(subTopic);
 
-        // 2. Generate alternate versions for each variation of the ID
-        idVariations.forEach((altId) => {
-          if (!altId) return;
-          const replacedWithRawAlt = subTopic.replace(new RegExp(escapeRegExp(rawId), 'gi'), altId);
-          uniqueTopics.add(replacedWithRawAlt);
+        // 2. Compute standard MLZ/ and MASTERLAZER/ variants with clean device ID
+        let relativePath = subTopic;
+        if (relativePath.startsWith('MASTERLAZER/')) {
+          relativePath = relativePath.substring('MASTERLAZER/'.length);
+        } else if (relativePath.startsWith('MLZ/')) {
+          relativePath = relativePath.substring('MLZ/'.length);
+        }
 
-          if (cleanId) {
-            const replacedWithCleanAlt = subTopic.replace(new RegExp(escapeRegExp(cleanId), 'gi'), altId);
-            uniqueTopics.add(replacedWithCleanAlt);
-          }
-        });
+        if (rawId && cleanId && rawId !== cleanId) {
+          relativePath = relativePath.replace(new RegExp(escapeRegExp(rawId), 'gi'), cleanId);
+        }
 
-        // 3. For each topic, ensure we send with standard MLZ/, MASTERLAZER/, custom manufacturer, and no prefix
-        const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
-        const topicsToSend = new Set<string>();
+        if (relativePath) {
+          uniqueTopics.add(`MLZ/${relativePath}`);
+          uniqueTopics.add(`MASTERLAZER/${relativePath}`);
+        }
+
+        // Send to unique topics cleanly without topic explosion
         uniqueTopics.forEach((t) => {
-          topicsToSend.add(t);
-          
-          let relativePart = t;
-          if (t.startsWith('MASTERLAZER/')) {
-            relativePart = t.substring('MASTERLAZER/'.length);
-          } else if (t.startsWith('MLZ/')) {
-            relativePart = t.substring('MLZ/'.length);
-          } else if (activeEquipment?.manufacturer && t.toUpperCase().startsWith(activeEquipment.manufacturer.toUpperCase() + '/')) {
-            relativePart = t.substring(activeEquipment.manufacturer.length + 1);
-          }
-          
-          topicsToSend.add(relativePart);
-          topicsToSend.add(`MLZ/${relativePart}`);
-          topicsToSend.add(`MASTERLAZER/${relativePart}`);
-          if (activeEquipment?.manufacturer) {
-            topicsToSend.add(`${activeEquipment.manufacturer}/${relativePart}`);
-          }
-        });
-
-        // 4. Send the messages to all computed topic targets & record outbound publish to ignore local self-echoes
-        topicsToSend.forEach((t) => {
           try {
             const message = new window.Paho.MQTT.Message(payload);
             message.destinationName = t;
@@ -2393,36 +2357,12 @@ export default function PoolControllerPage() {
 
     setters[motorNum](checked);
     const payloadON_OFF = checked ? 'ON' : 'OFF';
-    const payload1_0 = checked ? '1' : '0';
-    const payloadLIG_DESL = checked ? 'LIG' : 'DESL';
     logUserAction(`Togglou ${names[motorNum]} para ${checked ? 'LIGADO' : 'DESLIGADO'}`);
 
-    // 1. Direct subtopics for motor
-    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payloadON_OFF);
-    publishTopic(`${deviceId}/mt${motorNum}`, payloadON_OFF);
-    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}/state`, payloadON_OFF);
-    publishTopic(`${deviceId}/mt${motorNum}/state`, payloadON_OFF);
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
 
-    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payload1_0);
-    publishTopic(`${deviceId}/mt${motorNum}`, payload1_0);
-
-    publishTopic(`MASTERLAZER/${deviceId}/mt${motorNum}`, payloadLIG_DESL);
-    publishTopic(`${deviceId}/mt${motorNum}`, payloadLIG_DESL);
-
-    // 2. String commands to /cmd topic
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `mt${motorNum}=${payloadON_OFF}`);
-    publishTopic(`${deviceId}/cmd`, `mt${motorNum}=${payloadON_OFF}`);
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `mt${motorNum} ${payloadON_OFF}`);
-    publishTopic(`${deviceId}/cmd`, `mt${motorNum} ${payloadON_OFF}`);
-
-    // 3. JSON commands to /cmd and /set topics
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: checked ? 1 : 0 }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ [`mt${motorNum}`]: checked ? 1 : 0 }));
-
-    publishTopic(`MASTERLAZER/${deviceId}/set`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
-    publishTopic(`${deviceId}/set`, JSON.stringify({ [`mt${motorNum}`]: payloadON_OFF }));
+    // Primary topic expected by ESP32 hardware
+    publishTopic(`MLZ/${cleanId}/mt${motorNum}`, payloadON_OFF);
   };
 
   // LED Commands
@@ -2441,17 +2381,8 @@ export default function PoolControllerPage() {
       }
     }
     setCurrentProgram(nextProg);
-    
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "INC");
-    publishTopic(`${deviceId}/led/ctrl`, "INC");
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "INC");
-    publishTopic(`${deviceId}/led/cmd`, "INC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "INC");
-    publishTopic(`${deviceId}/cmd`, "INC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=INC");
-    publishTopic(`${deviceId}/cmd`, "led=INC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "INC", led_ctrl: "INC" }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "INC", led_ctrl: "INC" }));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/ctrl`, "INC");
   };
 
   const handleProgramDec = () => {
@@ -2467,64 +2398,25 @@ export default function PoolControllerPage() {
       }
     }
     setCurrentProgram(prevProg);
-    
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DEC");
-    publishTopic(`${deviceId}/led/ctrl`, "DEC");
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "DEC");
-    publishTopic(`${deviceId}/led/cmd`, "DEC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "DEC");
-    publishTopic(`${deviceId}/cmd`, "DEC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=DEC");
-    publishTopic(`${deviceId}/cmd`, "led=DEC");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "DEC", led_ctrl: "DEC" }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "DEC", led_ctrl: "DEC" }));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/ctrl`, "DEC");
   };
 
   const handleDirectProgramSelect = (progNum: number) => {
     setCurrentProgram(progNum);
-    
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, String(progNum));
-    publishTopic(`${deviceId}/led/pg`, String(progNum));
-    publishTopic(`MASTERLAZER/${deviceId}/led/program`, String(progNum));
-    publishTopic(`${deviceId}/led/program`, String(progNum));
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, String(progNum));
-    publishTopic(`${deviceId}/led/ctrl`, String(progNum));
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, `led_pg=${progNum}`);
-    publishTopic(`${deviceId}/cmd`, `led_pg=${progNum}`);
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led_pg: progNum, program: progNum }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led_pg: progNum, program: progNum }));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/pg`, String(progNum));
   };
 
   const handleProgramOff = () => {
     setCurrentProgram('---');
-    
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "OFF");
-    publishTopic(`${deviceId}/led/ctrl`, "OFF");
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "DESL");
-    publishTopic(`${deviceId}/led/ctrl`, "DESL");
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "0");
-    publishTopic(`${deviceId}/led/ctrl`, "0");
-    publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "0");
-    publishTopic(`${deviceId}/led/pg`, "0");
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "OFF");
-    publishTopic(`${deviceId}/led/cmd`, "OFF");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "led=OFF");
-    publishTopic(`${deviceId}/cmd`, "led=OFF");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "OFF", led_ctrl: "OFF", led_pg: 0 }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "OFF", led_ctrl: "OFF", led_pg: 0 }));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/ctrl`, "OFF");
   };
 
   const handleProgramSave = () => {
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SAVE");
-    publishTopic(`${deviceId}/led/ctrl`, "SAVE");
-    publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "SALVAR");
-    publishTopic(`${deviceId}/led/ctrl`, "SALVAR");
-    publishTopic(`MASTERLAZER/${deviceId}/led/cmd`, "SAVE");
-    publishTopic(`${deviceId}/led/cmd`, "SAVE");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, "SAVE");
-    publishTopic(`${deviceId}/cmd`, "SAVE");
-    publishTopic(`MASTERLAZER/${deviceId}/cmd`, JSON.stringify({ led: "SAVE", led_ctrl: "SAVE" }));
-    publishTopic(`${deviceId}/cmd`, JSON.stringify({ led: "SAVE", led_ctrl: "SAVE" }));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/ctrl`, "SAVE");
     alert('Configuração de LED persistida em memória interna!');
   };
 
@@ -2572,55 +2464,13 @@ export default function PoolControllerPage() {
       active_days_str: selectedDaysList
     };
 
-    // 1. General FT (Filtration Timer) topics
-    publishTopic(`MASTERLAZER/${deviceId}/ft/cfg`, JSON.stringify(coreJson));
-    publishTopic(`${deviceId}/ft/cfg`, JSON.stringify(extendedData));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
 
-    // Individual standard topics for T1 and T2
-    publishTopic(`MASTERLAZER/${deviceId}/ft/t1/start`, filterInit1);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/t1/hours`, filterHours1);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/t2/start`, filterInit2);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/t2/hours`, filterHours2);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/days/binary`, daysBinary);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/days/str`, selectedDaysList);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/days`, daysBinary);
-
-    publishTopic(`${deviceId}/ft/t1/start`, filterInit1);
-    publishTopic(`${deviceId}/ft/t1/hours`, filterHours1);
-    publishTopic(`${deviceId}/ft/t2/start`, filterInit2);
-    publishTopic(`${deviceId}/ft/t2/hours`, filterHours2);
-    publishTopic(`${deviceId}/ft/days/binary`, daysBinary);
-    publishTopic(`${deviceId}/ft/days/str`, selectedDaysList);
-    publishTopic(`${deviceId}/ft/days`, daysBinary);
-
-    // Keep legacy single-timer topics for backward-compatible devices
-    const legacyStart = filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`;
-    publishTopic(`MASTERLAZER/${deviceId}/ft/start`, legacyStart);
-    publishTopic(`MASTERLAZER/${deviceId}/ft/hours`, filterHours1);
-    publishTopic(`${deviceId}/ft/start`, legacyStart);
-    publishTopic(`${deviceId}/ft/hours`, filterHours1);
-
-    // 2. Motor-specific direct timer topics
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/cfg`, JSON.stringify(coreJson));
-    publishTopic(`${deviceId}/${targetMotor}/timer/cfg`, JSON.stringify(extendedData));
-
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t1/start`, filterInit1);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t1/hours`, filterHours1);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t2/start`, filterInit2);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/t2/hours`, filterHours2);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days/binary`, daysBinary);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days/str`, selectedDaysList);
-    publishTopic(`MASTERLAZER/${deviceId}/${targetMotor}/timer/days`, daysBinary);
-
-    publishTopic(`${deviceId}/${targetMotor}/timer/t1/start`, filterInit1);
-    publishTopic(`${deviceId}/${targetMotor}/timer/t1/hours`, filterHours1);
-    publishTopic(`${deviceId}/${targetMotor}/timer/t2/start`, filterInit2);
-    publishTopic(`${deviceId}/${targetMotor}/timer/t2/hours`, filterHours2);
-    publishTopic(`${deviceId}/${targetMotor}/timer/days/binary`, daysBinary);
-    publishTopic(`${deviceId}/${targetMotor}/timer/days/str`, selectedDaysList);
-    publishTopic(`${deviceId}/${targetMotor}/timer/days`, daysBinary);
+    // Single JSON configuration sent to filter topic
+    publishTopic(`MLZ/${cleanId}/ft/cfg`, JSON.stringify(extendedData));
 
     // Also update current legacy state for reactivity in other components
+    const legacyStart = filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`;
     setFilterInit(legacyStart);
     setFilterHours(filterHours1);
 
@@ -2649,33 +2499,8 @@ export default function PoolControllerPage() {
       program: parseInt(ledProgram) || 0
     };
 
-    // 1. Publish precise requested topic style
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/cfg`, JSON.stringify(data));
-
-    // 2. Publish compatibility formats
-    publishTopic(`${deviceId}/led/tmr/cfg`, JSON.stringify(data));
-
-    // Publish individual parameters to simplify Arduino / ESP logic
-    
-    // Hour/Start Topics
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/start`, startingTime);
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/start_hour`, ledStartHour);
-    publishTopic(`${deviceId}/led/tmr/start`, startingTime);
-    publishTopic(`${deviceId}/led/tmr/start_hour`, ledStartHour);
-
-    // Duration/Hours Topics
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/hours`, String(ledDuration));
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/duration`, String(ledDuration));
-    publishTopic(`${deviceId}/led/tmr/hours`, String(ledDuration));
-    publishTopic(`${deviceId}/led/tmr/duration`, String(ledDuration));
-
-    // Program Topics
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/program`, String(ledProgram));
-    publishTopic(`MASTERLAZER/${deviceId}/led/tmr/prog`, String(ledProgram));
-    publishTopic(`${deviceId}/led/tmr/program`, String(ledProgram));
-    publishTopic(`${deviceId}/led/tmr/prog`, String(ledProgram));
-
-
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/led/tmr/cfg`, JSON.stringify(data));
 
     logUserAction(`Configurou Timer LED: Início ${startingTime}, Duração: ${ledDuration}h, Programa: ${ledProgram}`);
     alert(`Programação do Timer LED enviada!\nInício: ${startingTime}\nDuração: ${ledDuration} horas\nPrograma: ${ledProgram}.`);
@@ -2696,32 +2521,8 @@ export default function PoolControllerPage() {
       bomba: 'mt1'
     };
 
-    // 1. Publish core brand style config
-    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/hidro/tmr/cfg`, JSON.stringify(data));
-
-    // mt1 direct timer config
-    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/cfg`, JSON.stringify(data));
-    publishTopic(`${deviceId}/mt1/timer/cfg`, JSON.stringify(data));
-
-    // 2. Publish individual parameter topics (active/status and hours/duration)
-    const activePayload = isEnabled ? '1' : '0';
-    
-    // hidro tmr paths
-    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/active`, activePayload);
-    publishTopic(`${deviceId}/hidro/tmr/active`, activePayload);
-    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/hours`, String(hoursVal));
-    publishTopic(`${deviceId}/hidro/tmr/hours`, String(hoursVal));
-    publishTopic(`MASTERLAZER/${deviceId}/hidro/tmr/duration`, String(hoursVal));
-    publishTopic(`${deviceId}/hidro/tmr/duration`, String(hoursVal));
-
-    // mt1 direct paths
-    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/active`, activePayload);
-    publishTopic(`${deviceId}/mt1/timer/active`, activePayload);
-    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/hours`, String(hoursVal));
-    publishTopic(`${deviceId}/mt1/timer/hours`, String(hoursVal));
-    publishTopic(`MASTERLAZER/${deviceId}/mt1/timer/duration`, String(hoursVal));
-    publishTopic(`${deviceId}/mt1/timer/duration`, String(hoursVal));
+    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    publishTopic(`MLZ/${cleanId}/hidro/tmr/cfg`, JSON.stringify(data));
 
     logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
     alert(`Programação do Timer ${motor1Name} enviada!\nStatus: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado (D)'}`);
@@ -3988,8 +3789,9 @@ export default function PoolControllerPage() {
                           setSatMultiplier(val);
                           if (currentProgramRef.current === '---') {
                             setCurrentProgram(1);
-                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                            const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+                            publishTopic(`MLZ/${cleanId}/led/ctrl`, "ON");
+                            publishTopic(`MLZ/${cleanId}/led/pg`, "1");
                           }
                           if (mqttConnected) {
                             throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, val, brightMultiplierRef.current);
@@ -4012,8 +3814,9 @@ export default function PoolControllerPage() {
                           setBrightMultiplier(val);
                           if (currentProgramRef.current === '---') {
                             setCurrentProgram(1);
-                            publishTopic(`MASTERLAZER/${deviceId}/led/ctrl`, "ON");
-                            publishTopic(`MASTERLAZER/${deviceId}/led/pg`, "1");
+                            const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+                            publishTopic(`MLZ/${cleanId}/led/ctrl`, "ON");
+                            publishTopic(`MLZ/${cleanId}/led/pg`, "1");
                           }
                           if (mqttConnected) {
                             throttledPublishColor(ledHueRef.current, ledSatRef.current, ledValRef.current, satMultiplierRef.current, val);
