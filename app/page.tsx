@@ -80,25 +80,27 @@ const FALLBACK_BROKERS = [
   { broker: 'broker.hivemq.com', port: '8884' }
 ];
 
-// Strips off any hex/efuse MAC suffix if present (e.g., "MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003", or "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MLZ-MM12TW-EEA39F-000003")
+// Strips off MLZ-, MASTERLAZER-, and any hex/efuse MAC suffix if present (e.g., "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003")
 function cleanDeviceId(id: string): string {
   if (!id) return '';
-  const trimmed = id.trim();
+  let trimmed = id.trim();
+
+  // Strip MLZ/ or MLZ- prefix
+  if (trimmed.toLowerCase().startsWith('mlz/')) {
+    trimmed = trimmed.substring(4);
+  } else if (trimmed.toLowerCase().startsWith('mlz-')) {
+    trimmed = trimmed.substring(4);
+  } else if (trimmed.toLowerCase().startsWith('masterlazer/')) {
+    trimmed = trimmed.substring(12);
+  } else if (trimmed.toLowerCase().startsWith('masterlazer-')) {
+    trimmed = trimmed.substring(12);
+  }
+
   const parts = trimmed.split('-');
-  const isMlzPrefixed = trimmed.toLowerCase().startsWith('mlz-');
-  
-  if (isMlzPrefixed) {
-    // Format with MLZ- prefix (e.g., MLZ-MM12TW-EEA39F-000003) has 4 parts.
-    // If it has 5 parts or more (e.g., with MAC suffix), strip the last part
-    if (parts.length >= 5) {
-      return parts.slice(0, 4).join('-');
-    }
-  } else {
-    // Standard format (e.g., MM12TW-EEA39F-000003) has 3 parts.
-    // If it has 4 parts or more (e.g., with MAC suffix), strip the last part
-    if (parts.length >= 4) {
-      return parts.slice(0, 3).join('-');
-    }
+  // Standard format (e.g., MM12TW-EEA39F-000003) has 3 parts.
+  // If it has 4 parts or more (e.g., with MAC suffix), strip the last part
+  if (parts.length >= 4) {
+    return parts.slice(0, 3).join('-');
   }
   return trimmed;
 }
@@ -1922,19 +1924,12 @@ export default function PoolControllerPage() {
 
           idsToSubscribe.forEach((id) => {
             if (!id) return;
-            relativePaths.forEach((path) => {
-              topicsToSubscribeSet.add(`${id}/${path}`);
-              topicsToSubscribeSet.add(`MLZ/${id}/${path}`);
-              topicsToSubscribeSet.add(`MASTERLAZER/${id}/${path}`);
-              if (activeEquipment?.manufacturer) {
-                topicsToSubscribeSet.add(`${activeEquipment.manufacturer}/${id}/${path}`);
-              }
-            });
-            topicsToSubscribeSet.add(`${id}/#`);
-            topicsToSubscribeSet.add(`MLZ/${id}/#`);
-            topicsToSubscribeSet.add(`MASTERLAZER/${id}/#`);
-            if (activeEquipment?.manufacturer) {
-              topicsToSubscribeSet.add(`${activeEquipment.manufacturer}/${id}/#`);
+            const cleanId = cleanDeviceId(id);
+            if (cleanId) {
+              topicsToSubscribeSet.add(`MLZ/${cleanId}/#`);
+            }
+            if (id && id !== cleanId) {
+              topicsToSubscribeSet.add(`MLZ/${id}/#`);
             }
           });
 
@@ -2082,49 +2077,40 @@ export default function PoolControllerPage() {
   function publishTopic(subTopic: string, payload: string) {
     const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
 
-    if (isConn) {
+    if (isConn && subTopic) {
       try {
         const rawId = (deviceId || '').trim();
         const cleanId = cleanDeviceId(deviceId).trim() || rawId;
 
-        const uniqueTopics = new Set<string>();
-
-        // 1. Add exact subTopic if provided
-        if (subTopic) uniqueTopics.add(subTopic);
-
-        // 2. Compute standard MLZ/ and MASTERLAZER/ variants with clean device ID
-        let relativePath = subTopic;
-        if (relativePath.startsWith('MASTERLAZER/')) {
+        let relativePath = subTopic.trim();
+        if (relativePath.toUpperCase().startsWith('MASTERLAZER/')) {
           relativePath = relativePath.substring('MASTERLAZER/'.length);
-        } else if (relativePath.startsWith('MLZ/')) {
+        } else if (relativePath.toUpperCase().startsWith('MLZ/')) {
           relativePath = relativePath.substring('MLZ/'.length);
+        }
+
+        // If relative path starts with MLZ- or MASTERLAZER-, strip it
+        if (relativePath.toUpperCase().startsWith('MLZ-')) {
+          relativePath = relativePath.substring(4);
+        } else if (relativePath.toUpperCase().startsWith('MASTERLAZER-')) {
+          relativePath = relativePath.substring(12);
         }
 
         if (rawId && cleanId && rawId !== cleanId) {
           relativePath = relativePath.replace(new RegExp(escapeRegExp(rawId), 'gi'), cleanId);
         }
 
-        if (relativePath) {
-          uniqueTopics.add(`MLZ/${relativePath}`);
-          uniqueTopics.add(`MASTERLAZER/${relativePath}`);
-        }
+        const targetTopic = `MLZ/${relativePath}`;
 
-        // Send to unique topics cleanly without topic explosion
-        uniqueTopics.forEach((t) => {
-          try {
-            const message = new window.Paho.MQTT.Message(payload);
-            message.destinationName = t;
-            recordOutboundPublish(t, payload);
-            mqttClientRef.current.send(message);
-            console.log(`MQTT Published topic [${t}]: ${payload}`);
-          } catch (innerErr) {
-            console.warn(`MQTT individual send failed on [${t}]:`, innerErr);
-          }
-        });
+        const message = new window.Paho.MQTT.Message(payload);
+        message.destinationName = targetTopic;
+        recordOutboundPublish(targetTopic, payload);
+        mqttClientRef.current.send(message);
+        console.log(`MQTT Published topic [${targetTopic}]: ${payload}`);
       } catch (err) {
         console.warn('Publish error:', err);
       }
-    } else {
+    } else if (!isConn) {
       console.warn('App Warning: MQTT client is offline. Skipping write operation on topic:', subTopic);
       if (userWantsMqttRef.current && (!mqttClientRef.current || !mqttConnected)) {
         console.log('Publish attempted while offline. Triggering MQTT reconnect...');
@@ -5736,7 +5722,7 @@ export default function PoolControllerPage() {
                                     onChange={(e) => {
                                       const val = parseInt(e.target.value);
                                       setSensorPoolTemp(val);
-                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_pool`, String(val));
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/temp_pool`, String(val));
                                     }}
                                     className="w-full accent-[#4398fa] cursor-pointer"
                                   />
@@ -5774,7 +5760,7 @@ export default function PoolControllerPage() {
                                     onClick={() => {
                                       const newVal = !sensorErrorActive;
                                       setSensorErrorActive(newVal);
-                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
                                       logUserAction(`Simulou Erro de Sensor Coletor Solar para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
                                     }}
                                     className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
@@ -5794,7 +5780,7 @@ export default function PoolControllerPage() {
                                     onClick={() => {
                                       const newVal = !flowErrorActive;
                                       setFlowErrorActive(newVal);
-                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
                                       logUserAction(`Simulou Erro de Fluxo de Água para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
                                     }}
                                     className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
@@ -5825,17 +5811,17 @@ export default function PoolControllerPage() {
                                 <div className="space-y-2.5 font-mono text-[10px]">
                                   <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
                                     <div className="text-amber-400 font-bold">{"// Tópicos Publicados Recorrentes:"}</div>
-                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/temp_coll</span></div>
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_coll</span></div>
                                     <div>Payload: <span className="text-emerald-400">{sensorErrorActive ? 'ERR' : sensorCollectorTemp}</span></div>
                                   </div>
 
                                   <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/temp_pool</span></div>
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_pool</span></div>
                                     <div>Payload: <span className="text-emerald-400">{sensorPoolTemp}</span></div>
                                   </div>
 
                                   <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MASTERLAZER/{searchedEquip.id}/flow_state</span></div>
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/flow_state</span></div>
                                     <div>Payload: <span className="text-emerald-400">{flowErrorActive ? 'FAIL' : 'OK'}</span></div>
                                   </div>
                                 </div>
