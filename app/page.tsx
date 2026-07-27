@@ -430,7 +430,7 @@ export default function PoolControllerPage() {
   const consecutiveAutoReconnectsRef = useRef<number>(0);
   const failedAttemptsRef = useRef<number>(0);
   
-  const [isUpdatingData, setIsUpdatingData] = useState(true);
+  const [isUpdatingData, setIsUpdatingData] = useState(false);
   const [showUpdatedMessage, setShowUpdatedMessage] = useState(false);
 
   const setUserWantsMqtt = (val: boolean) => {
@@ -2422,13 +2422,21 @@ export default function PoolControllerPage() {
     const targetMotor = isModelMM12TW ? 'mt2' : 'mt4';
     const activeMotorName = isModelMM12TW ? motor2Name : motor4Name;
 
+    const formatHour = (val: string) => {
+      if (!val || val === 'D' || val === 'off') return 'D';
+      return val.includes(':') ? val : `${val.padStart(2, '0')}:00`;
+    };
+
+    const t1StartFormatted = formatHour(filterInit1);
+    const t2StartFormatted = formatHour(filterInit2);
+
     // Build core JSON with Timer 1 & Timer 2 parameters
     const coreJson = {
-      t1_start: filterInit1,
+      t1_start: t1StartFormatted,
       t1_hours: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
-      t2_start: filterInit2,
+      t2_start: t2StartFormatted,
       t2_hours: filterInit2 === 'D' ? 0 : parseInt(filterHours2) || 4,
-      start: filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`,
+      start: t1StartFormatted,
       hours: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
       target_motor: targetMotor
     };
@@ -2442,7 +2450,7 @@ export default function PoolControllerPage() {
 
     const extendedData = {
       ...coreJson,
-      inicio: filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`,
+      inicio: t1StartFormatted,
       horas: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
       duration: filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4,
       days: filterDays,
@@ -2452,8 +2460,24 @@ export default function PoolControllerPage() {
 
     const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
 
-    // Single JSON configuration sent to filter topic
-    publishTopic(`MLZ/${cleanId}/ft/cfg`, JSON.stringify(extendedData));
+    const jsonString = JSON.stringify(extendedData);
+
+    // 1. JSON configuration sent to filter topic AND target motor timer topic (mt2/timer/cfg or mt4/timer/cfg)
+    publishTopic(`MLZ/${cleanId}/ft/cfg`, jsonString);
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/cfg`, jsonString);
+
+    // 2. Individual parameter topics for maximum ESP32 firmware compatibility
+    publishTopic(`MLZ/${cleanId}/ft/t1/start`, t1StartFormatted);
+    publishTopic(`MLZ/${cleanId}/ft/t1/hours`, String(filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4));
+    publishTopic(`MLZ/${cleanId}/ft/t2/start`, t2StartFormatted);
+    publishTopic(`MLZ/${cleanId}/ft/t2/hours`, String(filterInit2 === 'D' ? 0 : parseInt(filterHours2) || 4));
+    publishTopic(`MLZ/${cleanId}/ft/days/binary`, daysBinary);
+
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/t1/start`, t1StartFormatted);
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/t1/hours`, String(filterInit1 === 'D' ? 0 : parseInt(filterHours1) || 4));
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/t2/start`, t2StartFormatted);
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/t2/hours`, String(filterInit2 === 'D' ? 0 : parseInt(filterHours2) || 4));
+    publishTopic(`MLZ/${cleanId}/${targetMotor}/timer/days/binary`, daysBinary);
 
     // Also update current legacy state for reactivity in other components
     const legacyStart = filterInit1 === 'D' ? 'D' : `${filterInit1.padStart(2, '0')}:00`;
@@ -2508,7 +2532,12 @@ export default function PoolControllerPage() {
     };
 
     const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
-    publishTopic(`MLZ/${cleanId}/hidro/tmr/cfg`, JSON.stringify(data));
+    const jsonStr = JSON.stringify(data);
+
+    publishTopic(`MLZ/${cleanId}/hidro/tmr/cfg`, jsonStr);
+    publishTopic(`MLZ/${cleanId}/mt1/timer/cfg`, jsonStr);
+    publishTopic(`MLZ/${cleanId}/hidro/tmr/hours`, String(data.hours));
+    publishTopic(`MLZ/${cleanId}/mt1/timer/hours`, String(data.hours));
 
     logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
     alert(`Programação do Timer ${motor1Name} enviada!\nStatus: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado (D)'}`);
@@ -3203,21 +3232,7 @@ export default function PoolControllerPage() {
           {/* Dynamic Screen Contents inside Screen Containers */}
           <div className="flex-1 overflow-y-auto px-4 py-3 custom-scrollbar flex flex-col relative">
             
-            {isUpdatingData && ['home', 'aux', 'led', 'timers', 'setup'].includes(activeScreen) && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] z-50 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-auto">
-                <div className="bg-[#1e293b]/95 border border-white/10 rounded-2xl p-6 shadow-2xl max-w-[280px] flex flex-col items-center">
-                  <div className="relative mb-4 flex items-center justify-center">
-                    <div className="w-10 h-10 border-4 border-[#4398fa]/20 border-t-[#4398fa] rounded-full animate-spin" />
-                    <FolderSync className="w-5 h-5 text-[#4398fa] absolute animate-pulse" />
-                  </div>
-
-                 
-
-                </div>
-              </div>
-            )}
-            
-            <AnimatePresence mode="wait">
+            <AnimatePresence initial={false}>
               
               {/* Screen: Login */}
               {activeScreen === 'login' && (
