@@ -222,7 +222,7 @@ async function updateFirmwareByModelVersion(params: {
 export async function getFirmwareDownloadUrl(storagePath: string): Promise<string | null> {
   const { data, error } = await supabase.storage
     .from(FIRMWARE_BUCKET)
-    .createSignedUrl(storagePath, 60 * 15);
+    .createSignedUrl(storagePath, 60 * 30);
 
   if (error) {
     console.error('[FirmwareService] Signed URL error:', error.message);
@@ -232,23 +232,46 @@ export async function getFirmwareDownloadUrl(storagePath: string): Promise<strin
   return data?.signedUrl || null;
 }
 
-export async function downloadFirmwareFile(item: FirmwareItem): Promise<void> {
-  const { data, error } = await supabase.storage
-    .from(FIRMWARE_BUCKET)
-    .download(item.storage_path);
+/** Public OTA base used by ESP32 devices (never expose .bin download in the phone UI). */
+export const OTA_PUBLIC_BASE_URL = 'https://app-mm-12-tw-master.vercel.app/ota';
 
-  if (error || !data) {
-    throw error || new Error('Não foi possível baixar o firmware.');
+export function getOtaBaseUrl(): string {
+  if (typeof window === 'undefined') return OTA_PUBLIC_BASE_URL;
+  const origin = window.location.origin;
+  if (/localhost|127\.0\.0\.1/i.test(origin)) {
+    return OTA_PUBLIC_BASE_URL;
+  }
+  return `${origin}/ota`;
+}
+
+/**
+ * Creates a short-lived OTA token and returns the public URL the device should fetch.
+ * The phone does NOT download the .bin — only the ESP32 pulls it from /ota/.
+ */
+export async function createOtaUpdateUrl(item: FirmwareItem): Promise<string> {
+  const signedUrl = await getFirmwareDownloadUrl(item.storage_path);
+  if (!signedUrl) {
+    throw new Error('Não foi possível gerar URL assinada do firmware.');
   }
 
-  const url = URL.createObjectURL(data);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `${item.model}_${item.versao}.bin`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('ota_tokens')
+    .insert({
+      signed_url: signedUrl,
+      model: item.model,
+      storage_path: item.storage_path,
+      expires_at: expiresAt,
+    })
+    .select('token')
+    .single();
+
+  if (error || !data?.token) {
+    console.error('[FirmwareService] OTA token insert error:', error?.message);
+    throw error || new Error('Não foi possível criar token OTA.');
+  }
+
+  return `${getOtaBaseUrl()}/?t=${encodeURIComponent(data.token)}`;
 }
 
 export async function deactivateFirmware(id: string): Promise<void> {

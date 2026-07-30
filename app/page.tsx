@@ -46,7 +46,6 @@ import {
   PowerOff,
   Cpu,
   Upload,
-  Download,
   RefreshCw,
   Share2,
   Copy,
@@ -81,7 +80,7 @@ import {
   type DeviceCatalogItem,
 } from '../services/deviceCatalogService';
 import {
-  downloadFirmwareFile,
+  createOtaUpdateUrl,
   fetchActiveFirmware,
   fetchAllFirmware,
   uploadFirmware,
@@ -2526,14 +2525,48 @@ export default function PoolControllerPage() {
   const handleOperatorFirmwareUpdate = async (item: FirmwareItem) => {
     setFirmwareUpdatingModel(item.model);
     try {
-      await downloadFirmwareFile(item);
+      const modelKey = item.model.trim().toUpperCase();
+      const targets = registeredEquipments.filter(
+        (eq) => (eq.model || '').trim().toUpperCase() === modelKey
+      );
+
+      if (targets.length === 0) {
+        showToast('Sem equipamento', `Nenhum equipamento do modelo ${item.model} encontrado.`, 'warning');
+        return;
+      }
+
+      const isConn =
+        mqttClientRef.current &&
+        typeof mqttClientRef.current.isConnected === 'function' &&
+        mqttClientRef.current.isConnected();
+
+      if (!isConn) {
+        showToast('MQTT offline', 'Conecte o MQTT antes de enviar a atualização OTA.', 'warning');
+        if (userWantsMqttRef.current) {
+          connectMQTT();
+        }
+        return;
+      }
+
+      // Short-lived public URL on /ota/ — device downloads the .bin; the phone never receives the file.
+      const otaUrl = await createOtaUpdateUrl(item);
+
+      for (const eq of targets) {
+        const rawId = (eq.id || '').trim();
+        const cleanId = cleanDeviceId(rawId).trim() || rawId;
+        if (!cleanId) continue;
+        publishTopic(`MLZ/${cleanId}/ota`, otaUrl);
+        publishTopic(`MLZ/${cleanId}/ota/url`, otaUrl);
+      }
+
+      logUserAction(`OTA ${item.model} v${item.versao}`);
       showToast(
-        'Atualização Pronta',
-        `Firmware ${item.model} v${item.versao} baixado. Aplique no equipamento.`,
+        'OTA enviado',
+        `Comando de atualização ${item.model} v${item.versao} enviado ao equipamento via MQTT.`,
         'success'
       );
     } catch (err: any) {
-      showToast('Erro na Atualização', err?.message || 'Não foi possível baixar o firmware.', 'error');
+      showToast('Erro na Atualização', err?.message || 'Não foi possível iniciar o OTA.', 'error');
     } finally {
       setFirmwareUpdatingModel(null);
     }
@@ -3243,7 +3276,7 @@ export default function PoolControllerPage() {
         return;
       }
       setShareInvite(invite);
-      showToast('Convite criado', 'Envie o link pelo WhatsApp.', 'success');
+      showToast('Convite criado', 'Link válido por 24 horas · uso único.', 'success');
     } finally {
       setShareBusy(false);
     }
@@ -5091,7 +5124,7 @@ export default function PoolControllerPage() {
                           Atualização de Firmware
                         </h3>
                         <p className="text-[10px] text-slate-400 mt-1">
-                          Novas versões disponíveis para os modelos dos seus equipamentos.
+                          O arquivo .bin não é baixado no celular — o comando OTA é enviado ao equipamento via MQTT.
                         </p>
                       </div>
                       <div className="space-y-2">
@@ -5112,8 +5145,8 @@ export default function PoolControllerPage() {
                               onClick={() => handleOperatorFirmwareUpdate(fw)}
                               className="shrink-0 px-3 py-2 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-[10px] font-bold rounded-xl flex items-center gap-1.5"
                             >
-                              <Download className="w-3.5 h-3.5" />
-                              {firmwareUpdatingModel === fw.model ? 'Baixando...' : 'Atualizar'}
+                              <Upload className="w-3.5 h-3.5" />
+                              {firmwareUpdatingModel === fw.model ? 'Enviando OTA...' : 'Atualizar'}
                             </button>
                           </div>
                         ))}
@@ -5330,6 +5363,7 @@ export default function PoolControllerPage() {
                     ) : (
                       <div className="space-y-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
                         <p className="text-[11px] text-emerald-200 font-medium">Convite pronto</p>
+                        <p className="text-[10px] text-emerald-200/80">Válido por 24 horas · uso único</p>
                         <a
                           href={buildWhatsAppShareUrl(
                             buildInviteUrl(shareInvite.token),
@@ -5457,6 +5491,7 @@ export default function PoolControllerPage() {
                                 ? 'Você poderá acionar o equipamento e editar nomes.'
                                 : 'Você poderá acionar motores, LED e timers — sem editar nomes.'}
                             </p>
+                            <p className="text-[10px] text-slate-500 mt-2">Este link expira em 24 horas se não for aceito.</p>
                           </div>
                         </div>
 
@@ -5496,6 +5531,8 @@ export default function PoolControllerPage() {
                         <p className="text-sm font-bold text-amber-100">
                           {invitePreview.status === 'accepted'
                             ? 'Este convite já foi usado.'
+                            : invitePreview.status === 'expired'
+                            ? 'Este convite expirou (válido por 24 horas). Peça um novo link ao dono.'
                             : invitePreview.status === 'revoked'
                             ? 'Este convite foi revogado.'
                             : 'Convite inválido ou expirado.'}
