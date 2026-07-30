@@ -16,6 +16,7 @@ import {
   Home,
   Check,
   AlertTriangle,
+  AlertCircle,
   Wifi,
   WifiOff,
   User,
@@ -432,6 +433,26 @@ export default function PoolControllerPage() {
   
   const [isUpdatingData, setIsUpdatingData] = useState(false);
   const [showUpdatedMessage, setShowUpdatedMessage] = useState(false);
+
+  // Custom Toast notification system (replaces browser native alerts)
+  const [toasts, setToasts] = useState<Array<{
+    id: string;
+    title: string;
+    message?: string;
+    type?: 'success' | 'info' | 'warning' | 'error';
+  }>>([]);
+
+  const showToast = useCallback((title: string, message?: string, type: 'success' | 'info' | 'warning' | 'error' = 'success') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, title, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   const setUserWantsMqtt = (val: boolean) => {
     userWantsMqttRef.current = val;
@@ -1291,7 +1312,7 @@ export default function PoolControllerPage() {
         const { data, error } = await signUp(cleanEmail, cleanPassword, cleanEmail.split('@')[0], 'operator');
         if (error) throw error;
         if (data?.user) {
-          alert('Conta cadastrada com sucesso! Verifique seu e-mail para confirmação se necessário.');
+          showToast('Conta cadastrada com sucesso!', 'Verifique seu e-mail para confirmação se necessário.', 'success');
           setActiveScreen('login');
         }
       }
@@ -1308,7 +1329,7 @@ export default function PoolControllerPage() {
 
   const handleResetPasswordSimulated = async () => {
     if (!emailInput) {
-      alert('Por favor, insira o seu e-mail no campo de login acima.');
+      showToast('E-mail necessário', 'Por favor, insira o seu e-mail no campo de login acima.', 'warning');
       return;
     }
     try {
@@ -1316,9 +1337,9 @@ export default function PoolControllerPage() {
         redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
       });
       if (error) throw error;
-      alert(`Instruções de redefinição de senha enviadas para o email: ${emailInput}.`);
+      showToast('Redefinição de Senha', `Instruções de redefinição de senha enviadas para: ${emailInput}`, 'info');
     } catch (err: any) {
-      alert(`Erro Supabase: ${err.message}`);
+      showToast('Erro Supabase', err.message, 'error');
     }
   };
 
@@ -2138,7 +2159,7 @@ export default function PoolControllerPage() {
 
   const handleAddUserAdmin = (e: React.FormEvent) => {
     e.preventDefault();
-    alert('No Supabase, novos usuários devem cadastrar-se pela tela de Login ("Criar nova conta"). Após cadastrados, você pode alterar o nível de acesso deles na lista abaixo.');
+    showToast('Aviso de Cadastro', 'Novos usuários devem cadastrar-se pela tela de Login ("Criar nova conta"). Após cadastrados, altere o nível de acesso abaixo.', 'info');
     setUserModalOpen(null);
   };
 
@@ -2173,15 +2194,15 @@ export default function PoolControllerPage() {
       setUserFormPassword('');
       setUserFormRole('operator');
       setUserModalOpen(null);
-      alert('Nível de acesso atualizado com sucesso no Supabase!');
+      showToast('Perfil Atualizado', 'Nível de acesso atualizado com sucesso!', 'success');
     } catch (err: any) {
-      alert(`Erro ao atualizar perfil no Supabase: ${err.message}`);
+      showToast('Erro ao atualizar perfil', err.message, 'error');
     }
   };
 
   const handleDeleteUserAdmin = async (uid: string) => {
     if (currentUser && currentUser.uid === uid) {
-      alert('Você não pode remover a si mesmo!');
+      showToast('Ação Inválida', 'Você não pode remover a si mesmo!', 'warning');
       return;
     }
 
@@ -2205,9 +2226,9 @@ export default function PoolControllerPage() {
       })));
       
       logUserAction(`Removeu usuário: ${targetUser.email}`);
-      alert('Usuário removido com sucesso do Supabase!');
+      showToast('Usuário Removido', `Usuário ${targetUser.email} removido com sucesso.`, 'success');
     } catch (err: any) {
-      alert(`Erro ao remover usuário do Supabase: ${err.message}`);
+      showToast('Erro ao remover usuário', err.message, 'error');
     }
   };
 
@@ -2217,11 +2238,11 @@ export default function PoolControllerPage() {
     const model = catalogModel.trim().toUpperCase();
     const motorCount = Number(catalogMotorCount);
     if (!model) {
-      alert('Informe o modelo do equipamento.');
+      showToast('Campo Obrigatório', 'Informe o modelo do equipamento.', 'warning');
       return;
     }
     if (!Number.isInteger(motorCount) || motorCount < 1 || motorCount > 8) {
-      alert('A quantidade de motores deve ser de 1 a 8.');
+      showToast('Quantidade Inválida', 'A quantidade de motores deve ser de 1 a 8.', 'warning');
       return;
     }
 
@@ -2234,10 +2255,10 @@ export default function PoolControllerPage() {
         );
         setCatalogModel('');
         setCatalogMotorCount('4');
-        alert(`Modelo ${created.model} adicionado ao catálogo.`);
+        showToast('Catálogo Atualizado', `Modelo ${created.model} adicionado ao catálogo.`, 'success');
       }
     } catch (err: any) {
-      alert(err?.message || 'Não foi possível adicionar o modelo ao catálogo.');
+      showToast('Erro no Catálogo', err?.message || 'Não foi possível adicionar o modelo ao catálogo.', 'error');
     } finally {
       setCatalogSaving(false);
     }
@@ -2253,10 +2274,12 @@ export default function PoolControllerPage() {
         current.filter((catalogItem) => catalogItem.id !== item.id)
       );
     } catch (err: any) {
-      alert(
+      showToast(
+        'Erro ao Remover Modelo',
         err?.code === '23503'
           ? 'Este modelo não pode ser removido porque existem equipamentos vinculados a ele.'
-          : err?.message || 'Não foi possível remover o modelo do catálogo.'
+          : err?.message || 'Não foi possível remover o modelo do catálogo.',
+        'error'
       );
     }
   };
@@ -2403,7 +2426,7 @@ export default function PoolControllerPage() {
   const handleProgramSave = () => {
     const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
     publishTopic(`MLZ/${cleanId}/led/ctrl`, "SAVE");
-    alert('Configuração de LED persistida em memória interna!');
+    showToast('Configuração Salva', 'Configuração de LED persistida em memória interna!', 'success');
   };
 
   // Save Timers
@@ -2484,12 +2507,16 @@ export default function PoolControllerPage() {
     setFilterInit(legacyStart);
     setFilterHours(filterHours1);
 
-    const activeText = selectedDaysList ? `\nDias: [ ${selectedDaysList} ]` : `\nDias: Nenhum selecionado`;
-    const t1Text = filterInit1 === 'D' ? 'Timer 1: Desligado' : `Timer 1: ${filterInit1}h (Ativo por ${filterHours1}h)`;
-    const t2Text = filterInit2 === 'D' ? 'Timer 2: Desligado' : `Timer 2: ${filterInit2}h (Ativo por ${filterHours2}h)`;
+    const activeText = selectedDaysList ? `Dias: [ ${selectedDaysList} ]` : `Dias: Nenhum selecionado`;
+    const t1Text = filterInit1 === 'D' ? 'Timer 1: Desligado' : `Timer 1: ${filterInit1}h (${filterHours1}h)`;
+    const t2Text = filterInit2 === 'D' ? 'Timer 2: Desligado' : `Timer 2: ${filterInit2}h (${filterHours2}h)`;
     
     logUserAction(`Configurou Filtração: T1: ${filterInit1}h(${filterHours1}h), T2: ${filterInit2}h(${filterHours2}h), Dias: ${selectedDaysList || 'Nenhum'}`);
-    alert(`Programação de filtragem enviada para ${activeMotorName} (${targetMotor.toUpperCase()})!\n\n${t1Text}\n${t2Text}${activeText}`);
+    showToast(
+      `Programação enviada para ${activeMotorName} (${targetMotor.toUpperCase()})!`,
+      `${t1Text} | ${t2Text} | ${activeText}`,
+      'success'
+    );
   };
 
   const handleSaveLedTimer = () => {
@@ -2513,7 +2540,11 @@ export default function PoolControllerPage() {
     publishTopic(`MLZ/${cleanId}/led/tmr/cfg`, JSON.stringify(data));
 
     logUserAction(`Configurou Timer LED: Início ${startingTime}, Duração: ${ledDuration}h, Programa: ${ledProgram}`);
-    alert(`Programação do Timer LED enviada!\nInício: ${startingTime}\nDuração: ${ledDuration} horas\nPrograma: ${ledProgram}.`);
+    showToast(
+      'Timer LED Enviado!',
+      `Início: ${startingTime} | Duração: ${ledDuration}h | Prog: ${ledProgram}`,
+      'success'
+    );
   };
 
   const handleSaveHidroTimer = () => {
@@ -2540,7 +2571,11 @@ export default function PoolControllerPage() {
     publishTopic(`MLZ/${cleanId}/mt1/timer/hours`, String(data.hours));
 
     logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
-    alert(`Programação do Timer ${motor1Name} enviada!\nStatus: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado (D)'}`);
+    showToast(
+      `Timer ${motor1Name} Enviado!`,
+      `Status: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`,
+      'success'
+    );
   };
 
   // Start the QR Code Scanner camera
@@ -2817,7 +2852,7 @@ export default function PoolControllerPage() {
     const trimmedId = finalId.trim();
     const normalizedModel = finalModel.trim().toUpperCase();
     if (!trimmedId) {
-      alert("Por favor, digite um ID de equipamento válido.");
+      showToast('ID Inválido', 'Por favor, digite um ID de equipamento válido.', 'warning');
       return;
     }
 
@@ -2913,7 +2948,7 @@ export default function PoolControllerPage() {
       `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
     
-    alert(`Equipamento ${normalizedModel} com ID "${trimmedId}" salvo com sucesso e associado ao usuário "${userEmail}"!`);
+    showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${trimmedId}) associado com sucesso.`, 'success');
   };
 
   // Save Advanced Developer Config
@@ -2925,7 +2960,7 @@ export default function PoolControllerPage() {
     localStorage.setItem('mqtt_pass', mqttPassword);
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
-    alert('Configurações armazenadas com sucesso no navegador! Conectando novamente...');
+    showToast('Configurações Salvas', 'Configurações armazenadas no navegador! Reconectando...', 'success');
     setActiveScreen('home');
   };
 
@@ -2940,7 +2975,7 @@ export default function PoolControllerPage() {
     localStorage.removeItem('mqtt_pass');
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
-    alert(`Configuração atualizada redefinida para os parâmetros padrão atualizados (${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT})!`);
+    showToast('Configuração Redefinida', `Parâmetros padrão restaurados (${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT})!`, 'info');
   };
 
   const isCurrentlyAdmin = activeScreen === 'admin';
@@ -3299,7 +3334,7 @@ export default function PoolControllerPage() {
                                     type="button"
                                     onClick={() => {
                                       if (!manualUrl || !manualKey) {
-                                        alert('Por favor, preencha ambos os campos.');
+                                        showToast('Campos Obrigatórios', 'Por favor, preencha ambos os campos.', 'warning');
                                         return;
                                       }
                                       const success = saveLocalConfig(manualUrl, manualKey);
@@ -3309,7 +3344,7 @@ export default function PoolControllerPage() {
                                           window.location.reload();
                                         }, 1200);
                                       } else {
-                                        alert('Dados inválidos. Verifique se a chave começa com "eyJ" e tem formato de JWT.');
+                                        showToast('Dados Inválidos', 'Verifique se a chave começa com "eyJ" e tem formato de JWT.', 'error');
                                       }
                                     }}
                                     className="flex-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-[10.5px] text-center transition-all"
@@ -5177,7 +5212,7 @@ export default function PoolControllerPage() {
                                             setDeviceId(eq.id);
                                             localStorage.setItem('mqtt_device', eq.id);
                                             logUserAction(`Ativou equipamento ID: ${eq.id}`);
-                                            alert(`Dispositivo ${eq.id} ativado com sucesso!`);
+                                            showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
                                           }}
                                           className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
                                         >
@@ -5200,7 +5235,7 @@ export default function PoolControllerPage() {
                                         
                                         const targetUser = simUsers.find(u => u.email === selectedUserForEquip);
                                         if (!targetUser) {
-                                          alert("Usuário não encontrado!");
+                                          showToast('Usuário não encontrado', 'Operador selecionado não foi localizado.', 'error');
                                           return;
                                         }
 
@@ -5214,7 +5249,7 @@ export default function PoolControllerPage() {
                                         }
 
                                         setAdminSearchEquip(eqId);
-                                        alert(`Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip} com sucesso no Supabase!`);
+                                        showToast('Equipamento Vinculado', `Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip}!`, 'success');
                                       }}
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
@@ -5287,7 +5322,7 @@ export default function PoolControllerPage() {
                                 if (found) {
                                   setTelemetrySearchId(found.id);
                                 } else {
-                                  alert('Nenhum dispositivo cadastrado com este ID. Selecione um dos atalhos abaixo para carregar rapidamente.');
+                                  showToast('Dispositivo não encontrado', 'Nenhum dispositivo cadastrado com este ID.', 'warning');
                                 }
                               }}
                               className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-xl transition-colors active:scale-95 shadow-lg shadow-amber-500/20"
@@ -5868,7 +5903,7 @@ export default function PoolControllerPage() {
 
                                       const combined = [...generated, ...userLogs].slice(0, 200);
                                       setUserLogs(combined);
-                                      alert(`5 Logs de teste inseridos para o dispositivo ${searchedEquip.id}!`);
+                                      showToast('Logs de Teste', `5 Logs de teste inseridos para ${searchedEquip.id}!`, 'info');
                                     } catch (e) {}
                                   }}
                                   className="w-full py-2 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors"
@@ -6482,6 +6517,66 @@ export default function PoolControllerPage() {
         </div>
 
       </div>
+
+      {/* Fixed Custom Toast Notifications Overlay */}
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0">
+        <AnimatePresence>
+          {toasts.map((toast) => {
+            const bgBorder =
+              toast.type === 'success'
+                ? 'bg-emerald-950/95 border-emerald-500/50 text-emerald-100 shadow-emerald-950/50'
+                : toast.type === 'error'
+                ? 'bg-rose-950/95 border-rose-500/50 text-rose-100 shadow-rose-950/50'
+                : toast.type === 'warning'
+                ? 'bg-amber-950/95 border-amber-500/50 text-amber-100 shadow-amber-950/50'
+                : 'bg-cyan-950/95 border-cyan-500/50 text-cyan-100 shadow-cyan-950/50';
+
+            const Icon =
+              toast.type === 'success'
+                ? CheckCircle2
+                : toast.type === 'error'
+                ? AlertCircle
+                : toast.type === 'warning'
+                ? AlertTriangle
+                : Info;
+
+            const iconColor =
+              toast.type === 'success'
+                ? 'text-emerald-400'
+                : toast.type === 'error'
+                ? 'text-rose-400'
+                : toast.type === 'warning'
+                ? 'text-amber-400'
+                : 'text-cyan-400';
+
+            return (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border backdrop-blur-md shadow-2xl ${bgBorder}`}
+              >
+                <Icon className={`w-5 h-5 mt-0.5 shrink-0 ${iconColor}`} />
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-bold leading-snug">{toast.title}</h4>
+                  {toast.message && (
+                    <p className="text-[11px] opacity-90 mt-0.5 leading-relaxed break-words">{toast.message}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => removeToast(toast.id)}
+                  className="p-1 opacity-60 hover:opacity-100 transition-opacity rounded-lg hover:bg-white/10 shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+
     </div>
   );
 }

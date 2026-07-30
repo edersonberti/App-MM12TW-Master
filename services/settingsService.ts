@@ -70,18 +70,21 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
   try {
     const { data, error } = await supabase
       .from('device_settings')
-      .insert({ device_id: deviceId })
+      .upsert({ device_id: deviceId }, { onConflict: 'device_id' })
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
+      if (error.message?.includes('duplicate key') || error.code === '23505') {
+        return await fetchDeviceSettings(deviceId);
+      }
       console.error('[SettingsService] Error creating default settings:', error.message);
       return null;
     }
     return data;
   } catch (err) {
     console.error('[SettingsService] Create default settings error:', err);
-    return null;
+    return await fetchDeviceSettings(deviceId);
   }
 }
 
@@ -89,47 +92,31 @@ export async function saveDeviceSettings(
   deviceId: string,
   settings: DeviceSettingsUpdate
 ): Promise<SupabaseDeviceSettings | null> {
+  const canManage = await assertManagedDevice(deviceId);
+  if (!canManage) {
+    console.error(
+      '[SettingsService] Cannot save settings: device missing or not owned/accessible:',
+      deviceId
+    );
+    return null;
+  }
+
   try {
-    const existing = await fetchDeviceSettings(deviceId);
-
-    if (existing) {
-      const { data, error } = await supabase
-        .from('device_settings')
-        .update({
-          ...settings,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('device_id', deviceId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('[SettingsService] Error updating settings:', error.message);
-        return null;
-      }
-      return data;
-    }
-
-    const canManage = await assertManagedDevice(deviceId);
-    if (!canManage) {
-      console.error(
-        '[SettingsService] Cannot insert settings: device missing or not owned/accessible:',
-        deviceId
-      );
-      return null;
-    }
-
     const { data, error } = await supabase
       .from('device_settings')
-      .insert({
-        device_id: deviceId,
-        ...settings,
-      })
+      .upsert(
+        {
+          device_id: deviceId,
+          ...settings,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'device_id' }
+      )
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('[SettingsService] Error inserting settings:', error.message);
+      console.error('[SettingsService] Error saving settings:', error.message);
       return null;
     }
     return data;

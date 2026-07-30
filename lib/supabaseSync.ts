@@ -294,23 +294,26 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
   try {
     const { data, error } = await supabase
       .from('device_settings')
-      .insert({ device_id: deviceId })
+      .upsert({ device_id: deviceId }, { onConflict: 'device_id' })
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
+      if (error.message?.includes('duplicate key') || error.code === '23505') {
+        return await fetchDeviceSettings(deviceId);
+      }
       console.warn('[Supabase Sync] Error creating default device settings:', error.message);
       return null;
     }
     return data;
   } catch (err: any) {
     console.error('[Supabase Sync] Create default device settings error:', err);
-    return null;
+    return await fetchDeviceSettings(deviceId);
   }
 }
 
 /**
- * Updates motor names in device_settings (UPDATE when row exists, INSERT otherwise).
+ * Updates motor names in device_settings (UPSERT based on device_id).
  */
 export async function saveDeviceSettings(
   deviceId: string,
@@ -327,44 +330,28 @@ export async function saveDeviceSettings(
 ): Promise<SupabaseDeviceSettings | null> {
   if (!isSupabaseConfigured()) return null;
 
+  const canManage = await assertManagedDevice(deviceId);
+  if (!canManage) {
+    console.warn('[Supabase Sync] Cannot save settings for inaccessible device:', deviceId);
+    return null;
+  }
+
   try {
-    const existing = await fetchDeviceSettings(deviceId);
-
-    if (existing) {
-      const { data, error } = await supabase
-        .from('device_settings')
-        .update({
-          ...settings,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('device_id', deviceId)
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('[Supabase Sync] Error updating device settings:', error.message);
-        return null;
-      }
-      return data;
-    }
-
-    const canManage = await assertManagedDevice(deviceId);
-    if (!canManage) {
-      console.warn('[Supabase Sync] Cannot insert settings for inaccessible device:', deviceId);
-      return null;
-    }
-
     const { data, error } = await supabase
       .from('device_settings')
-      .insert({
-        device_id: deviceId,
-        ...settings,
-      })
+      .upsert(
+        {
+          device_id: deviceId,
+          ...settings,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'device_id' }
+      )
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.warn('[Supabase Sync] Error inserting device settings:', error.message);
+      console.warn('[Supabase Sync] Error saving device settings:', error.message);
       return null;
     }
     return data;
