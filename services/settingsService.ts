@@ -18,19 +18,17 @@ export type DeviceSettingsUpdate = Partial<
   Omit<SupabaseDeviceSettings, 'device_id'>
 >;
 
-async function assertManagedDevice(deviceId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('id')
-    .eq('id', deviceId)
-    .maybeSingle();
+async function assertCanConfigureDevice(deviceId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('user_can_configure_device', {
+    p_device_id: deviceId,
+  });
 
   if (error) {
-    console.error('[SettingsService] Device ownership check failed:', error.message);
+    console.error('[SettingsService] Configure permission check failed:', error.message);
     return false;
   }
 
-  return !!data;
+  return data === true;
 }
 
 export async function fetchDeviceSettings(deviceId: string): Promise<SupabaseDeviceSettings | null> {
@@ -56,12 +54,11 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
   const existing = await fetchDeviceSettings(deviceId);
   if (existing) return existing;
 
-  // Never create settings for a device the user cannot see in `devices`
-  // (deleted, unassigned, or another user's equipment) — that triggers RLS 42501.
-  const canManage = await assertManagedDevice(deviceId);
-  if (!canManage) {
+  // Creating settings requires configure permission (owner / share configure).
+  const canConfigure = await assertCanConfigureDevice(deviceId);
+  if (!canConfigure) {
     console.warn(
-      '[SettingsService] Skipping settings create: device not found or not accessible for current user:',
+      '[SettingsService] Skipping settings create: no configure permission for',
       deviceId
     );
     return null;
@@ -92,10 +89,10 @@ export async function saveDeviceSettings(
   deviceId: string,
   settings: DeviceSettingsUpdate
 ): Promise<SupabaseDeviceSettings | null> {
-  const canManage = await assertManagedDevice(deviceId);
-  if (!canManage) {
+  const canConfigure = await assertCanConfigureDevice(deviceId);
+  if (!canConfigure) {
     console.error(
-      '[SettingsService] Cannot save settings: device missing or not owned/accessible:',
+      '[SettingsService] Cannot save settings: control-only share or no access:',
       deviceId
     );
     return null;

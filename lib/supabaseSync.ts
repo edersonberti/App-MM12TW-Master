@@ -136,7 +136,11 @@ function cleanDeviceIdStr(id: string): string {
   return trimmed;
 }
 
-export async function deleteDeviceInSupabase(deviceId: string, userId?: string): Promise<boolean> {
+/**
+ * Soft-deletes a device via public.soft_delete_device (status=deleted + audit_events).
+ * Prefer services/deviceService.deleteDevice — this wrapper remains for sync callers.
+ */
+export async function deleteDeviceInSupabase(deviceId: string, _userId?: string): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
 
   try {
@@ -146,94 +150,45 @@ export async function deleteDeviceInSupabase(deviceId: string, userId?: string):
     const clean = cleanDeviceIdStr(rawId);
     const isMlz = rawId.toLowerCase().startsWith('mlz-');
     const withoutMlz = isMlz ? rawId.substring(4) : rawId;
-    const withMlz = isMlz ? rawId : `MLZ-${rawId}`;
-    const cleanWithoutMlz = cleanDeviceIdStr(withoutMlz);
-    const cleanWithMlz = `MLZ-${cleanWithoutMlz}`;
+    const cleanTarget = clean.toLowerCase();
+    const withoutMlzLower = withoutMlz.toLowerCase();
+    const matched = new Set<string>();
 
-    const candidates = new Set<string>([
-      rawId,
-      rawId.toLowerCase(),
-      rawId.toUpperCase(),
-      clean,
-      clean.toLowerCase(),
-      clean.toUpperCase(),
-      withoutMlz,
-      withoutMlz.toLowerCase(),
-      withoutMlz.toUpperCase(),
-      withMlz,
-      withMlz.toLowerCase(),
-      withMlz.toUpperCase(),
-      cleanWithoutMlz,
-      cleanWithoutMlz.toLowerCase(),
-      cleanWithoutMlz.toUpperCase(),
-      cleanWithMlz,
-      cleanWithMlz.toLowerCase(),
-      cleanWithMlz.toUpperCase(),
-    ]);
+    const { data: dbDevices } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('status', 'active');
 
-    const dbIdsToDelete = Array.from(candidates);
-    try {
-      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
-      if (dbDevices && dbDevices.length > 0) {
-        const cleanTarget = clean.toLowerCase();
-        const withoutMlzLower = withoutMlz.toLowerCase();
-        for (const d of dbDevices) {
-          const dClean = cleanDeviceIdStr(d.id).toLowerCase();
-          const dLower = d.id.toLowerCase();
-          if (
-            dLower === rawId.toLowerCase() ||
-            (cleanTarget && dClean === cleanTarget) ||
-            (cleanTarget && dLower.includes(cleanTarget)) ||
-            (withoutMlzLower && dLower.includes(withoutMlzLower))
-          ) {
-            dbIdsToDelete.push(d.id);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Supabase Sync] Query devices for deletion warning:', e);
-    }
-
-    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
-
-    try {
-      await supabase
-        .from('device_settings')
-        .delete()
-        .in('device_id', uniqueIds);
-    } catch (e) {
-      console.warn('[Supabase Sync] Delete device_settings warning:', e);
-    }
-
-    if (userId) {
-      try {
-        await supabase
-          .from('devices')
-          .delete()
-          .in('id', uniqueIds)
-          .eq('user_id', userId);
-      } catch (e) {
-        console.warn('[Supabase Sync] User-filtered delete warning:', e);
+    for (const d of dbDevices || []) {
+      const dClean = cleanDeviceIdStr(d.id).toLowerCase();
+      const dLower = d.id.toLowerCase();
+      if (
+        dLower === rawId.toLowerCase() ||
+        (cleanTarget && dClean === cleanTarget) ||
+        (cleanTarget && dLower.includes(cleanTarget)) ||
+        (withoutMlzLower && dLower.includes(withoutMlzLower))
+      ) {
+        matched.add(d.id);
       }
     }
 
-    const { error: deleteError } = await supabase
-      .from('devices')
-      .delete()
-      .in('id', uniqueIds);
+    if (matched.size === 0) matched.add(rawId);
 
-    if (!deleteError) {
-      return true;
+    let anySuccess = false;
+    for (const targetId of matched) {
+      const { error } = await supabase.rpc('soft_delete_device', {
+        target_device_id: targetId,
+      });
+      if (error) {
+        console.warn('[Supabase Sync] soft_delete_device failed for', targetId, error.message);
+        continue;
+      }
+      anySuccess = true;
     }
 
-    await supabase
-      .from('devices')
-      .update({ user_id: null })
-      .in('id', uniqueIds);
-
-    return true;
+    return anySuccess;
   } catch (err) {
-    console.warn('[Supabase Sync] Delete device exception:', err);
+    console.warn('[Supabase Sync] Soft delete device exception:', err);
     return false;
   }
 }

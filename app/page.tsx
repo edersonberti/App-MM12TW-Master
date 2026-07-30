@@ -48,14 +48,32 @@ import {
   Upload,
   Download,
   RefreshCw,
+  Share2,
+  Copy,
+  UserMinus,
+  ChevronLeft,
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
-import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
+import {
+  acceptDeviceInvite,
+  buildInviteUrl,
+  buildWhatsAppShareUrl,
+  createDeviceInvite,
+  INVITE_STORAGE_KEY,
+  leaveSharedDevice,
+  listDeviceMembers,
+  peekDeviceInvite,
+  revokeDeviceMember,
+  type CreatedInvite,
+  type DeviceInvitePreview,
+  type DeviceMember,
+  type SharePermission,
+} from '../services/shareService';
 import {
   createDeviceCatalogItem,
   deleteDeviceCatalogItem,
@@ -160,7 +178,7 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
 
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'share' | 'invite' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
 
@@ -304,6 +322,8 @@ export default function PoolControllerPage() {
     manufacturer?: string; 
     userEmail?: string; 
     userPassword?: string;
+    access?: 'owner' | 'shared';
+    permission?: SharePermission | 'owner';
   }[]>([]);
   // Lista completa só para o painel admin (owners); a tela do app usa registeredEquipments (só do usuário logado).
   const [adminAllEquipments, setAdminAllEquipments] = useState<{
@@ -316,6 +336,16 @@ export default function PoolControllerPage() {
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
   const activeModel = activeEquipment?.model || 'MM12TW';
+  // Shared "control" must NOT edit names/settings — only "configure" (or owner) may.
+  const canConfigureActiveDevice = (() => {
+    if (!currentUser?.isSupabase) return true;
+    if (!activeEquipment) return false;
+    if (activeEquipment.access === 'shared') {
+      return activeEquipment.permission === 'configure';
+    }
+    // Owned equipment (or legacy rows without access flag)
+    return activeEquipment.access !== 'shared';
+  })();
   const activeCatalogItem = deviceCatalog.find(
     item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
   );
@@ -331,6 +361,16 @@ export default function PoolControllerPage() {
   const [scannedData, setScannedData] = useState<any | null>(null);
   const [confirmDeleteDeviceId, setConfirmDeleteDeviceId] = useState<string | null>(null);
   const qrScannerRef = useRef<any>(null);
+
+  // Device sharing
+  const [shareDeviceId, setShareDeviceId] = useState<string | null>(null);
+  const [sharePermission, setSharePermission] = useState<SharePermission>('control');
+  const [shareInvite, setShareInvite] = useState<CreatedInvite | null>(null);
+  const [shareMembers, setShareMembers] = useState<DeviceMember[]>([]);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
+  const [invitePreview, setInvitePreview] = useState<DeviceInvitePreview | null>(null);
+  const [inviteAcceptBusy, setInviteAcceptBusy] = useState(false);
   
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
@@ -924,8 +964,7 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt]);
 
-  // Sync equipment from Supabase — DB is the only source of truth (no shared localStorage merge).
-  // Each login sees ONLY devices where devices.user_id = auth user (even if role is owner).
+  // Sync equipment from Supabase — owned + shared devices.
   const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string, _role?: string) => {
     if (!isSupabaseConfigured() || !userId) return [];
 
@@ -938,6 +977,11 @@ export default function PoolControllerPage() {
       pairing_token: d.pairing_token,
       manufacturer: 'MASTERLAZER',
       userEmail: userEmail || '',
+      access: d.access === 'shared' ? 'shared' as const : 'owner' as const,
+      permission:
+        d.access === 'shared'
+          ? ((d.permission === 'configure' ? 'configure' : 'control') as SharePermission)
+          : ('owner' as const),
     }));
 
     setRegisteredEquipments(mappedDb);
@@ -988,7 +1032,8 @@ export default function PoolControllerPage() {
           await syncUserDevicesFromSupabase(session.user.id, session.user.email, profile.role);
           
           if (activeScreen === 'login' || activeScreen === 'register') {
-            setActiveScreen('home');
+            const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY);
+            setActiveScreen(hasInvite ? 'invite' : 'home');
           }
         } else {
           // No profile exists, show error and logout
@@ -1003,7 +1048,12 @@ export default function PoolControllerPage() {
         setDeviceId('');
         localStorage.removeItem('registered_equipments');
         localStorage.removeItem('mqtt_device');
-        if (activeScreen !== 'register') {
+        const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY);
+        if (activeScreen === 'register') {
+          // stay on register
+        } else if (hasInvite || activeScreen === 'invite') {
+          setActiveScreen('invite');
+        } else {
           setActiveScreen('login');
         }
       }
@@ -1321,7 +1371,8 @@ export default function PoolControllerPage() {
           // Fetch user's registered devices from Supabase & sync
           await syncUserDevicesFromSupabase(data.user.id, data.user.email, profile.role);
 
-          setActiveScreen('home');
+          const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY) || !!pendingInviteToken;
+          setActiveScreen(hasInvite ? 'invite' : 'home');
         }
       } else {
         // Register mode
@@ -2423,6 +2474,12 @@ export default function PoolControllerPage() {
       return;
     }
 
+    if (!canConfigureActiveDevice) {
+      setMotorSettingsSaveState('error');
+      showToast('Sem permissão', 'Você tem acesso só de controle neste equipamento compartilhado.', 'warning');
+      return;
+    }
+
     setMotorSettingsSaveState('saving');
     const column = `motor${motorNum}_name` as
       | 'motor1_name'
@@ -2438,6 +2495,10 @@ export default function PoolControllerPage() {
   };
 
   const handleUpdateMotorName = (motorNum: MotorNumber, newName: string) => {
+    if (!canConfigureActiveDevice) {
+      showToast('Sem permissão', 'Seu acesso é só de controle — não é possível editar nomes.', 'warning');
+      return;
+    }
     setMotorName(motorNum, newName);
     localStorage.setItem(`${deviceId}_motor${motorNum}_name`, newName);
 
@@ -2452,6 +2513,7 @@ export default function PoolControllerPage() {
   };
 
   const flushMotorNameUpdate = (motorNum: MotorNumber, newName: string) => {
+    if (!canConfigureActiveDevice) return;
     const pendingTimer = motorNameSaveTimersRef.current[motorNum];
     if (pendingTimer) {
       clearTimeout(pendingTimer);
@@ -2961,6 +3023,156 @@ export default function PoolControllerPage() {
     };
   }, []);
 
+  // Capture invite token from URL (?invite=...) or sessionStorage → open invite page
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const fromUrl = params.get('invite');
+      const fromStorage = sessionStorage.getItem(INVITE_STORAGE_KEY);
+      const token = (fromUrl || fromStorage || '').trim();
+      if (!token) return;
+
+      setPendingInviteToken(token);
+      sessionStorage.setItem(INVITE_STORAGE_KEY, token);
+
+      if (fromUrl) {
+        params.delete('invite');
+        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
+        window.history.replaceState({}, '', next);
+      }
+
+      setActiveScreen('invite');
+
+      void peekDeviceInvite(token).then((preview) => {
+        setInvitePreview(preview);
+        if (preview.status !== 'pending') {
+          sessionStorage.removeItem(INVITE_STORAGE_KEY);
+        }
+      });
+    } catch (e) {}
+  }, []);
+
+  const dismissInviteScreen = useCallback(() => {
+    setPendingInviteToken(null);
+    setInvitePreview(null);
+    try {
+      sessionStorage.removeItem(INVITE_STORAGE_KEY);
+    } catch (e) {}
+    setActiveScreen(currentUser?.isSupabase ? 'home' : 'login');
+  }, [currentUser]);
+
+  const clearPendingInvite = useCallback(() => {
+    setPendingInviteToken(null);
+    setInvitePreview(null);
+    try {
+      sessionStorage.removeItem(INVITE_STORAGE_KEY);
+    } catch (e) {}
+  }, []);
+
+  const handleAcceptPendingInvite = useCallback(async () => {
+    if (!pendingInviteToken || !currentUser?.isSupabase) return;
+    setInviteAcceptBusy(true);
+    try {
+      const result = await acceptDeviceInvite(pendingInviteToken);
+      if (!result.ok) {
+        showToast('Convite', result.error, 'warning');
+        return;
+      }
+      clearPendingInvite();
+      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
+      setDeviceId(result.device_id);
+      localStorage.setItem(`mqtt_device:${currentUser.uid}`, result.device_id);
+      showToast('Acesso concedido', 'Você agora pode controlar este equipamento.', 'success');
+      setActiveScreen('aux');
+    } finally {
+      setInviteAcceptBusy(false);
+    }
+  }, [pendingInviteToken, currentUser, clearPendingInvite, syncUserDevicesFromSupabase, showToast]);
+
+  // Refresh invite preview after login if needed
+  useEffect(() => {
+    if (!pendingInviteToken) return;
+    if (invitePreview) return;
+    void peekDeviceInvite(pendingInviteToken).then((preview) => setInvitePreview(preview));
+  }, [currentUser, pendingInviteToken, invitePreview]);
+
+  const openSharePanel = useCallback(async (deviceIdToShare: string) => {
+    setShareDeviceId(deviceIdToShare);
+    setShareInvite(null);
+    setSharePermission('control');
+    setShareMembers([]);
+    setActiveScreen('share');
+    setShareBusy(true);
+    try {
+      const members = await listDeviceMembers(deviceIdToShare);
+      setShareMembers(members);
+    } finally {
+      setShareBusy(false);
+    }
+  }, []);
+
+  const closeSharePanel = useCallback(() => {
+    setShareDeviceId(null);
+    setShareInvite(null);
+    setShareMembers([]);
+    setActiveScreen('setup');
+  }, []);
+
+  useEffect(() => {
+    if (activeScreen === 'share' && !shareDeviceId) {
+      setActiveScreen('setup');
+    }
+  }, [activeScreen, shareDeviceId]);
+
+  const handleCreateShareInvite = useCallback(async () => {
+    if (!shareDeviceId) return;
+    setShareBusy(true);
+    try {
+      const { invite, error } = await createDeviceInvite(shareDeviceId, sharePermission);
+      if (!invite) {
+        showToast('Compartilhar', error || 'Não foi possível criar o convite.', 'warning');
+        return;
+      }
+      setShareInvite(invite);
+      showToast('Convite criado', 'Envie o link pelo WhatsApp.', 'success');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [shareDeviceId, sharePermission, showToast]);
+
+  const handleRevokeMember = useCallback(async (memberUserId: string) => {
+    if (!shareDeviceId) return;
+    setShareBusy(true);
+    try {
+      const result = await revokeDeviceMember(shareDeviceId, memberUserId);
+      if (!result.ok) {
+        showToast('Revogar', result.error || 'Falha ao revogar.', 'warning');
+        return;
+      }
+      setShareMembers((prev) => prev.filter((m) => m.user_id !== memberUserId));
+      showToast('Acesso revogado', 'O usuário não controla mais este equipamento.', 'success');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [shareDeviceId, showToast]);
+
+  const handleLeaveShared = useCallback(async (eqId: string) => {
+    if (!currentUser?.isSupabase) return;
+    setShareBusy(true);
+    try {
+      const result = await leaveSharedDevice(eqId);
+      if (!result.ok) {
+        showToast('Sair', result.error || 'Não foi possível sair.', 'warning');
+        return;
+      }
+      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
+      showToast('Acesso removido', 'Você saiu deste equipamento compartilhado.', 'success');
+    } finally {
+      setShareBusy(false);
+    }
+  }, [currentUser, syncUserDevicesFromSupabase, showToast]);
+
   // Save specific equipment
   async function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string, pairingTokenOverride?: string) {
     const finalId = idOverride || bleDeviceId;
@@ -3007,7 +3219,7 @@ export default function PoolControllerPage() {
     // Previously this ran in the background, so the empty state could remain visible
     // (or a later auth refresh could overwrite the optimistic local list).
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      const registeredDevice = await registerDevice(
+      const registerResult = await registerDevice(
         trimmedId,
         normalizedModel as any,
         currentUser.uid,
@@ -3015,19 +3227,29 @@ export default function PoolControllerPage() {
         pairingTokenOverride
       );
 
-      if (!registeredDevice) {
-        setQrScannerError(
-          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
+      if (!registerResult.ok) {
+        const msg =
+          registerResult.code === 'owned_by_other'
+            ? registerResult.message
+            : registerResult.message ||
+              'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.';
+        setQrScannerError(msg);
+        showToast(
+          registerResult.code === 'owned_by_other' ? 'Equipamento já cadastrado' : 'Falha no cadastro',
+          msg,
+          'warning'
         );
         return;
       }
 
-      await ensureDeviceSettings(trimmedId);
+      const savedId = registerResult.device.id || trimmedId;
+
+      await ensureDeviceSettings(savedId);
 
       // Recarrega do banco para garantir isolamento por user_id
       await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
-      setDeviceId(trimmedId);
-      localStorage.setItem(`mqtt_device:${currentUser.uid}`, trimmedId);
+      setDeviceId(savedId);
+      localStorage.setItem(`mqtt_device:${currentUser.uid}`, savedId);
       localStorage.removeItem('mqtt_device');
       setScannedData(null);
       setQrScannerError(null);
@@ -3036,14 +3258,14 @@ export default function PoolControllerPage() {
       setBleLog(prev => [
         ...prev,
         `[REGISTRO] Equipamento salvo: ${normalizedModel}`,
-        `[REGISTRO] ID único: ${trimmedId}`,
+        `[REGISTRO] ID único: ${savedId}`,
         `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
         `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
         `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
         `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
       ]);
 
-      showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${trimmedId}) associado com sucesso.`, 'success');
+      showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${savedId}) associado com sucesso.`, 'success');
       return;
     }
 
@@ -3240,7 +3462,7 @@ export default function PoolControllerPage() {
         <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup sheets) */}
-          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'admin' && (
+          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && (
             <header className="border-b border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-40">
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
@@ -3904,16 +4126,18 @@ export default function PoolControllerPage() {
                               ) : (
                                 <div className="flex items-center gap-2 group min-w-0">
                                   <p className="text-xs font-bold text-white truncate">{name}</p>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setEditingMotorNum(number);
-                                    }}
-                                    title="Editar nome"
-                                    className="text-slate-400 hover:text-white transition-colors shrink-0"
-                                  >
-                                    <Edit2 className="w-3 h-3" />
-                                  </button>
+                                  {canConfigureActiveDevice && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingMotorNum(number);
+                                      }}
+                                      title="Editar nome"
+                                      className="text-slate-400 hover:text-white transition-colors shrink-0"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -3935,7 +4159,7 @@ export default function PoolControllerPage() {
                     {!mqttConnected && (
                       <p className="text-[10px] text-[#e8fa00]/90 leading-snug mt-3 flex items-start gap-1 bg-[#e8fa00]/10 p-2 rounded-xl border border-[#e8fa00]/25">
                         <Info className="w-3.5 h-3.5 shrink-0" />
-                        Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba HOME.
+                        Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba Configurações.
                       </p>
                     )}
                   </div>
@@ -4551,16 +4775,21 @@ export default function PoolControllerPage() {
                               return (
                                 <div 
                                   key={eq.id} 
-                                  className={`flex items-center justify-between p-3 rounded-xl transition-all border ${
+                                  className={`p-3 rounded-xl transition-all border space-y-2 ${
                                     isActive 
                                       ? 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
                                       : 'bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
                                   }`}
                                 >
-                                  <div className="min-w-0 flex-1 pr-2">
+                                  <div className="min-w-0">
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-mono text-xs font-extrabold text-white break-all select-all">{eq.id}</span>
                                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[9px] font-extrabold text-cyan-300 border border-cyan-500/30">{eq.model}</span>
+                                      {eq.access === 'shared' && (
+                                        <span className="px-1.5 py-0.5 rounded bg-violet-500/20 text-[9px] font-extrabold text-violet-300 border border-violet-500/30">
+                                          Compartilhado{eq.permission === 'configure' ? ' · config' : ' · ctrl'}
+                                        </span>
+                                      )}
                                       {isActive ? (
                                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-bold border border-emerald-500/30 flex items-center gap-1">
                                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -4585,8 +4814,8 @@ export default function PoolControllerPage() {
                                     </div>
                                   </div>
 
-                                  {/* Action Controls: Ativar/Desativar & Excluir */}
-                                  <div className="flex items-center gap-2 shrink-0">
+                                  {/* Actions: compact row under info */}
+                                  <div className="flex items-center gap-1.5 pt-0.5 border-t border-white/5">
                                     {isActive ? (
                                       <button
                                         type="button"
@@ -4599,7 +4828,7 @@ export default function PoolControllerPage() {
                                             localStorage.removeItem('mqtt_device');
                                           }
                                         }}
-                                        className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                                         title="Desativar equipamento ativo"
                                       >
                                         <PowerOff className="w-3 h-3 text-amber-400" />
@@ -4617,7 +4846,7 @@ export default function PoolControllerPage() {
                                             localStorage.setItem('mqtt_device', eq.id);
                                           }
                                         }}
-                                        className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                        className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
                                         title="Ativar equipamento para controle"
                                       >
                                         <CheckCircle2 className="w-3 h-3" />
@@ -4625,8 +4854,38 @@ export default function PoolControllerPage() {
                                       </button>
                                     )}
 
-                                    {confirmDeleteDeviceId === eq.id ? (
-                                      <div className="flex items-center gap-1.5 animate-fadeIn">
+                                    <div className="flex-1" />
+
+                                    {eq.access !== 'shared' && currentUser?.isSupabase && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void openSharePanel(eq.id);
+                                        }}
+                                        className="p-1.5 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 rounded-lg transition-all cursor-pointer"
+                                        title="Compartilhar acesso"
+                                        aria-label="Compartilhar"
+                                      >
+                                        <Share2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+
+                                    {eq.access === 'shared' ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleLeaveShared(eq.id);
+                                        }}
+                                        className="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-lg transition-all cursor-pointer"
+                                        title="Sair deste equipamento compartilhado"
+                                        aria-label="Sair"
+                                      >
+                                        <UserMinus className="w-3.5 h-3.5" />
+                                      </button>
+                                    ) : confirmDeleteDeviceId === eq.id ? (
+                                      <div className="flex items-center gap-1 animate-fadeIn">
                                         <button
                                           type="button"
                                           onClick={async (e) => {
@@ -4636,7 +4895,6 @@ export default function PoolControllerPage() {
                                             if (isSupabaseConfigured() && currentUser?.isSupabase) {
                                               const userIdentifier = currentUser?.uid || currentUser?.id;
                                               await deleteDevice(eq.id, userIdentifier);
-                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
                                               await syncUserDevicesFromSupabase(
                                                 userIdentifier,
                                                 currentUser?.email,
@@ -4674,7 +4932,7 @@ export default function PoolControllerPage() {
                                               }
                                             }
                                           }}
-                                          className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
+                                          className="px-2 py-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
                                           title="Confirmar exclusão deste equipamento"
                                         >
                                           <Trash2 className="w-3 h-3 text-white" />
@@ -4686,7 +4944,7 @@ export default function PoolControllerPage() {
                                             e.stopPropagation();
                                             setConfirmDeleteDeviceId(null);
                                           }}
-                                          className="p-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                           title="Cancelar"
                                         >
                                           ✕
@@ -4699,11 +4957,11 @@ export default function PoolControllerPage() {
                                           e.stopPropagation();
                                           setConfirmDeleteDeviceId(eq.id);
                                         }}
-                                        className="p-1.5 px-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                                        className="p-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all cursor-pointer"
                                         title="Excluir equipamento"
+                                        aria-label="Excluir"
                                       >
-                                        <Trash2 className="w-3 h-3 text-rose-400" />
-                                        <span>Excluir</span>
+                                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                                       </button>
                                     )}
                                   </div>
@@ -4881,6 +5139,279 @@ export default function PoolControllerPage() {
                       Salvar Tudo
                     </button>
                   </div>
+                </motion.div>
+              )}
+
+              {/* Screen: Share equipment */}
+              {activeScreen === 'share' && shareDeviceId && (
+                <motion.div
+                  key="share-screen"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="space-y-4 py-2 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={closeSharePanel}
+                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
+                      aria-label="Voltar"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                        <Share2 className="w-4 h-4 text-sky-400 shrink-0" />
+                        Compartilhar
+                      </h2>
+                      <p className="text-[10px] text-slate-400 font-mono truncate">{shareDeviceId}</p>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const shareEq = registeredEquipments.find((e) => e.id === shareDeviceId);
+                    return shareEq ? (
+                      <div className="p-3 rounded-xl bg-white/10 border border-white/10">
+                        <p className="text-xs font-bold text-white">{shareEq.model}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Série: <span className="font-mono text-slate-200">{shareEq.serial || shareEq.id}</span>
+                        </p>
+                      </div>
+                    ) : null;
+                  })()}
+
+                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Permissão do convite</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setSharePermission('control'); setShareInvite(null); }}
+                        className={`text-left p-3 rounded-xl border transition-all ${
+                          sharePermission === 'control'
+                            ? 'border-sky-500/50 bg-sky-500/10'
+                            : 'border-white/10 bg-white/5'
+                        }`}
+                      >
+                        <p className="text-[11px] font-bold text-white leading-tight">Só controlar</p>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-snug">Motores e LED </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSharePermission('configure'); setShareInvite(null); }}
+                        className={`text-left p-3 rounded-xl border transition-all ${
+                          sharePermission === 'configure'
+                            ? 'border-sky-500/50 bg-sky-500/10'
+                            : 'border-white/10 bg-white/5'
+                        }`}
+                      >
+                        <p className="text-[11px] font-bold text-white leading-tight">Controlar + Configurar</p>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-snug">Editar timers, nomes e configurações</p>
+                      </button>
+                    </div>
+
+                    {!shareInvite ? (
+                      <button
+                        type="button"
+                        disabled={shareBusy}
+                        onClick={() => void handleCreateShareInvite()}
+                        className="w-full py-3 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-xs font-bold disabled:opacity-50"
+                      >
+                        {shareBusy ? 'Gerando...' : 'Gerar link'}
+                      </button>
+                    ) : (
+                      <div className="space-y-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
+                        <p className="text-[11px] text-emerald-200 font-medium">Convite pronto</p>
+                        <a
+                          href={buildWhatsAppShareUrl(
+                            buildInviteUrl(shareInvite.token),
+                            registeredEquipments.find((e) => e.id === shareDeviceId)?.model || 'MM12TW',
+                            registeredEquipments.find((e) => e.id === shareDeviceId)?.serial || shareDeviceId,
+                            shareInvite.permission
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block w-full py-3 rounded-xl bg-[#25D366] active:bg-[#1ebe57] text-white text-xs font-bold text-center"
+                        >
+                          Enviar no WhatsApp
+                        </a>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(buildInviteUrl(shareInvite.token));
+                              showToast('Link copiado', 'Cole onde quiser enviar o convite.', 'success');
+                            } catch {
+                              showToast('Link', buildInviteUrl(shareInvite.token), 'info');
+                            }
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-white/10 active:bg-white/15 border border-white/10 text-white text-xs font-bold flex items-center justify-center gap-1.5"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          Copiar link
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Quem tem acesso</p>
+                    {shareBusy && shareMembers.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">Carregando...</p>
+                    ) : shareMembers.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">Ninguém além de você.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {shareMembers.map((m) => (
+                          <div key={m.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/10">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-bold text-white truncate">{m.full_name || m.email || m.user_id}</p>
+                              {m.email && m.full_name && (
+                                <p className="text-[10px] text-slate-400 truncate">{m.email}</p>
+                              )}
+                              <p className="text-[9px] text-sky-300 mt-0.5">
+                                {m.permission === 'configure' ? 'Controlar + configurar' : 'Só controlar'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={shareBusy}
+                              onClick={() => void handleRevokeMember(m.user_id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-red-500/15 active:bg-red-500/25 border border-red-500/30 text-red-300 text-[10px] font-bold shrink-0"
+                            >
+                              Revogar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closeSharePanel}
+                    className="w-full py-2.5 bg-white/5 border border-white/10 text-slate-300 active:bg-white/10 text-xs font-semibold rounded-xl"
+                  >
+                    Voltar
+                  </button>
+                </motion.div>
+              )}
+
+              {/* Screen: Accept shared equipment invite */}
+              {activeScreen === 'invite' && (
+                <motion.div
+                  key="invite-screen"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  className="flex flex-col h-full py-4 text-left"
+                >
+                  <div className="flex items-center gap-2 mb-5">
+                    <button
+                      type="button"
+                      onClick={dismissInviteScreen}
+                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
+                      aria-label="Voltar"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <div>
+                      <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                        <Share2 className="w-4 h-4 text-sky-400" />
+                        Convite
+                      </h2>
+                      <p className="text-[10px] text-slate-400">Acesso compartilhado a um equipamento</p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 flex flex-col gap-4">
+                    {!invitePreview ? (
+                      <div className="p-5 rounded-2xl bg-white/10 border border-white/10 text-center">
+                        <p className="text-xs text-slate-300">Carregando convite...</p>
+                      </div>
+                    ) : invitePreview.status === 'pending' ? (
+                      <>
+                        <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Equipamento</p>
+                          <p className="text-base font-bold text-white">{invitePreview.model || 'Equipamento'}</p>
+                          <p className="text-[11px] text-slate-300 font-mono break-all">
+                            {invitePreview.serial || invitePreview.device_id}
+                          </p>
+                          <div className="pt-2 border-t border-white/10">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Permissão</p>
+                            <p className="text-xs text-sky-300 font-semibold">
+                              {invitePreview.permission === 'configure'
+                                ? 'Controlar + configurar'
+                                : 'Só controlar'}
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-1">
+                              {invitePreview.permission === 'configure'
+                                ? 'Você poderá acionar o equipamento e editar nomes.'
+                                : 'Você poderá acionar motores, LED e timers — sem editar nomes.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {currentUser?.isSupabase ? (
+                          <button
+                            type="button"
+                            disabled={inviteAcceptBusy}
+                            onClick={() => void handleAcceptPendingInvite()}
+                            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-sm font-bold disabled:opacity-50 shadow-lg shadow-sky-900/30"
+                          >
+                            {inviteAcceptBusy ? 'Aceitando...' : 'Aceitar convite'}
+                          </button>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-[11px] text-slate-300 text-center px-2">
+                              Entre na sua conta (ou crie uma) para aceitar este convite.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setActiveScreen('login')}
+                              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-sm font-bold"
+                            >
+                              Entrar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveScreen('register')}
+                              className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-xs font-bold active:bg-white/10"
+                            >
+                              Criar conta
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/25 space-y-3">
+                        <p className="text-sm font-bold text-amber-100">
+                          {invitePreview.status === 'accepted'
+                            ? 'Este convite já foi usado.'
+                            : invitePreview.status === 'revoked'
+                            ? 'Este convite foi revogado.'
+                            : 'Convite inválido ou expirado.'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={dismissInviteScreen}
+                          className="w-full py-3 rounded-xl bg-white/10 border border-white/10 text-white text-xs font-bold"
+                        >
+                          Continuar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {invitePreview?.status === 'pending' && (
+                    <button
+                      type="button"
+                      onClick={dismissInviteScreen}
+                      className="mt-4 w-full py-2.5 bg-transparent text-slate-400 text-xs font-semibold"
+                    >
+                      Agora não
+                    </button>
+                  )}
                 </motion.div>
               )}
 
