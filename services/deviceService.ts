@@ -13,7 +13,9 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     const { data, error } = await supabase
       .from('devices')
       .select('*')
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: true });
 
     if (error) {
       console.error('[DeviceService] Error fetching devices:', error.message);
@@ -22,6 +24,38 @@ export async function fetchUserDevices(userId: string): Promise<SupabaseDevice[]
     return data || [];
   } catch (err) {
     console.error('[DeviceService] Fetch devices error:', err);
+    return [];
+  }
+}
+
+export interface SupabaseDeviceWithOwner extends SupabaseDevice {
+  owner_email?: string | null;
+}
+
+/** Owner/admin: all active devices (RLS allows elevated profiles). */
+export async function fetchAllActiveDevices(): Promise<SupabaseDeviceWithOwner[]> {
+  try {
+    const { data, error } = await supabase
+      .from('devices')
+      .select('id, model, pairing_token, serial, user_id, profiles:user_id(email)')
+      .eq('status', 'active')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('[DeviceService] Error fetching all devices:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      model: row.model,
+      pairing_token: row.pairing_token,
+      serial: row.serial,
+      user_id: row.user_id,
+      owner_email: row.profiles?.email ?? null,
+    }));
+  } catch (err) {
+    console.error('[DeviceService] Fetch all devices error:', err);
     return [];
   }
 }

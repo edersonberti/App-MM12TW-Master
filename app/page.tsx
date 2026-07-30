@@ -53,7 +53,7 @@ import {
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
-import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
 import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
@@ -305,6 +305,14 @@ export default function PoolControllerPage() {
     userEmail?: string; 
     userPassword?: string;
   }[]>([]);
+  // Lista completa só para o painel admin (owners); a tela do app usa registeredEquipments (só do usuário logado).
+  const [adminAllEquipments, setAdminAllEquipments] = useState<{
+    id: string;
+    model: string;
+    serial?: string;
+    manufacturer?: string;
+    userEmail?: string;
+  }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
   const activeModel = activeEquipment?.model || 'MM12TW';
@@ -535,39 +543,47 @@ export default function PoolControllerPage() {
       localStorage.removeItem('supabase_url_cache');
       localStorage.removeItem('supabase_anon_key_cache');
 
-      const storedEquips = localStorage.getItem('registered_equipments');
-      const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
-      const isDefaultDeleted = deletedIds.some(del => areDeviceIdsMatching(del, 'MLZ-MM12TW-EEA39F-000003'));
+      // Equipamentos: com Supabase, a fonte é o banco por user_id (nunca lista compartilhada do celular).
+      // Sem Supabase (modo simulado), mantém cache local.
+      if (!isSupabaseConfigured()) {
+        const storedEquips = localStorage.getItem('registered_equipments');
+        const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+        const isDefaultDeleted = deletedIds.some(del => areDeviceIdsMatching(del, 'MLZ-MM12TW-EEA39F-000003'));
 
-      if (storedEquips) {
-        try {
-          const parsed = JSON.parse(storedEquips);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setRegisteredEquipments(parsed);
-          } else if (Array.isArray(parsed) && parsed.length === 0 && !isDefaultDeleted) {
-            const defaultList = [{
-              id: 'MLZ-MM12TW-EEA39F-000003',
-              model: 'MM12TW',
-              serial: 'MLZ-MM12TW-EEA39F-000003',
-              manufacturer: 'MASTERLAZER'
-            }];
-            setRegisteredEquipments(defaultList);
-            localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
-          } else if (Array.isArray(parsed)) {
-            setRegisteredEquipments(parsed);
+        if (storedEquips) {
+          try {
+            const parsed = JSON.parse(storedEquips);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setRegisteredEquipments(parsed);
+            } else if (Array.isArray(parsed) && parsed.length === 0 && !isDefaultDeleted) {
+              const defaultList = [{
+                id: 'MLZ-MM12TW-EEA39F-000003',
+                model: 'MM12TW',
+                serial: 'MLZ-MM12TW-EEA39F-000003',
+                manufacturer: 'MASTERLAZER'
+              }];
+              setRegisteredEquipments(defaultList);
+              localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
+            } else if (Array.isArray(parsed)) {
+              setRegisteredEquipments(parsed);
+            }
+          } catch (e) {
+            console.error('[Storage] Error loading registered_equipments:', e);
           }
-        } catch (e) {
-          console.error('[Storage] Error loading registered_equipments:', e);
+        } else if (!isDefaultDeleted) {
+          const defaultList = [{
+            id: 'MLZ-MM12TW-EEA39F-000003',
+            model: 'MM12TW',
+            serial: 'MLZ-MM12TW-EEA39F-000003',
+            manufacturer: 'MASTERLAZER'
+          }];
+          setRegisteredEquipments(defaultList);
+          localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
         }
-      } else if (!isDefaultDeleted) {
-        const defaultList = [{
-          id: 'MLZ-MM12TW-EEA39F-000003',
-          model: 'MM12TW',
-          serial: 'MLZ-MM12TW-EEA39F-000003',
-          manufacturer: 'MASTERLAZER'
-        }];
-        setRegisteredEquipments(defaultList);
-        localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
+      } else {
+        setRegisteredEquipments([]);
+        // Remove legacy shared key that leaked devices between accounts on the same phone
+        localStorage.removeItem('registered_equipments');
       }
 
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
@@ -908,81 +924,46 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt]);
 
-  // Sync equipment from Supabase for logged-in user
-  const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string) => {
+  // Sync equipment from Supabase — DB is the only source of truth (no shared localStorage merge).
+  // Each login sees ONLY devices where devices.user_id = auth user (even if role is owner).
+  const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string, _role?: string) => {
     if (!isSupabaseConfigured() || !userId) return [];
 
     const dbDevices = await fetchUserDevices(userId);
-    const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
 
-    const isDeleted = (id: string) => {
-      if (!id) return false;
-      const idLower = id.toLowerCase();
-      const cleanLower = cleanDeviceId(id).toLowerCase();
-      return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
-    };
+    const mappedDb = (dbDevices || []).map((d: any) => ({
+      id: d.id,
+      model: d.model || 'MM12TW',
+      serial: d.serial || d.id,
+      pairing_token: d.pairing_token,
+      manufacturer: 'MASTERLAZER',
+      userEmail: userEmail || '',
+    }));
 
-    let rawLocal: any[] = [];
+    setRegisteredEquipments(mappedDb);
+
+    // Optional per-user cache only (never the shared key)
     try {
-      rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
-    } catch (e) {
-      rawLocal = [];
-    }
+      localStorage.setItem(`registered_equipments:${userId}`, JSON.stringify(mappedDb));
+      localStorage.removeItem('registered_equipments');
+    } catch (e) {}
 
-    const mappedDb = (dbDevices || [])
-      .filter((d: any) => !isDeleted(d.id))
-      .map((d: any) => ({
-        id: d.id,
-        model: d.model || 'MM12TW',
-        serial: d.serial || d.id,
-        pairing_token: d.pairing_token,
-        manufacturer: 'MASTERLAZER',
-        userEmail: userEmail || ''
-      }));
-
-    const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
-
-    // Combine DB devices and valid local devices avoiding duplicates
-    const combined: any[] = [...mappedDb];
-    for (const item of validLocal) {
-      const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
-      if (!exists) {
-        combined.push(item);
-      }
-    }
-
-    // Auto-seed default equipment if user has 0 devices and default equipment hasn't been deleted
-    const defaultId = 'MLZ-MM12TW-EEA39F-000003';
-    if (combined.length === 0 && !isDeleted(defaultId)) {
-      const defaultDevice = {
-        id: defaultId,
-        model: 'MM12TW',
-        serial: defaultId,
-        manufacturer: 'MASTERLAZER',
-        userEmail: userEmail || ''
-      };
-
-      try {
-        await registerDevice(defaultId, 'MM12TW', userId, defaultId);
-      } catch (e) {
-        console.warn('[Supabase] Auto-seed device error:', e);
-      }
-
-      combined.push(defaultDevice);
-    }
-
-    setRegisteredEquipments(combined);
-    localStorage.setItem('registered_equipments', JSON.stringify(combined));
-
-    if (combined.length > 0) {
-      const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
-      const matched = combined.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
-      const nextDeviceId = matched?.id || combined[0].id;
+    if (mappedDb.length > 0) {
+      const storedDevice = (localStorage.getItem(`mqtt_device:${userId}`) || localStorage.getItem('mqtt_device') || deviceId || '').trim();
+      const matched = mappedDb.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
+      const nextDeviceId = matched?.id || mappedDb[0].id;
       setDeviceId(nextDeviceId);
-      localStorage.setItem('mqtt_device', nextDeviceId);
+      localStorage.setItem(`mqtt_device:${userId}`, nextDeviceId);
+      localStorage.removeItem('mqtt_device');
+    } else {
+      setDeviceId('');
+      localStorage.removeItem('mqtt_device');
+      try {
+        localStorage.removeItem(`mqtt_device:${userId}`);
+      } catch (e) {}
     }
 
-    return combined;
+    return mappedDb;
   }, [deviceId]);
 
   // 2. Initialize Supabase Auth state observer
@@ -1004,7 +985,7 @@ export default function PoolControllerPage() {
           setCurrentUser(loggedUser);
           
           // Load devices for the user from Supabase and sync state
-          await syncUserDevicesFromSupabase(session.user.id, session.user.email);
+          await syncUserDevicesFromSupabase(session.user.id, session.user.email, profile.role);
           
           if (activeScreen === 'login' || activeScreen === 'register') {
             setActiveScreen('home');
@@ -1019,6 +1000,9 @@ export default function PoolControllerPage() {
       } else {
         setCurrentUser(null);
         setRegisteredEquipments([]);
+        setDeviceId('');
+        localStorage.removeItem('registered_equipments');
+        localStorage.removeItem('mqtt_device');
         if (activeScreen !== 'register') {
           setActiveScreen('login');
         }
@@ -1170,10 +1154,10 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
-  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
+  // 3b. Load profiles + all devices when administrative tab opens (management view only)
   useEffect(() => {
     if (activeScreen === 'admin' && isSupabaseConfigured()) {
-      const loadProfiles = async () => {
+      const loadAdminData = async () => {
         const profiles = await fetchAllProfiles();
         setSimUsers(profiles.map(p => ({
           uid: p.id,
@@ -1181,8 +1165,19 @@ export default function PoolControllerPage() {
           full_name: p.full_name,
           role: p.role
         })));
+
+        const allDevices = await fetchAllActiveDevices();
+        setAdminAllEquipments(
+          (allDevices || []).map((d) => ({
+            id: d.id,
+            model: d.model || 'MM12TW',
+            serial: d.serial || d.id,
+            manufacturer: 'MASTERLAZER',
+            userEmail: d.owner_email || '',
+          }))
+        );
       };
-      loadProfiles();
+      loadAdminData();
     }
   }, [activeScreen]);
 
@@ -1324,7 +1319,7 @@ export default function PoolControllerPage() {
           setCurrentUser(loggedUser);
 
           // Fetch user's registered devices from Supabase & sync
-          await syncUserDevicesFromSupabase(data.user.id, data.user.email);
+          await syncUserDevicesFromSupabase(data.user.id, data.user.email, profile.role);
 
           setActiveScreen('home');
         }
@@ -1387,6 +1382,11 @@ export default function PoolControllerPage() {
       console.error(err);
     }
     localStorage.removeItem('sim_user');
+    localStorage.removeItem('registered_equipments');
+    localStorage.removeItem('mqtt_device');
+    setRegisteredEquipments([]);
+    setAdminAllEquipments([]);
+    setDeviceId('');
     setCurrentUser(null);
     setEmailInput('');
     setPasswordInput('');
@@ -3023,6 +3023,28 @@ export default function PoolControllerPage() {
       }
 
       await ensureDeviceSettings(trimmedId);
+
+      // Recarrega do banco para garantir isolamento por user_id
+      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
+      setDeviceId(trimmedId);
+      localStorage.setItem(`mqtt_device:${currentUser.uid}`, trimmedId);
+      localStorage.removeItem('mqtt_device');
+      setScannedData(null);
+      setQrScannerError(null);
+      setActiveScreen('aux');
+
+      setBleLog(prev => [
+        ...prev,
+        `[REGISTRO] Equipamento salvo: ${normalizedModel}`,
+        `[REGISTRO] ID único: ${trimmedId}`,
+        `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
+        `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
+        `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
+        `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
+      ]);
+
+      showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${trimmedId}) associado com sucesso.`, 'success');
+      return;
     }
 
     // Functional update always uses the latest list and immediately removes the
@@ -3037,13 +3059,16 @@ export default function PoolControllerPage() {
             return isMatch ? { ...eq, ...newItem } : eq;
           });
 
-      localStorage.setItem('registered_equipments', JSON.stringify(nextList));
-
-      // Remove from deleted_device_ids in localStorage if re-registering
+      // Cache per usuário autenticado — nunca a chave compartilhada do aparelho
       try {
-        const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
-        const updatedDeleted = deletedIds.filter(d => !areDeviceIdsMatching(d, trimmedId));
-        localStorage.setItem('deleted_device_ids', JSON.stringify(updatedDeleted));
+        if (currentUser?.uid && currentUser?.isSupabase) {
+          localStorage.setItem(`registered_equipments:${currentUser.uid}`, JSON.stringify(nextList));
+          localStorage.setItem(`mqtt_device:${currentUser.uid}`, trimmedId);
+          localStorage.removeItem('registered_equipments');
+          localStorage.removeItem('mqtt_device');
+        } else {
+          localStorage.setItem('registered_equipments', JSON.stringify(nextList));
+        }
       } catch (e) {}
 
       return nextList;
@@ -3051,7 +3076,9 @@ export default function PoolControllerPage() {
     
     // Also make this the active device under control!
     setDeviceId(trimmedId);
-    localStorage.setItem('mqtt_device', trimmedId);
+    if (!(currentUser?.uid && currentUser?.isSupabase)) {
+      localStorage.setItem('mqtt_device', trimmedId);
+    }
     setScannedData(null);
     setQrScannerError(null);
     setActiveScreen('aux');
@@ -3099,6 +3126,8 @@ export default function PoolControllerPage() {
 
   const isCurrentlyAdmin = activeScreen === 'admin';
   const hasRegisteredEquipment = registeredEquipments.length > 0;
+  // No painel admin: visão de gestão (todos). No app do usuário: só os do user_id logado.
+  const devicesForAdminPanel = adminAllEquipments;
 
   // Shared empty-state shown on HOME/BOMBAS/LED/TIMERS when no equipment is registered
   const renderNoEquipmentScreen = (key: string, featureLabel: string) => (
@@ -4563,7 +4592,12 @@ export default function PoolControllerPage() {
                                         type="button"
                                         onClick={() => {
                                           setDeviceId('');
-                                          localStorage.removeItem('mqtt_device');
+                                          if (currentUser?.uid && currentUser?.isSupabase) {
+                                            localStorage.removeItem(`mqtt_device:${currentUser.uid}`);
+                                            localStorage.removeItem('mqtt_device');
+                                          } else {
+                                            localStorage.removeItem('mqtt_device');
+                                          }
                                         }}
                                         className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                                         title="Desativar equipamento ativo"
@@ -4576,7 +4610,12 @@ export default function PoolControllerPage() {
                                         type="button"
                                         onClick={() => {
                                           setDeviceId(eq.id);
-                                          localStorage.setItem('mqtt_device', eq.id);
+                                          if (currentUser?.uid && currentUser?.isSupabase) {
+                                            localStorage.setItem(`mqtt_device:${currentUser.uid}`, eq.id);
+                                            localStorage.removeItem('mqtt_device');
+                                          } else {
+                                            localStorage.setItem('mqtt_device', eq.id);
+                                          }
                                         }}
                                         className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
                                         title="Ativar equipamento para controle"
@@ -4592,9 +4631,19 @@ export default function PoolControllerPage() {
                                           type="button"
                                           onClick={async (e) => {
                                             e.stopPropagation();
-                                            const targetRaw = eq.id.toLowerCase();
-                                            const targetClean = cleanDeviceId(eq.id).toLowerCase();
-                                            const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
+                                            setConfirmDeleteDeviceId(null);
+
+                                            if (isSupabaseConfigured() && currentUser?.isSupabase) {
+                                              const userIdentifier = currentUser?.uid || currentUser?.id;
+                                              await deleteDevice(eq.id, userIdentifier);
+                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
+                                              await syncUserDevicesFromSupabase(
+                                                userIdentifier,
+                                                currentUser?.email,
+                                                currentUser?.role
+                                              );
+                                              return;
+                                            }
 
                                             const filtered = registeredEquipments.filter(item => !areDeviceIdsMatching(item.id, eq.id));
                                             setRegisteredEquipments(filtered);
@@ -4602,6 +4651,9 @@ export default function PoolControllerPage() {
 
                                             try {
                                               const existingDeleted: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+                                              const targetRaw = eq.id.toLowerCase();
+                                              const targetClean = cleanDeviceId(eq.id).toLowerCase();
+                                              const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
                                               const newDeleted = Array.from(new Set([
                                                 ...existingDeleted,
                                                 targetRaw,
@@ -4611,14 +4663,6 @@ export default function PoolControllerPage() {
                                               ].filter(Boolean)));
                                               localStorage.setItem('deleted_device_ids', JSON.stringify(newDeleted));
                                             } catch (err) {}
-
-                                            setConfirmDeleteDeviceId(null);
-
-                                            if (isSupabaseConfigured()) {
-                                              const userIdentifier = currentUser?.uid || currentUser?.id;
-                                              await deleteDevice(eq.id, userIdentifier);
-                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
-                                            }
 
                                             if (isActive) {
                                               const nextId = filtered.length > 0 ? filtered[0].id : '';
@@ -4983,7 +5027,7 @@ export default function PoolControllerPage() {
                           <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
+                              <span className="text-3xl font-extrabold text-white">{devicesForAdminPanel.length}</span>
                               <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
                             </div>
                             <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
@@ -5215,7 +5259,7 @@ export default function PoolControllerPage() {
                                                 setAdminSearchEquip('');
                                               } else {
                                                 setSelectedUserForEquip(u.email);
-                                                const associatedEquip = registeredEquipments.find(
+                                                const associatedEquip = devicesForAdminPanel.find(
                                                   eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
                                                 );
                                                 if (associatedEquip) {
@@ -5313,7 +5357,7 @@ export default function PoolControllerPage() {
                           <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                             <div>
                               <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
-                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
+                              <p className="text-[10px] text-slate-400">Total de {devicesForAdminPanel.length} dispositivos cadastrados neste perfil</p>
                             </div>
 
                             <div className="relative">
@@ -5328,7 +5372,7 @@ export default function PoolControllerPage() {
                             </div>
 
                              <div className="space-y-2.5">
-                              {registeredEquipments
+                              {devicesForAdminPanel
                                 .filter(eq => 
                                   eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
                                   eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
@@ -5372,7 +5416,12 @@ export default function PoolControllerPage() {
                                         <button
                                           onClick={() => {
                                             setDeviceId(eq.id);
-                                            localStorage.setItem('mqtt_device', eq.id);
+                                            if (currentUser?.uid && currentUser?.isSupabase) {
+                                              localStorage.setItem(`mqtt_device:${currentUser.uid}`, eq.id);
+                                              localStorage.removeItem('mqtt_device');
+                                            } else {
+                                              localStorage.setItem('mqtt_device', eq.id);
+                                            }
                                             logUserAction(`Ativou equipamento ID: ${eq.id}`);
                                             showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
                                           }}
@@ -5385,7 +5434,7 @@ export default function PoolControllerPage() {
                                   );
                                 })}
 
-                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
+                              {selectedUserForEquip && !devicesForAdminPanel.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
                                 <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
                                   <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
                                   <div className="flex flex-col gap-1.5 pt-1">
@@ -5401,10 +5450,10 @@ export default function PoolControllerPage() {
                                           return;
                                         }
 
-                                        const updated = registeredEquipments.map(eq => 
+                                        const updated = devicesForAdminPanel.map(eq => 
                                           eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
                                         );
-                                        setRegisteredEquipments(updated);
+                                        setAdminAllEquipments(updated);
                                         
                                         if (isSupabaseConfigured()) {
                                           await updateDeviceOwner(eqId, targetUser.uid);
@@ -5416,7 +5465,7 @@ export default function PoolControllerPage() {
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
                                       <option value="">Selecione um equipamento...</option>
-                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
+                                      {devicesForAdminPanel.filter(eq => !eq.userEmail).map(eq => (
                                         <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
                                       ))}
                                     </select>
