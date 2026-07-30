@@ -806,7 +806,7 @@ export default function PoolControllerPage() {
     };
   }, [deviceId]);
 
-  // 1f. Periodic check: if device is marked as online but hasn't sent any message for > 15 seconds, mark it as offline, and handle zombie auto-recovery
+  // 1f. Periodic check: if device is marked as online but hasn't sent any message for > 120 seconds (2 minutes), mark it as offline
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const interval = setInterval(() => {
@@ -814,31 +814,15 @@ export default function PoolControllerPage() {
         if (lastMessageTimeRef.current > 0) {
           const silenceDuration = Date.now() - lastMessageTimeRef.current;
 
-          // 1. Mark device as offline if no message received in 15 seconds
-          if (deviceOnline === true && silenceDuration > 15000) {
-            console.log('No telemetry received from device in 15 seconds. Marking device as OFFLINE.');
+          // Mark device as offline if no telemetry message received in 2 minutes
+          if (deviceOnline === true && silenceDuration > 120000) {
+            console.log('No telemetry received from device in 120 seconds. Marking device as OFFLINE.');
             setDeviceOnline(false);
-          }
-
-          // 2. Automatic Zombie Recovery: if connection is silent for > 25 seconds, reconnect MQTT cleanly
-          if (silenceDuration > 25000 && userWantsMqtt) {
-            if (consecutiveAutoReconnectsRef.current < 2) {
-              console.log(`Silence detected (${Math.round(silenceDuration/1000)}s). Zombie connection suspected. Auto-reconnection attempt #${consecutiveAutoReconnectsRef.current + 1}...`);
-              consecutiveAutoReconnectsRef.current += 1;
-              forceReconnectMQTT();
-            } else {
-              // We tried reconnecting twice, but still silent. Device is likely truly offline.
-              // Just mark device as offline and reset lastMessageTimeRef to stop spamming.
-              console.log('Auto-recovery attempts exhausted. Device is truly offline.');
-              setDeviceOnline(false);
-              lastMessageTimeRef.current = 0;
-            }
           }
         }
       }
-    }, 3000);
+    }, 10000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mqttConnected, deviceOnline, userWantsMqtt]);
 
   // 1g. Backup safety timeout to automatically complete update and unlock if MQTT message doesn't arrive
@@ -1965,31 +1949,24 @@ export default function PoolControllerPage() {
             }
           });
 
-          // Send query commands to request immediate status update from hardware
+          // Send a single query command on connect to request status update from hardware
           const queryTopicsSet = new Set<string>();
           Array.from(idsToProcess).forEach((id) => {
             if (!id) return;
-            ['get', 'cmd', 'status/get', 'status', 'state'].forEach((cmdPath) => {
-              queryTopicsSet.add(`${id}/${cmdPath}`);
-              queryTopicsSet.add(`MLZ/${id}/${cmdPath}`);
-              queryTopicsSet.add(`MASTERLAZER/${id}/${cmdPath}`);
-              if (activeEquipment?.manufacturer) {
-                queryTopicsSet.add(`${activeEquipment.manufacturer}/${id}/${cmdPath}`);
-              }
-            });
+            const cleanId = cleanDeviceId(id);
+            if (cleanId) {
+              queryTopicsSet.add(`MLZ/${cleanId}/cmd`);
+            }
           });
 
           const queryTopics = Array.from(queryTopicsSet);
 
           queryTopics.forEach((qt) => {
             try {
-              // Send various common MQTT request patterns to ensure compatibility
-              ['STATUS', 'GET', 'read', '1'].forEach((cmdPayload) => {
-                const msg = new window.Paho.MQTT.Message(cmdPayload);
-                msg.destinationName = qt;
-                recordOutboundPublish(qt, cmdPayload);
-                client.send(msg);
-              });
+              const msg = new window.Paho.MQTT.Message('STATUS');
+              msg.destinationName = qt;
+              recordOutboundPublish(qt, 'STATUS');
+              client.send(msg);
             } catch (err) {
               console.warn(`Initial query failed on ${qt}:`, err);
             }
