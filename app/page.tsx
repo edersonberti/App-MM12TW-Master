@@ -176,9 +176,17 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
   </div>
 );
 
+type AppScreen = 'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'share' | 'invite' | 'admin';
+
+const APP_SCREENS: readonly AppScreen[] = ['login', 'register', 'home', 'aux', 'led', 'timers', 'setup', 'share', 'invite', 'admin'];
+const MAIN_TAB_SCREENS: readonly AppScreen[] = ['home', 'aux', 'led', 'timers'];
+
+const isAppScreen = (value: unknown): value is AppScreen =>
+  typeof value === 'string' && (APP_SCREENS as readonly string[]).includes(value);
+
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'share' | 'invite' | 'admin'>('login');
+  const [activeScreen, setActiveScreen] = useState<AppScreen>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
 
@@ -209,9 +217,95 @@ export default function PoolControllerPage() {
   const [firmwareEditingId, setFirmwareEditingId] = useState<string | null>(null);
   const [firmwareUpdatingModel, setFirmwareUpdatingModel] = useState<string | null>(null);
 
+  // Sync app screens with browser history so the phone back button works in PWA/mobile.
+  const activeScreenRef = useRef<AppScreen>(activeScreen);
+  activeScreenRef.current = activeScreen;
+  const navDepthRef = useRef(0);
+
+  const navigateToScreen = useCallback((
+    screen: AppScreen,
+    options?: { replace?: boolean; resetStack?: boolean }
+  ) => {
+    const current = activeScreenRef.current;
+    const isMainTabSwitch =
+      (MAIN_TAB_SCREENS as readonly string[]).includes(screen) &&
+      ((MAIN_TAB_SCREENS as readonly string[]).includes(current) ||
+        current === 'setup' ||
+        current === 'admin' ||
+        current === 'share');
+    const shouldReplace =
+      options?.replace === true ||
+      options?.resetStack === true ||
+      current === screen ||
+      isMainTabSwitch;
+
+    setActiveScreen(screen);
+    setShowNavMenu(false);
+
+    if (typeof window === 'undefined') return;
+
+    const url = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (shouldReplace) {
+      if (options?.resetStack) {
+        navDepthRef.current = 0;
+      }
+      window.history.replaceState({ screen, depth: navDepthRef.current }, '', url);
+    } else {
+      navDepthRef.current += 1;
+      window.history.pushState({ screen, depth: navDepthRef.current }, '', url);
+    }
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (typeof window !== 'undefined' && navDepthRef.current > 0) {
+      window.history.back();
+      return;
+    }
+    navigateToScreen('home', { replace: true, resetStack: true });
+  }, [navigateToScreen]);
+
   const handleBackToHome = () => {
-    setActiveScreen('home');
+    goBack();
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const url = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const existing = window.history.state;
+    const existingScreen =
+      existing && typeof existing === 'object' ? (existing as { screen?: unknown }).screen : undefined;
+
+    if (!isAppScreen(existingScreen)) {
+      window.history.replaceState(
+        {
+          ...(existing && typeof existing === 'object' ? existing : {}),
+          screen: activeScreenRef.current,
+          depth: 0,
+        },
+        '',
+        url
+      );
+      navDepthRef.current = 0;
+    } else {
+      const depth = (existing as { depth?: unknown }).depth;
+      navDepthRef.current = typeof depth === 'number' && depth >= 0 ? depth : 0;
+    }
+
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state as { screen?: unknown; depth?: unknown } | null;
+      const screen = state?.screen;
+      if (isAppScreen(screen)) {
+        setActiveScreen(screen);
+        setShowNavMenu(false);
+      }
+      const depth = state?.depth;
+      navDepthRef.current = typeof depth === 'number' && depth >= 0 ? depth : 0;
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
   const [adminSearchUser, setAdminSearchUser] = useState('');
@@ -574,7 +668,7 @@ export default function PoolControllerPage() {
         if (savedSimUser) {
           try {
             setCurrentUser(JSON.parse(savedSimUser));
-            setActiveScreen('home');
+            navigateToScreen('home', { replace: true, resetStack: true });
           } catch (e) {
             localStorage.removeItem('sim_user');
           }
@@ -1033,14 +1127,14 @@ export default function PoolControllerPage() {
           
           if (activeScreen === 'login' || activeScreen === 'register') {
             const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY);
-            setActiveScreen(hasInvite ? 'invite' : 'home');
+            navigateToScreen(hasInvite ? 'invite' : 'home', { replace: true, resetStack: true });
           }
         } else {
           // No profile exists, show error and logout
           setAuthErrorMessage('Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           signOut();
           setCurrentUser(null);
-          setActiveScreen('login');
+          navigateToScreen('login', { replace: true, resetStack: true });
         }
       } else {
         setCurrentUser(null);
@@ -1052,9 +1146,9 @@ export default function PoolControllerPage() {
         if (activeScreen === 'register') {
           // stay on register
         } else if (hasInvite || activeScreen === 'invite') {
-          setActiveScreen('invite');
+          navigateToScreen('invite', { replace: true, resetStack: true });
         } else {
-          setActiveScreen('login');
+          navigateToScreen('login', { replace: true, resetStack: true });
         }
       }
     });
@@ -1372,7 +1466,7 @@ export default function PoolControllerPage() {
           await syncUserDevicesFromSupabase(data.user.id, data.user.email, profile.role);
 
           const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY) || !!pendingInviteToken;
-          setActiveScreen(hasInvite ? 'invite' : 'home');
+          navigateToScreen(hasInvite ? 'invite' : 'home', { replace: true, resetStack: true });
         }
       } else {
         // Register mode
@@ -1380,7 +1474,7 @@ export default function PoolControllerPage() {
         if (error) throw error;
         if (data?.user) {
           showToast('Conta cadastrada com sucesso!', 'Verifique seu e-mail para confirmação se necessário.', 'success');
-          setActiveScreen('login');
+          navigateToScreen('login', { replace: true, resetStack: true });
         }
       }
     } catch (err: any) {
@@ -1420,7 +1514,7 @@ export default function PoolControllerPage() {
     };
     setCurrentUser(demoUser);
     localStorage.setItem('sim_user', JSON.stringify(demoUser));
-    setActiveScreen('home');
+    navigateToScreen('home', { replace: true, resetStack: true });
     setAuthErrorMessage('');
   };
 
@@ -1441,7 +1535,7 @@ export default function PoolControllerPage() {
     setCurrentUser(null);
     setEmailInput('');
     setPasswordInput('');
-    setActiveScreen('login');
+    navigateToScreen('login', { replace: true, resetStack: true });
     disconnectMQTT();
   };
 
@@ -3039,10 +3133,19 @@ export default function PoolControllerPage() {
       if (fromUrl) {
         params.delete('invite');
         const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-        window.history.replaceState({}, '', next);
+        window.history.replaceState(
+          {
+            ...(typeof window.history.state === 'object' && window.history.state ? window.history.state : {}),
+            screen: 'invite',
+            depth: 0,
+          },
+          '',
+          next
+        );
+        navDepthRef.current = 0;
       }
 
-      setActiveScreen('invite');
+      navigateToScreen('invite', { replace: true, resetStack: true });
 
       void peekDeviceInvite(token).then((preview) => {
         setInvitePreview(preview);
@@ -3059,8 +3162,8 @@ export default function PoolControllerPage() {
     try {
       sessionStorage.removeItem(INVITE_STORAGE_KEY);
     } catch (e) {}
-    setActiveScreen(currentUser?.isSupabase ? 'home' : 'login');
-  }, [currentUser]);
+    navigateToScreen(currentUser?.isSupabase ? 'home' : 'login', { replace: true, resetStack: true });
+  }, [currentUser, navigateToScreen]);
 
   const clearPendingInvite = useCallback(() => {
     setPendingInviteToken(null);
@@ -3084,11 +3187,11 @@ export default function PoolControllerPage() {
       setDeviceId(result.device_id);
       localStorage.setItem(`mqtt_device:${currentUser.uid}`, result.device_id);
       showToast('Acesso concedido', 'Você agora pode controlar este equipamento.', 'success');
-      setActiveScreen('aux');
+      navigateToScreen('aux', { replace: true, resetStack: true });
     } finally {
       setInviteAcceptBusy(false);
     }
-  }, [pendingInviteToken, currentUser, clearPendingInvite, syncUserDevicesFromSupabase, showToast]);
+  }, [pendingInviteToken, currentUser, clearPendingInvite, syncUserDevicesFromSupabase, showToast, navigateToScreen]);
 
   // Refresh invite preview after login if needed
   useEffect(() => {
@@ -3102,7 +3205,7 @@ export default function PoolControllerPage() {
     setShareInvite(null);
     setSharePermission('control');
     setShareMembers([]);
-    setActiveScreen('share');
+    navigateToScreen('share');
     setShareBusy(true);
     try {
       const members = await listDeviceMembers(deviceIdToShare);
@@ -3110,20 +3213,25 @@ export default function PoolControllerPage() {
     } finally {
       setShareBusy(false);
     }
-  }, []);
+  }, [navigateToScreen]);
 
   const closeSharePanel = useCallback(() => {
-    setShareDeviceId(null);
     setShareInvite(null);
     setShareMembers([]);
-    setActiveScreen('setup');
-  }, []);
+    if (typeof window !== 'undefined' && navDepthRef.current > 0) {
+      window.history.back();
+    } else {
+      navigateToScreen('setup', { replace: true });
+    }
+    setShareDeviceId(null);
+  }, [navigateToScreen]);
 
   useEffect(() => {
     if (activeScreen === 'share' && !shareDeviceId) {
-      setActiveScreen('setup');
+      // Recover if share was opened without a device (e.g. stale state after refresh).
+      navigateToScreen('setup', { replace: true });
     }
-  }, [activeScreen, shareDeviceId]);
+  }, [activeScreen, shareDeviceId, navigateToScreen]);
 
   const handleCreateShareInvite = useCallback(async () => {
     if (!shareDeviceId) return;
@@ -3253,7 +3361,7 @@ export default function PoolControllerPage() {
       localStorage.removeItem('mqtt_device');
       setScannedData(null);
       setQrScannerError(null);
-      setActiveScreen('aux');
+      navigateToScreen('aux', { replace: true, resetStack: true });
 
       setBleLog(prev => [
         ...prev,
@@ -3303,7 +3411,7 @@ export default function PoolControllerPage() {
     }
     setScannedData(null);
     setQrScannerError(null);
-    setActiveScreen('aux');
+    navigateToScreen('aux', { replace: true, resetStack: true });
     
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
@@ -3329,7 +3437,7 @@ export default function PoolControllerPage() {
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
     showToast('Configurações Salvas', 'Configurações armazenadas no navegador! Reconectando...', 'success');
-    setActiveScreen('home');
+    navigateToScreen('home', { replace: true, resetStack: true });
   };
 
   const handleResetToDefaultConfig = () => {
@@ -3369,7 +3477,7 @@ export default function PoolControllerPage() {
       </p>
       <button
         type="button"
-        onClick={() => setActiveScreen('setup')}
+        onClick={() => navigateToScreen('setup')}
         className="mt-2 px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-2"
       >
         <QrCode className="w-4 h-4" />
@@ -3488,7 +3596,7 @@ export default function PoolControllerPage() {
                   {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
                     <button
                       type="button"
-                      onClick={() => setActiveScreen('admin')}
+                      onClick={() => navigateToScreen('admin')}
                       className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
                       title="Painel de Administração (Proprietário)"
                     >
@@ -3528,7 +3636,7 @@ export default function PoolControllerPage() {
                               type="button"
                               onClick={() => {
                                 setShowNavMenu(false);
-                                setActiveScreen('setup');
+                                navigateToScreen('setup');
                               }}
                               className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-slate-200 hover:bg-white/10 transition-colors"
                             >
@@ -3560,7 +3668,7 @@ export default function PoolControllerPage() {
                 <div className="grid grid-cols-4 gap-1.5 p-1 bg-black/20 rounded-xl border-2 border-white/10">
                   <button 
                     id="tab-home"
-                    onClick={() => setActiveScreen('home')}
+                    onClick={() => navigateToScreen('home')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'home' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3573,7 +3681,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-aux"
-                    onClick={() => setActiveScreen('aux')}
+                    onClick={() => navigateToScreen('aux')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'aux' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3586,7 +3694,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-led"
-                    onClick={() => setActiveScreen('led')}
+                    onClick={() => navigateToScreen('led')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'led' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3599,7 +3707,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-piscina"
-                    onClick={() => setActiveScreen('timers')}
+                    onClick={() => navigateToScreen('timers')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'timers' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3838,7 +3946,7 @@ export default function PoolControllerPage() {
                     <p className="text-xs text-slate-400">
                       Não tem cadastro?{' '}
                       <button
-                        onClick={() => setActiveScreen('register')}
+                        onClick={() => navigateToScreen('register')}
                         className="text-[#4398fa] hover:underline font-bold"
                       >
                         Criar nova conta
@@ -3928,7 +4036,7 @@ export default function PoolControllerPage() {
                     <p className="text-xs text-slate-400">
                       Já é cadastrado?{' '}
                       <button
-                        onClick={() => setActiveScreen('login')}
+                        onClick={() => navigateToScreen('login', { replace: true })}
                         className="text-[#4398fa] hover:underline font-bold"
                       >
                         Voltar para o Login
@@ -3955,7 +4063,7 @@ export default function PoolControllerPage() {
                       {/* Left: LED Status Indicator */}
                       <button
                         id="home-status-led"
-                        onClick={() => setActiveScreen('led')}
+                        onClick={() => navigateToScreen('led')}
                         className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                         title="Ver controle do LED / Iluminação"
                       >
@@ -3982,7 +4090,7 @@ export default function PoolControllerPage() {
                       {/* Right: Timers Status Indicator */}
                       <button
                         id="home-status-timers"
-                        onClick={() => setActiveScreen('timers')}
+                        onClick={() => navigateToScreen('timers')}
                         className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                         title="Ver Programação de Timers / Automação"
                       >
@@ -4021,7 +4129,7 @@ export default function PoolControllerPage() {
                       <button
                           key={number}
                           id={`home-status-motor${number}`}
-                        onClick={() => setActiveScreen('aux')}
+                        onClick={() => navigateToScreen('aux')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                           title={`Ver controle: ${name}`}
                       >
@@ -5368,14 +5476,14 @@ export default function PoolControllerPage() {
                             </p>
                             <button
                               type="button"
-                              onClick={() => setActiveScreen('login')}
+                              onClick={() => navigateToScreen('login')}
                               className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-sm font-bold"
                             >
                               Entrar
                             </button>
                             <button
                               type="button"
-                              onClick={() => setActiveScreen('register')}
+                              onClick={() => navigateToScreen('register')}
                               className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-xs font-bold active:bg-white/10"
                             >
                               Criar conta
@@ -5440,7 +5548,7 @@ export default function PoolControllerPage() {
                       <button
                         onClick={() => {
                           if (adminTab === 'home') {
-                            setActiveScreen('home');
+                            goBack();
                           } else {
                             setAdminTab('home');
                           }
@@ -5657,7 +5765,7 @@ export default function PoolControllerPage() {
                             <p className="text-xs text-slate-400 leading-relaxed">Deseja simular ou testar a interface de uso final (controle de bombas, LED, temporizadores e aquecimento) que o operador vê no celular?</p>
                           </div>
                           <button
-                            onClick={() => setActiveScreen('home')}
+                            onClick={() => navigateToScreen('home', { replace: true, resetStack: true })}
                             className="px-5 py-3 bg-amber-400 hover:bg-amber-500 text-black rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-400/10 whitespace-nowrap font-sans"
                           >
                             <Sliders className="w-4 h-4" />
