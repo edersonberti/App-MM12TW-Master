@@ -44,7 +44,10 @@ import {
   Menu,
   CheckCircle2,
   PowerOff,
-  Cpu
+  Cpu,
+  Upload,
+  Download,
+  RefreshCw,
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
@@ -59,6 +62,14 @@ import {
   fetchDeviceCatalog,
   type DeviceCatalogItem,
 } from '../services/deviceCatalogService';
+import {
+  downloadFirmwareFile,
+  fetchActiveFirmware,
+  fetchAllFirmware,
+  uploadFirmware,
+  updateFirmware,
+  type FirmwareItem,
+} from '../services/firmwareService';
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -168,6 +179,17 @@ export default function PoolControllerPage() {
   const [catalogMotorCount, setCatalogMotorCount] = useState('4');
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSaving, setCatalogSaving] = useState(false);
+
+  // Firmware OTA (.bin) — linked to devices_catalog.model
+  const [firmwareList, setFirmwareList] = useState<FirmwareItem[]>([]);
+  const [firmwareLoading, setFirmwareLoading] = useState(false);
+  const [firmwareSaving, setFirmwareSaving] = useState(false);
+  const [firmwareModel, setFirmwareModel] = useState('');
+  const [firmwareNome, setFirmwareNome] = useState('');
+  const [firmwareVersao, setFirmwareVersao] = useState('');
+  const [firmwareFile, setFirmwareFile] = useState<File | null>(null);
+  const [firmwareEditingId, setFirmwareEditingId] = useState<string | null>(null);
+  const [firmwareUpdatingModel, setFirmwareUpdatingModel] = useState<string | null>(null);
 
   const handleBackToHome = () => {
     setActiveScreen('home');
@@ -1013,6 +1035,7 @@ export default function PoolControllerPage() {
     if (!currentUser?.isSupabase) {
       Promise.resolve().then(() => {
         setDeviceCatalog([]);
+        setFirmwareList([]);
       });
       return;
     }
@@ -1020,6 +1043,7 @@ export default function PoolControllerPage() {
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCatalogLoading(true);
+    setFirmwareLoading(true);
 
     fetchDeviceCatalog()
       .then((items) => {
@@ -1029,10 +1053,23 @@ export default function PoolControllerPage() {
         if (!cancelled) setCatalogLoading(false);
       });
 
+    const loadFirmware =
+      currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support'
+        ? fetchAllFirmware()
+        : fetchActiveFirmware();
+
+    loadFirmware
+      .then((items) => {
+        if (!cancelled) setFirmwareList(items);
+      })
+      .finally(() => {
+        if (!cancelled) setFirmwareLoading(false);
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.uid, currentUser?.isSupabase]);
+  }, [currentUser?.uid, currentUser?.isSupabase, currentUser?.role]);
 
   // 3. Dynamic setup of Iro.js Color picker when active screen is 'led'
   useEffect(() => {
@@ -2260,6 +2297,111 @@ export default function PoolControllerPage() {
       );
     }
   };
+
+  const refreshFirmwareList = async () => {
+    setFirmwareLoading(true);
+    try {
+      const items =
+        currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support'
+          ? await fetchAllFirmware()
+          : await fetchActiveFirmware();
+      setFirmwareList(items);
+    } finally {
+      setFirmwareSaving(false);
+      setFirmwareLoading(false);
+    }
+  };
+
+  const resetFirmwareForm = () => {
+    setFirmwareEditingId(null);
+    setFirmwareModel('');
+    setFirmwareNome('');
+    setFirmwareVersao('');
+    setFirmwareFile(null);
+  };
+
+  const handleUploadFirmware = async () => {
+    if (
+      currentUser?.role !== 'owner' &&
+      currentUser?.role !== 'admin' &&
+      currentUser?.role !== 'support'
+    ) {
+      return;
+    }
+
+    const model = firmwareModel.trim().toUpperCase();
+    if (!model || !firmwareNome.trim() || !firmwareVersao.trim()) {
+      showToast('Campos Obrigatórios', 'Informe modelo, nome e versão do firmware.', 'warning');
+      return;
+    }
+    if (!firmwareFile && !firmwareEditingId) {
+      showToast('Arquivo Obrigatório', 'Selecione o arquivo .bin para enviar.', 'warning');
+      return;
+    }
+
+    setFirmwareSaving(true);
+    try {
+      if (firmwareEditingId) {
+        await updateFirmware({
+          id: firmwareEditingId,
+          nome: firmwareNome,
+          versao: firmwareVersao,
+          file: firmwareFile || undefined,
+          uploadedBy: currentUser?.uid,
+        });
+        showToast('Firmware Atualizado', `Versão ${firmwareVersao} do modelo ${model} atualizada.`, 'success');
+      } else {
+        if (!firmwareFile) return;
+        await uploadFirmware({
+          model,
+          nome: firmwareNome,
+          versao: firmwareVersao,
+          file: firmwareFile,
+          uploadedBy: currentUser?.uid,
+        });
+        showToast('Firmware Publicado', `Nova atualização ${firmwareVersao} disponível para ${model}.`, 'success');
+      }
+      resetFirmwareForm();
+      await refreshFirmwareList();
+    } catch (err: any) {
+      showToast('Erro no Firmware', err?.message || 'Não foi possível salvar o firmware.', 'error');
+      setFirmwareSaving(false);
+    }
+  };
+
+  const handleStartEditFirmware = (item: FirmwareItem) => {
+    setFirmwareEditingId(item.id);
+    setFirmwareModel(item.model);
+    setFirmwareNome(item.nome);
+    setFirmwareVersao(item.versao);
+    setFirmwareFile(null);
+    setAdminTab('aba2');
+  };
+
+  const handleOperatorFirmwareUpdate = async (item: FirmwareItem) => {
+    setFirmwareUpdatingModel(item.model);
+    try {
+      await downloadFirmwareFile(item);
+      showToast(
+        'Atualização Pronta',
+        `Firmware ${item.model} v${item.versao} baixado. Aplique no equipamento.`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast('Erro na Atualização', err?.message || 'Não foi possível baixar o firmware.', 'error');
+    } finally {
+      setFirmwareUpdatingModel(null);
+    }
+  };
+
+  const operatorFirmwareUpdates = (() => {
+    const userModels = new Set(
+      registeredEquipments.map((eq) => (eq.model || '').trim().toUpperCase()).filter(Boolean)
+    );
+    return firmwareList.filter(
+      (fw) => fw.is_active && userModels.has(fw.model.trim().toUpperCase())
+    );
+  })();
 
   const setMotorName = (motorNum: MotorNumber, newName: string) => {
     const setters: Record<MotorNumber, React.Dispatch<React.SetStateAction<string>>> = {
@@ -4530,6 +4672,45 @@ export default function PoolControllerPage() {
                     </div>
                   </div>
 
+                  {/* Firmware updates — only for models the user has registered */}
+                  {operatorFirmwareUpdates.length > 0 && (
+                    <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-amber-400/20 shadow-xl text-left space-y-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <RefreshCw className="w-4 h-4 text-amber-400" />
+                          Atualização de Firmware
+                        </h3>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Novas versões disponíveis para os modelos dos seus equipamentos.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {operatorFirmwareUpdates.map((fw) => (
+                          <div
+                            key={fw.id}
+                            className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/50 border border-white/10"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white">
+                                {fw.model} · v{fw.versao}
+                              </p>
+                              <p className="text-[10px] text-slate-400 truncate">{fw.nome}</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={firmwareUpdatingModel === fw.model}
+                              onClick={() => handleOperatorFirmwareUpdate(fw)}
+                              className="shrink-0 px-3 py-2 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-[10px] font-bold rounded-xl flex items-center gap-1.5"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              {firmwareUpdatingModel === fw.model ? 'Baixando...' : 'Atualizar'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Device Sync Info Summary */}
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs backdrop-blur-sm">
                     <div className="flex justify-between items-center pb-2 border-b border-white/10">
@@ -4744,8 +4925,8 @@ export default function PoolControllerPage() {
                           : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
                       }`}
                     >
-                      <Terminal className="w-4 h-4" />
-                      Simulador & Telemetria
+                      <Upload className="w-4 h-4" />
+                      Atualizações de Firmware
                     </button>
                     <button
                       onClick={() => setAdminTab('aba3')}
@@ -4846,17 +5027,21 @@ export default function PoolControllerPage() {
                               </div>
                             </button>
 
-                            {/* Card 2 */}
+                            {/* Card 2 — Firmware .bin */}
                             <button
                               onClick={() => setAdminTab('aba2')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-gradient-to-br from-amber-500/15 to-orange-500/5 border border-amber-400/40 hover:border-amber-400 hover:bg-amber-500/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
-                                <Terminal className="w-5 h-5" />
+                              <div className="p-3 bg-amber-400 text-black rounded-xl group-hover:scale-110 transition-transform">
+                                <Upload className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Simulador de Telemetria</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Injete telemetrias de sensores e simule cenários de erro para testar a robustez do painel.</p>
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors font-sans">
+                                  UPLOAD Firmware (.bin)
+                                </h4>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                  Cadastre ou atualize o arquivo .bin por modelo. Operadores veem o botão Atualizar só nos modelos cadastrados.
+                                </p>
                               </div>
                             </button>
 
@@ -5239,658 +5424,6 @@ export default function PoolControllerPage() {
                                 </div>
                               )}
                             </div>
-                          </div>
-
-                        </div>
-
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-2">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tab 2: Sensors Simulator / Telemetry Search */}
-                    {adminTab === 'aba2' && !searchedEquip && (
-                      <div className="space-y-6 max-w-xl mx-auto py-8">
-                        <div className="text-center space-y-2">
-                          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/5">
-                            <Compass className="w-8 h-8 text-amber-400" />
-                          </div>
-                          <h3 className="text-lg font-bold text-white mt-4">Consulta de Telemetria por Dispositivo</h3>
-                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                            Insira um Device ID cadastrado para visualizar relatórios individuais de hardware, localização e tempos de uso.
-                          </p>
-                        </div>
-
-                        {/* Search Input Box */}
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4 shadow-xl">
-                          <div className="relative">
-                            <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
-                            <input
-                              type="text"
-                              placeholder="Insira o ID do Equipamento (Ex: MLZ-MM12TW-EEA39F-000003)"
-                              value={telemetrySearchId}
-                              onChange={(e) => setTelemetrySearchId(e.target.value)}
-                              className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
-                            />
-                            {telemetrySearchId && (
-                              <button 
-                                onClick={() => setTelemetrySearchId('')}
-                                className="absolute right-3 top-3.5 text-slate-400 hover:text-white"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                const found = registeredEquipments.find(
-                                  eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim())
-                                );
-                                if (found) {
-                                  setTelemetrySearchId(found.id);
-                                } else {
-                                  showToast('Dispositivo não encontrado', 'Nenhum dispositivo cadastrado com este ID.', 'warning');
-                                }
-                              }}
-                              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-xl transition-colors active:scale-95 shadow-lg shadow-amber-500/20"
-                            >
-                              Consultar Telemetria
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Suggestions List */}
-                        <div className="space-y-3">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-center">
-                            Dispositivos Cadastrados (Clique para Consultar)
-                          </span>
-                          <div className="grid grid-cols-1 gap-2.5">
-                            {registeredEquipments.map((eq) => {
-                              const isSelected = areDeviceIdsMatching(telemetrySearchId.trim(), eq.id);
-                              return (
-                                <button
-                                  key={eq.id}
-                                  onClick={() => {
-                                    setTelemetrySearchId(eq.id);
-                                    setDeviceId(eq.id);
-                                    localStorage.setItem('mqtt_device', eq.id);
-                                  }}
-                                  className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                    isSelected
-                                      ? 'bg-amber-500/10 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/5'
-                                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                  }`}
-                                >
-                                  <div className="space-y-0.5">
-                                    <div className="text-xs font-bold font-mono">{eq.id}</div>
-                                    <div className="text-[10px] opacity-70">Modelo: {eq.model} • Fabricante: MASTERLAZER</div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase">Online</span>
-                                    <ChevronRight className="w-4 h-4 text-slate-500" />
-                                  </div>
-                                </button>
-                              );
-                            })}
-                            {registeredEquipments.length === 0 && (
-                              <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
-                                Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-4">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Validated Telemetry & Simulator View */}
-                    {adminTab === 'aba2' && searchedEquip && telemetry && (
-                      <div className="space-y-6">
-                        {/* Header banner */}
-                        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">
-                          <div className="flex items-center gap-3 text-left">
-                            <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400">
-                              <Compass className="w-5 h-5 animate-spin" style={{ animationDuration: '6s' }} />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="text-sm font-bold text-white font-mono">{searchedEquip.id}</h3>
-                                <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded font-black tracking-wider uppercase">VALIDADO</span>
-                              </div>
-                              <p className="text-[10px] text-slate-400">
-                                Modelo: <span className="text-slate-200 font-semibold">{searchedEquip.model}</span> • 
-                                Fabricante: <span className="text-slate-200 font-semibold">MASTERLAZER</span> • 
-                                Simulador de hardware sincronizado.
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => setTelemetrySearchId('')}
-                            className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5"
-                          >
-                            <Search className="w-3.5 h-3.5" />
-                            Consultar Outro ID
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                          
-                          {/* LEFT COLUMN: INDIVIDUAL TELEMETRY DETAILS */}
-                          <div className="lg:col-span-6 space-y-6">
-                            
-                            {/* Most Used LED Program */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Programa de LED Mais Utilizado</h4>
-                                  <p className="text-[10px] text-slate-400">Padrão de iluminação com maior tempo acumulado de ativação no dispositivo.</p>
-                                </div>
-                                <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400">
-                                  <Tv className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-                                <div className="space-y-1">
-                                  <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Programa Atual de Pico</div>
-                                  <div className="text-sm font-black text-amber-400 flex items-center gap-1.5">
-                                    <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-rose-500 via-green-500 to-blue-500 animate-pulse"></span>
-                                    {telemetry.mostUsedLedProgram}
-                                  </div>
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-xs font-mono font-bold text-emerald-400">58% das ativações</span>
-                                  <div className="text-[8px] text-slate-500">Total: 184 ativações</div>
-                                </div>
-                              </div>
-
-                              {/* Selector to change simulated most used program */}
-                              <div className="space-y-2">
-                                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                                  Alterar Programa de Pico (Simulação)
-                                </label>
-                                <select
-                                  value={telemetry.mostUsedLedProgram}
-                                  onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { mostUsedLedProgram: e.target.value })}
-                                  className="w-full bg-black/40 border border-white/10 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-amber-400"
-                                >
-                                  <option value="Arco-Íris Dinâmico">Arco-Íris Dinâmico</option>
-                                  <option value="Azul Real Fixo">Azul Real Fixo</option>
-                                  <option value="Verde Relax">Verde Relax</option>
-                                  <option value="Cromoterapia Suave">Cromoterapia Suave</option>
-                                  <option value="Festa Estroboscópica">Festa Estroboscópica</option>
-                                  <option value="Lilás Zen">Lilás Zen</option>
-                                </select>
-                              </div>
-
-                              {/* Simulated progress breakdown */}
-                              <div className="space-y-2 pt-1">
-                                <div className="flex justify-between text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                                  <span>Distribuição Histórica</span>
-                                  <span>Tempo de Uso (%)</span>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>{telemetry.mostUsedLedProgram}</span>
-                                      <span>58%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-amber-400 h-full rounded-full" style={{ width: '58%' }}></div>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>Azul Clássico</span>
-                                      <span>24%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-blue-400 h-full rounded-full" style={{ width: '24%' }}></div>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>Vermelho Festivo</span>
-                                      <span>18%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-rose-400 h-full rounded-full" style={{ width: '18%' }}></div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Min and Max Filtration Times */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Configuração de Filtragem Individual</h4>
-                                  <p className="text-[10px] text-slate-400">Tempos limites de segurança e preservação ambiental para este equipamento.</p>
-                                </div>
-                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
-                                  <Droplet className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-4">
-                                {/* Min filtration card */}
-                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
-                                  <span className="text-[9px] text-[#4398fa] font-bold uppercase tracking-wider block">Tempo Mínimo</span>
-                                  <div className="flex items-baseline gap-1">
-                                    <span className="text-2xl font-mono font-black text-white">{telemetry.minFilteringTime}</span>
-                                    <span className="text-xs text-slate-400">horas/dia</span>
-                                  </div>
-                                  <p className="text-[8px] text-slate-400">Evita estagnação da água e acúmulo de microrganismos.</p>
-                                  
-                                  <div className="flex gap-1.5 pt-1">
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.max(1, telemetry.minFilteringTime - 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      -
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.min(telemetry.maxFilteringTime, telemetry.minFilteringTime + 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Max filtration card */}
-                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
-                                  <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider block">Tempo Máximo</span>
-                                  <div className="flex items-baseline gap-1">
-                                    <span className="text-2xl font-mono font-black text-white">{telemetry.maxFilteringTime}</span>
-                                    <span className="text-xs text-slate-400">horas/dia</span>
-                                  </div>
-                                  <p className="text-[8px] text-slate-400">Previsão contra desgaste do motor da bomba por sobrecarga.</p>
-
-                                  <div className="flex gap-1.5 pt-1">
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.max(telemetry.minFilteringTime, telemetry.maxFilteringTime - 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      -
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.min(24, telemetry.maxFilteringTime + 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Hydro Massage Timer usage */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Timer de Hidromassagem Recorrente</h4>
-                                  <p className="text-[10px] text-slate-400">Histórico e configuração do temporizador de segurança da hidromassagem.</p>
-                                </div>
-                                <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400">
-                                  <Clock className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-                                <div className="space-y-1">
-                                  <span className="text-[9px] text-slate-400 uppercase tracking-wider font-semibold block">Duração de Uso por Ciclo</span>
-                                  <div className="text-lg font-black text-emerald-400 font-mono">
-                                    {telemetry.hydroTimerUsageMinutes} minutos
-                                  </div>
-                                  <p className="text-[8px] text-slate-500">O motor desliga sozinho após este intervalo.</p>
-                                </div>
-
-                                <div className="flex flex-wrap gap-1 max-w-[150px]">
-                                  {[15, 30, 45, 60].map((mins) => {
-                                    const isActive = telemetry.hydroTimerUsageMinutes === mins;
-                                    return (
-                                      <button
-                                        key={mins}
-                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { hydroTimerUsageMinutes: mins })}
-                                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-colors ${
-                                          isActive
-                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-                                        }`}
-                                      >
-                                        {mins}m
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              <div className="flex justify-between items-center text-[10px] text-slate-400 px-1 pt-1">
-                                <span>Uso Total Acumulado:</span>
-                                <span className="text-slate-200 font-mono font-bold">128 ciclos (64 horas de funcionamento)</span>
-                              </div>
-                            </div>
-
-                            {/* Device Location & Map Coordinates */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Localização Geográfica do Equipamento</h4>
-                                  <p className="text-[10px] text-slate-400">Visualização de coordenadas GPS e rastreamento de instalação ativa.</p>
-                                </div>
-                                <div className="p-2 bg-rose-500/10 rounded-xl text-rose-400">
-                                  <MapPin className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              {/* Coordinate Inputs */}
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Latitude</label>
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    value={telemetry.latitude}
-                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { latitude: parseFloat(e.target.value) || -23.5505 })}
-                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Longitude</label>
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    value={telemetry.longitude}
-                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { longitude: parseFloat(e.target.value) || -46.6333 })}
-                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Quick Teleport buttons */}
-                              <div className="space-y-1.5">
-                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Simular Locais de Instalação:</span>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {[
-                                    { name: 'São Paulo - SP', lat: -23.5505, lng: -46.6333 },
-                                    { name: 'Rio de Janeiro - RJ', lat: -22.9068, lng: -43.1729 },
-                                    { name: 'Porto Alegre - RS', lat: -30.0346, lng: -51.2177 },
-                                    { name: 'Belo Horizonte - MG', lat: -19.9173, lng: -43.9345 },
-                                  ].map((loc) => {
-                                    const isActive = Math.abs(telemetry.latitude - loc.lat) < 0.01 && Math.abs(telemetry.longitude - loc.lng) < 0.01;
-                                    return (
-                                      <button
-                                        key={loc.name}
-                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { latitude: loc.lat, longitude: loc.lng })}
-                                        className={`px-2.5 py-1 text-[9px] rounded-lg border transition-all ${
-                                          isActive
-                                            ? 'bg-rose-500/20 border-rose-500 text-rose-300'
-                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
-                                        }`}
-                                      >
-                                        {loc.name}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              {/* Map Embed Frame */}
-                              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40 h-[200px] relative">
-                                <iframe
-                                  title="Google Maps Coordinates"
-                                  width="100%"
-                                  height="200"
-                                  style={{ border: 0, filter: 'grayscale(0.6) invert(0.9) contrast(1.2)' }}
-                                  src={`https://maps.google.com/maps?q=${telemetry.latitude},${telemetry.longitude}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
-                                  allowFullScreen
-                                  referrerPolicy="no-referrer"
-                                />
-                              </div>
-
-                              <div className="flex justify-end pt-1">
-                                <a
-                                  href={`https://www.google.com/maps/search/?api=1&query=${telemetry.latitude},${telemetry.longitude}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
-                                >
-                                  <Compass className="w-3.5 h-3.5" />
-                                  Ver no Google Maps Real
-                                </a>
-                              </div>
-                            </div>
-
-                          </div>
-
-                          {/* RIGHT COLUMN: HARDWARE SIMULATOR & MQTT LOGS */}
-                          <div className="lg:col-span-6 space-y-6">
-                            
-                            {/* Hardware Simulation Panel */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-6 text-left">
-                              <div>
-                                <h3 className="text-sm font-bold text-white">Central de Simulação de Hardware</h3>
-                                <p className="text-[10px] text-slate-400">Altere os parâmetros abaixo para testar as reações do aplicativo e das proteções em tempo real para este dispositivo.</p>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                
-                                {/* Temp Collector */}
-                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-xs font-bold text-slate-300">Sensor Coletor Solar</span>
-                                    <span className="text-sm font-mono font-black text-rose-400">{sensorErrorActive ? '---' : `${sensorCollectorTemp}°C`}</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    disabled={sensorErrorActive}
-                                    value={sensorCollectorTemp}
-                                    onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSensorCollectorTemp(val);
-                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_collector`, String(val));
-                                    }}
-                                    className="w-full accent-rose-500 cursor-pointer disabled:opacity-30"
-                                  />
-                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
-                                    <span>0°C</span>
-                                    <span>50°C</span>
-                                    <span>100°C</span>
-                                  </div>
-                                </div>
-
-                                {/* Temp Pool */}
-                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-xs font-bold text-slate-300">Sensor Piscina</span>
-                                    <span className="text-sm font-mono font-black text-[#4398fa]">{sensorPoolTemp}°C</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="50"
-                                    value={sensorPoolTemp}
-                                    onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSensorPoolTemp(val);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/temp_pool`, String(val));
-                                    }}
-                                    className="w-full accent-[#4398fa] cursor-pointer"
-                                  />
-                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
-                                    <span>0°C</span>
-                                    <span>25°C</span>
-                                    <span>50°C</span>
-                                  </div>
-                                </div>
-
-                              </div>
-
-                              {/* Simulated Delta calculation */}
-                              <div className="p-4 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Delta Diferencial (T1 - T2)</span>
-                                  <div className="text-xs text-slate-300">Diferença de temperatura para circulação solar</div>
-                                </div>
-                                <div className="text-right">
-                                  <span className={`text-xl font-mono font-black ${sensorCollectorTemp - sensorPoolTemp >= 8 ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`}>
-                                    {sensorErrorActive ? 'Erro Sensor' : `${(sensorCollectorTemp - sensorPoolTemp).toFixed(0)}°C`}
-                                  </span>
-                                  <div className="text-[8px] text-slate-400 uppercase tracking-widest mt-1">
-                                    {sensorCollectorTemp - sensorPoolTemp >= 8 ? 'Circulação Ativa' : 'Aguardando Delta'}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Fault Injection */}
-                              <div className="space-y-3">
-                                <span className="text-xs font-bold text-slate-300 block">Simulação de Falhas & Diagnósticos</span>
-                                
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <button
-                                    onClick={() => {
-                                      const newVal = !sensorErrorActive;
-                                      setSensorErrorActive(newVal);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
-                                      logUserAction(`Simulou Erro de Sensor Coletor Solar para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
-                                    }}
-                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                      sensorErrorActive
-                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                    }`}
-                                  >
-                                    <div className="space-y-0.5">
-                                      <div className="text-xs font-bold">Erro no Sensor Coletor</div>
-                                      <div className="text-[9px] opacity-70">Sensor de temperatura aberto</div>
-                                    </div>
-                                    <AlertTriangle className="w-4 h-4" />
-                                  </button>
-
-                                  <button
-                                    onClick={() => {
-                                      const newVal = !flowErrorActive;
-                                      setFlowErrorActive(newVal);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
-                                      logUserAction(`Simulou Erro de Fluxo de Água para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
-                                    }}
-                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                      flowErrorActive
-                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                    }`}
-                                  >
-                                    <div className="space-y-0.5">
-                                      <div className="text-xs font-bold">Sem Fluxo de Água</div>
-                                      <div className="text-[9px] opacity-70">Bomba ligada sem vazão</div>
-                                    </div>
-                                    <AlertTriangle className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-
-                            </div>
-
-                            {/* Telemetry Log panel */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 flex flex-col justify-between text-left">
-                              <div className="space-y-4">
-                                <div>
-                                  <h3 className="text-sm font-bold text-white">Central de Logs Mqtt</h3>
-                                  <p className="text-[10px] text-slate-400">Mensagens enviadas em formato bruto para depuração técnica do dispositivo selecionado.</p>
-                                </div>
-
-                                <div className="space-y-2.5 font-mono text-[10px]">
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div className="text-amber-400 font-bold">{"// Tópicos Publicados Recorrentes:"}</div>
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_coll</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{sensorErrorActive ? 'ERR' : sensorCollectorTemp}</span></div>
-                                  </div>
-
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_pool</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{sensorPoolTemp}</span></div>
-                                  </div>
-
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/flow_state</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{flowErrorActive ? 'FAIL' : 'OK'}</span></div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="space-y-2 pt-2">
-                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Seeding de Testes</span>
-                                <button
-                                  onClick={() => {
-                                    try {
-                                      const actions = [
-                                        'Ligou Motor 3 (M3)', 'Desligou Motor 3 (M3)', 
-                                        `Alterou LED para ${telemetry.mostUsedLedProgram}`, 
-                                        'Desligou Motor de Filtro (M2)', 'Ligou Motor Hidro (M1)', 
-                                        'Configurou Timer do LED'
-                                      ];
-                                      const emails = [currentUser?.email || 'operador@lazer.com'];
-                                      
-                                      const generated: any[] = [];
-                                      for (let i = 0; i < 5; i++) {
-                                        generated.push({
-                                          id: 'seeded-' + Math.random().toString(36).substr(2, 9),
-                                          timestamp: new Date(Date.now() - (Math.random() * 24 * 60 * 60 * 1000)).toISOString(),
-                                          email: emails[Math.floor(Math.random() * emails.length)],
-                                          action: actions[Math.floor(Math.random() * actions.length)],
-                                          deviceId: searchedEquip.id
-                                        });
-                                      }
-
-                                      const combined = [...generated, ...userLogs].slice(0, 200);
-                                      setUserLogs(combined);
-                                      showToast('Logs de Teste', `5 Logs de teste inseridos para ${searchedEquip.id}!`, 'info');
-                                    } catch (e) {}
-                                  }}
-                                  className="w-full py-2 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors"
-                                >
-                                  Inserir Logs de Uso Fictícios para este Dispositivo
-                                </button>
-                              </div>
-
-                            </div>
-
                           </div>
 
                         </div>
@@ -6452,6 +5985,178 @@ export default function PoolControllerPage() {
                                     title="Excluir modelo"
                                   >
                                     <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {adminTab === 'aba2' && (
+                    <div className="space-y-6">
+                      <div className="bg-white/5 border border-amber-400/30 rounded-2xl p-5 space-y-4">
+                        <div>
+                          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                            <Upload className="w-4 h-4 text-amber-400" />
+                            Upload Firmware (.bin)
+                          </h3>
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            Cadastre um novo .bin ou atualize uma versão existente. Cada modelo do catálogo tem seu próprio software.
+                          </p>
+                        </div>
+
+                        {(currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support') ? (
+                          <form
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              handleUploadFirmware();
+                            }}
+                            className="space-y-4"
+                          >
+                            {deviceCatalog.length === 0 && (
+                              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-200">
+                                Cadastre um modelo em <button type="button" className="underline font-bold" onClick={() => setAdminTab('aba5')}>Catálogo de Dispositivos</button> antes de enviar o .bin.
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Modelo do equipamento *</label>
+                                <select
+                                  value={firmwareModel}
+                                  onChange={(event) => setFirmwareModel(event.target.value)}
+                                  disabled={!!firmwareEditingId}
+                                  required
+                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                                >
+                                  <option value="" className="bg-slate-900">Selecione o modelo...</option>
+                                  {deviceCatalog.map((item) => (
+                                    <option key={item.id} value={item.model} className="bg-slate-900">
+                                      {item.model}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Nome do firmware *</label>
+                                <input
+                                  value={firmwareNome}
+                                  onChange={(event) => setFirmwareNome(event.target.value)}
+                                  placeholder="Ex.: MM12TW Stable"
+                                  required
+                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Versão *</label>
+                                <input
+                                  value={firmwareVersao}
+                                  onChange={(event) => setFirmwareVersao(event.target.value)}
+                                  placeholder="Ex.: 1.2.0"
+                                  required
+                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-slate-300">Arquivo .bin *</label>
+                              <label className="flex flex-col items-center justify-center gap-2 w-full min-h-[110px] px-4 py-5 rounded-2xl border border-dashed border-amber-400/40 bg-amber-400/5 hover:bg-amber-400/10 cursor-pointer transition-colors">
+                                <Upload className="w-6 h-6 text-amber-400" />
+                                <span className="text-xs font-bold text-white">
+                                  {firmwareFile ? firmwareFile.name : 'Clique para selecionar o arquivo .bin'}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {firmwareFile
+                                    ? `${(firmwareFile.size / 1024).toFixed(1)} KB`
+                                    : 'Apenas arquivos .bin · até 16 MB'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept=".bin,application/octet-stream"
+                                  onChange={(event) => setFirmwareFile(event.target.files?.[0] || null)}
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="submit"
+                                disabled={firmwareSaving || deviceCatalog.length === 0}
+                                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-xs font-extrabold rounded-xl flex items-center gap-2 shadow-lg shadow-amber-400/20"
+                              >
+                                <Upload className="w-4 h-4" />
+                                {firmwareSaving
+                                  ? 'Enviando...'
+                                  : firmwareEditingId
+                                    ? 'Atualizar'
+                                    : 'Publicar'}
+                              </button>
+                              {firmwareEditingId && (
+                                <button
+                                  type="button"
+                                  onClick={resetFirmwareForm}
+                                  className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold rounded-xl"
+                                >
+                                  Cancelar edição
+                                </button>
+                              )}
+                            </div>
+                          </form>
+                        ) : (
+                          <p className="text-xs text-slate-400">Apenas o proprietário pode cadastrar firmware.</p>
+                        )}
+                      </div>
+
+                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
+                          <span className="text-xs font-bold text-white">Firmware publicado</span>
+                          <span className="text-[10px] text-slate-400">
+                            {firmwareList.filter((f) => f.is_active).length} ativo(s)
+                          </span>
+                        </div>
+
+                        {firmwareLoading ? (
+                          <p className="p-6 text-center text-xs text-slate-400">Carregando firmware...</p>
+                        ) : firmwareList.length === 0 ? (
+                          <p className="p-6 text-center text-xs text-slate-400">Nenhum firmware publicado.</p>
+                        ) : (
+                          <div className="divide-y divide-white/5">
+                            {firmwareList.map((item) => (
+                              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-xs font-bold text-white">
+                                      {item.model} · v{item.versao}
+                                    </p>
+                                    {item.is_active ? (
+                                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold border border-emerald-500/30">
+                                        Ativo
+                                      </span>
+                                    ) : (
+                                      <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 text-[9px] font-bold">
+                                        Histórico
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 truncate">{item.nome}</p>
+                                  <p className="text-[9px] text-slate-500">
+                                    {item.file_size ? `${(item.file_size / 1024).toFixed(1)} KB · ` : ''}
+                                    {new Date(item.data_upload).toLocaleString('pt-BR')}
+                                  </p>
+                                </div>
+                                {currentUser?.role === 'owner' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditFirmware(item)}
+                                    className="p-2 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
+                                    title="Editar / substituir .bin"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
                                   </button>
                                 )}
                               </div>
