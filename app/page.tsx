@@ -344,7 +344,7 @@ export default function PoolControllerPage() {
       return activeEquipment.permission === 'configure';
     }
     // Owned equipment (or legacy rows without access flag)
-    return activeEquipment.access !== 'shared';
+    return true;
   })();
   const activeCatalogItem = deviceCatalog.find(
     item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
