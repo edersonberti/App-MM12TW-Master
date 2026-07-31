@@ -3,11 +3,12 @@ import { supabase } from '../lib/supabase';
 export type SharePermission = 'control' | 'configure';
 
 export interface DeviceInvitePreview {
-  status: 'pending' | 'accepted' | 'revoked' | 'invalid';
+  status: 'pending' | 'accepted' | 'revoked' | 'expired' | 'invalid';
   device_id?: string;
   model?: string;
   serial?: string;
   permission?: SharePermission;
+  expires_at?: string;
 }
 
 export interface CreatedInvite {
@@ -16,6 +17,7 @@ export interface CreatedInvite {
   device_id: string;
   permission: SharePermission;
   status: string;
+  expires_at?: string;
 }
 
 export interface DeviceMember {
@@ -181,7 +183,7 @@ export function buildWhatsAppShareUrl(
       : 'controle';
   const text =
     `Olá! Você foi convidado a ter acesso (${permLabel}) ao equipamento ${model} (${serialOrId}) no Master Lazer.\n\n` +
-    `Abra o link, entre na sua conta (ou crie uma) e aceite o convite:\n${inviteUrl}`;
+    `Abra o link em até 24 horas, entre na sua conta (ou crie uma) e aceite o convite:\n${inviteUrl}`;
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
