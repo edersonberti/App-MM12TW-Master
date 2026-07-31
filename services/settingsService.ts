@@ -11,6 +11,20 @@ export interface SupabaseDeviceSettings {
   motor6_name?: string;
   motor7_name?: string;
   motor8_name?: string;
+  // Filtration timers
+  filter_init1?: string | null;
+  filter_hours1?: string | null;
+  filter_init2?: string | null;
+  filter_hours2?: string | null;
+  filter_days?: boolean[] | null;
+  // LED timer
+  led_start_hour?: string | null;
+  led_start_minute?: string | null;
+  led_duration?: string | null;
+  led_program?: string | null;
+  // Hydro timer
+  hidro_timer_enabled?: boolean | null;
+  hidro_timer_hours?: string | null;
   updated_at?: string;
 }
 

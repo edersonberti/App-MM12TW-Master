@@ -5,13 +5,15 @@ export interface SupabaseProfile {
   email: string;
   full_name: string;
   role: string;
+  status?: string;
+  deleted_at?: string | null;
 }
 
 export async function fetchProfile(userId: string): Promise<SupabaseProfile | null> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role')
+      .select('id, email, full_name, role, status, deleted_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -46,11 +48,13 @@ export async function updateProfile(userId: string, fullName: string): Promise<S
   }
 }
 
+/** Active profiles only (excludes soft-deleted accounts). */
 export async function fetchAllProfiles(): Promise<SupabaseProfile[]> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role');
+      .select('id, email, full_name, role, status, deleted_at')
+      .neq('status', 'deleted');
 
     if (error) {
       console.error('[ProfileService] Error fetching all profiles:', error.message);
@@ -83,17 +87,27 @@ export async function updateProfileRole(userId: string, role: string): Promise<S
   }
 }
 
+/**
+ * Soft-deletes an operator account via `owner_soft_delete_operator` RPC.
+ * Sets profiles.status=deleted + deleted_at, soft-deletes their devices,
+ * writes audit_events, and revokes auth login.
+ */
 export async function deleteProfile(userId: string): Promise<boolean> {
   try {
-    const { error } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', userId);
+    const { data, error } = await supabase.rpc('owner_soft_delete_operator', {
+      target_user_id: userId,
+    });
 
     if (error) {
-      console.error('[ProfileService] Error deleting profile:', error.message);
+      console.error('[ProfileService] owner_soft_delete_operator failed:', error.message);
       return false;
     }
+
+    if (data !== true) {
+      console.warn('[ProfileService] Soft-delete returned false (not operator, already deleted, or not found)');
+      return false;
+    }
+
     return true;
   } catch (err) {
     console.error('[ProfileService] Delete profile error:', err);

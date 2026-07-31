@@ -50,14 +50,18 @@ import {
   Share2,
   Copy,
   UserMinus,
-  ChevronLeft
+  ChevronLeft,
+  Download,
+  Filter,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
-import { deleteDeviceInSupabase } from '../lib/supabaseSync';
+import { fetchAuditEvents, deriveAuditFilterOptions, type AuditEvent } from '../services/auditService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   acceptDeviceInvite,
@@ -95,6 +99,127 @@ const DEFAULT_PRESET_MODELS: Record<string, { motor_count: number; has_filter_ti
   'MM08TW': { motor_count: 1, has_filter_timer: true, has_led_timer: true, has_hidro_timer: false, has_solar_heating: false },
   'MM14TW': { motor_count: 4, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
 };
+
+const AUDIT_EVENT_LABELS: Record<string, string> = {
+  device_filter_timer_updated: 'Timer filtração',
+  device_led_timer_updated: 'Timer LED',
+  device_hidro_timer_updated: 'Timer hidro',
+  device_motor_names_updated: 'Nomes dos motores',
+  device_soft_deleted: 'Equip. desativado',
+  device_hard_deleted: 'Equip. excluído',
+  device_reactivated: 'Equip. reativado',
+  operator_soft_deleted: 'Operador desativado',
+  operator_hard_deleted: 'Operador excluído',
+  account_deletion_requested: 'Pedido exclusão conta',
+};
+
+function formatAuditEventType(eventType: string): string {
+  return AUDIT_EVENT_LABELS[eventType] || eventType;
+}
+
+// Renders a compact, human-readable summary of an audit event's metadata JSON for the logs table.
+function formatAuditMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  eventType?: string
+): string {
+  if (!metadata || typeof metadata !== 'object') return '—';
+  const m = metadata;
+
+  if (eventType === 'device_filter_timer_updated') {
+    const t1 = m.filter_init1 === 'D' || !m.filter_init1
+      ? 'T1 off'
+      : `T1 ${m.filter_init1}h(${m.filter_hours1 ?? '?'}h)`;
+    const t2 = m.filter_init2 === 'D' || !m.filter_init2
+      ? 'T2 off'
+      : `T2 ${m.filter_init2}h(${m.filter_hours2 ?? '?'}h)`;
+    const days = Array.isArray(m.filter_days)
+      ? (m.filter_days as boolean[]).filter(Boolean).length
+      : null;
+    return days != null ? `${t1} · ${t2} · ${days} dia(s)` : `${t1} · ${t2}`;
+  }
+
+  if (eventType === 'device_led_timer_updated') {
+    const start = `${String(m.led_start_hour ?? '??').padStart(2, '0')}:${String(m.led_start_minute ?? '00').padStart(2, '0')}`;
+    return `Início ${start} · ${m.led_duration ?? '?'}h · Prog ${m.led_program ?? '0'}`;
+  }
+
+  if (eventType === 'device_hidro_timer_updated') {
+    const enabled = m.hidro_timer_enabled === true;
+    return enabled ? `Ativo (${m.hidro_timer_hours ?? '?'}h)` : 'Desligado';
+  }
+
+  if (eventType === 'device_motor_names_updated') {
+    const names = [m.motor1_name, m.motor2_name, m.motor3_name, m.motor4_name]
+      .filter((n) => typeof n === 'string' && n.trim())
+      .slice(0, 3);
+    return names.length ? names.join(', ') : '—';
+  }
+
+  if (eventType === 'operator_soft_deleted' || eventType === 'account_deletion_requested') {
+    const email = typeof m.email === 'string' ? m.email : '—';
+    const when = m.deleted_at ? ` · ${new Date(String(m.deleted_at)).toLocaleString('pt-BR')}` : '';
+    const devices =
+      typeof m.devices_soft_deleted === 'number' ? ` · ${m.devices_soft_deleted} equip.` : '';
+    return `${email}${when}${devices}`;
+  }
+
+  if (eventType === 'device_soft_deleted') {
+    const serial = m.serial ? String(m.serial) : '—';
+    const reason = m.reason ? ` · ${String(m.reason)}` : '';
+    return `${serial}${reason}`;
+  }
+
+  const entries = Object.entries(metadata);
+  if (entries.length === 0) return '—';
+  return entries
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
+    .join(' · ');
+}
+
+function auditEventBadgeClass(eventType: string): string {
+  const t = (eventType || '').toLowerCase();
+  if (t.includes('delete') || t.includes('revok') || t.includes('hard')) {
+    return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+  }
+  if (t.includes('create') || t.includes('insert') || t.includes('accept') || t.includes('register')) {
+    return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+  }
+  if (t.includes('timer') || t.includes('motor_names')) {
+    return 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30';
+  }
+  if (t.includes('update') || t.includes('soft') || t.includes('change')) {
+    return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+  }
+  return 'bg-[#4398fa]/15 text-[#4398fa] border-[#4398fa]/30';
+}
+
+function exportAuditEventsCsv(events: AuditEvent[]) {
+  const headers = ['created_at', 'actor_email', 'entity_type', 'entity_id', 'event_type', 'metadata'];
+  const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [
+    headers.join(','),
+    ...events.map((e) =>
+      [
+        e.created_at,
+        e.actor_email,
+        e.entity_type,
+        e.entity_id,
+        e.event_type,
+        JSON.stringify(e.metadata || {}),
+      ]
+        .map(escape)
+        .join(',')
+    ),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `audit_events_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -199,6 +324,29 @@ export default function PoolControllerPage() {
   // Admin & Owner Dashboard states
   const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware'>('home');
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
+  // All devices registered system-wide (owner/admin visibility), with owner email attached
+  const [adminAllDevices, setAdminAllDevices] = useState<{
+    id: string;
+    model: string;
+    serial?: string;
+    user_id: string | null;
+    userEmail: string | null;
+  }[]>([]);
+  // Audit trail events sourced from Supabase `audit_events`
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditFilterSearch, setAuditFilterSearch] = useState('');
+  const [auditFilterActor, setAuditFilterActor] = useState('');
+  const [auditFilterEntityType, setAuditFilterEntityType] = useState('');
+  const [auditFilterEventType, setAuditFilterEventType] = useState('');
+  const [auditFilterEntityId, setAuditFilterEntityId] = useState('');
+  const [auditFilterDateFrom, setAuditFilterDateFrom] = useState('');
+  const [auditFilterDateTo, setAuditFilterDateTo] = useState('');
+  const [auditFilterSort, setAuditFilterSort] = useState<'desc' | 'asc'>('desc');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(25);
+  const [auditExpandedId, setAuditExpandedId] = useState<string | null>(null);
+  const [auditFiltersOpen, setAuditFiltersOpen] = useState(true);
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogItem[]>([]);
   const [catalogModel, setCatalogModel] = useState('');
   const [catalogMotorCount, setCatalogMotorCount] = useState('2');
@@ -242,7 +390,6 @@ export default function PoolControllerPage() {
   const [userFormPassword, setUserFormPassword] = useState('');
   const [userFormRole, setUserFormRole] = useState<'owner' | 'operator'>('operator');
   const [userLogs, setUserLogs] = useState<any[]>([]);
-  const [showConfirmClearLogs, setShowConfirmClearLogs] = useState(false);
 
   // Solar sensor readings (from device / UI)
   const [sensorCollectorTemp, setSensorCollectorTemp] = useState<number>(45);
@@ -495,6 +642,118 @@ export default function PoolControllerPage() {
     setDeviceCatalog(items);
     return items;
   }, []);
+
+  // Owner/admin visibility: every registered device system-wide, with its owner's email attached
+  const loadAdminAllDevices = useCallback(async () => {
+    const devices = await fetchAllActiveDevices();
+    setAdminAllDevices(devices.map((d) => ({
+      id: d.id,
+      model: d.model,
+      serial: d.serial,
+      user_id: d.user_id,
+      userEmail: d.owner_email ?? null,
+    })));
+  }, []);
+
+  // Owner/admin visibility: recent audit trail events from Supabase `audit_events`
+  const loadAuditEvents = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const events = await fetchAuditEvents({ limit: 500, sort: 'desc' });
+      setAuditEvents(events);
+      setAuditPage(1);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
+  // Admin equipment panel: resolve the selected user's record and their devices only
+  const selectedAdminUserObj = selectedUserForEquip
+    ? simUsers.find(u => (u.email || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim())
+    : null;
+  const adminEquipmentsForSelectedUser = selectedUserForEquip
+    ? adminAllDevices.filter((d) => {
+        const emailMatch = (d.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
+        const uidMatch = !!selectedAdminUserObj && !!d.user_id && d.user_id === selectedAdminUserObj.uid;
+        return emailMatch || uidMatch;
+      })
+    : [];
+  // Devices available to link: anything not already owned by the selected user (unowned or owned by someone else)
+  const adminEquipmentsAvailableToLink = selectedUserForEquip
+    ? adminAllDevices.filter((d) => !adminEquipmentsForSelectedUser.some((eq) => eq.id === d.id))
+    : [];
+
+  // Audit filter options + filtered/paginated view (client-side for instant UX)
+  const auditFilterOptions = deriveAuditFilterOptions(auditEvents);
+  const filteredAuditEvents = (() => {
+    const search = auditFilterSearch.trim().toLowerCase();
+    const fromTs = auditFilterDateFrom ? new Date(`${auditFilterDateFrom}T00:00:00`).getTime() : null;
+    const toTs = auditFilterDateTo ? new Date(`${auditFilterDateTo}T23:59:59.999`).getTime() : null;
+
+    let rows = auditEvents.filter((e) => {
+      if (auditFilterActor && (e.actor_email || '') !== auditFilterActor) return false;
+      if (auditFilterEntityType && e.entity_type !== auditFilterEntityType) return false;
+      if (auditFilterEventType && e.event_type !== auditFilterEventType) return false;
+      if (auditFilterEntityId) {
+        const needle = auditFilterEntityId.trim().toLowerCase();
+        if (!(e.entity_id || '').toLowerCase().includes(needle)) return false;
+      }
+      const created = new Date(e.created_at).getTime();
+      if (fromTs != null && !Number.isNaN(fromTs) && created < fromTs) return false;
+      if (toTs != null && !Number.isNaN(toTs) && created > toTs) return false;
+      if (search) {
+        const hay = [
+          e.actor_email,
+          e.entity_type,
+          e.entity_id,
+          e.event_type,
+          JSON.stringify(e.metadata || {}),
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+
+    rows = [...rows].sort((a, b) => {
+      const da = new Date(a.created_at).getTime();
+      const db = new Date(b.created_at).getTime();
+      return auditFilterSort === 'asc' ? da - db : db - da;
+    });
+
+    return rows;
+  })();
+
+  const auditTotalPages = Math.max(1, Math.ceil(filteredAuditEvents.length / auditPageSize));
+  const auditPageSafe = Math.min(auditPage, auditTotalPages);
+  const pagedAuditEvents = filteredAuditEvents.slice(
+    (auditPageSafe - 1) * auditPageSize,
+    auditPageSafe * auditPageSize
+  );
+
+  const clearAuditFilters = () => {
+    setAuditFilterSearch('');
+    setAuditFilterActor('');
+    setAuditFilterEntityType('');
+    setAuditFilterEventType('');
+    setAuditFilterEntityId('');
+    setAuditFilterDateFrom('');
+    setAuditFilterDateTo('');
+    setAuditFilterSort('desc');
+    setAuditPage(1);
+    setAuditExpandedId(null);
+  };
+
+  const auditFiltersActiveCount = [
+    auditFilterSearch,
+    auditFilterActor,
+    auditFilterEntityType,
+    auditFilterEventType,
+    auditFilterEntityId,
+    auditFilterDateFrom,
+    auditFilterDateTo,
+  ].filter(Boolean).length;
 
   const setUserWantsMqtt = (val: boolean) => {
     userWantsMqttRef.current = val;
@@ -785,6 +1044,57 @@ export default function PoolControllerPage() {
             setMotor6Name(settings.motor6_name ?? 'Motor 06');
             setMotor7Name(settings.motor7_name ?? 'Motor 07');
             setMotor8Name(settings.motor8_name ?? 'Motor 08');
+
+            // Restore timer config from Supabase (cloud backup; MQTT may still overwrite later)
+            if (settings.filter_init1 != null) {
+              setFilterInit1(settings.filter_init1);
+              setFilterStartHour(settings.filter_init1 === 'D' ? '08' : settings.filter_init1);
+              setFilterInit(`${settings.filter_init1 === 'D' ? '08' : settings.filter_init1}:00`);
+              localStorage.setItem('filter_init1', settings.filter_init1);
+              localStorage.setItem('filter_start_hour', settings.filter_init1 === 'D' ? '08' : settings.filter_init1);
+            }
+            if (settings.filter_hours1 != null) {
+              setFilterHours1(settings.filter_hours1);
+              setFilterHours(settings.filter_hours1);
+              localStorage.setItem('filter_hours1', settings.filter_hours1);
+              localStorage.setItem('filter_hours', settings.filter_hours1);
+            }
+            if (settings.filter_init2 != null) {
+              setFilterInit2(settings.filter_init2);
+              localStorage.setItem('filter_init2', settings.filter_init2);
+            }
+            if (settings.filter_hours2 != null) {
+              setFilterHours2(settings.filter_hours2);
+              localStorage.setItem('filter_hours2', settings.filter_hours2);
+            }
+            if (Array.isArray(settings.filter_days) && settings.filter_days.length === 7) {
+              setFilterDays(settings.filter_days);
+              localStorage.setItem('filter_days', JSON.stringify(settings.filter_days));
+            }
+            if (settings.led_start_hour != null) {
+              setLedStartHour(settings.led_start_hour);
+              localStorage.setItem('led_start_hour', settings.led_start_hour);
+            }
+            if (settings.led_start_minute != null) {
+              setLedStartMinute(settings.led_start_minute);
+              localStorage.setItem('led_start_minute', settings.led_start_minute);
+            }
+            if (settings.led_duration != null) {
+              setLedDuration(settings.led_duration);
+              localStorage.setItem('led_duration', settings.led_duration);
+            }
+            if (settings.led_program != null) {
+              setLedProgram(settings.led_program);
+              localStorage.setItem('led_program', settings.led_program);
+            }
+            if (settings.hidro_timer_hours != null || settings.hidro_timer_enabled != null) {
+              const hidroEnabled = settings.hidro_timer_enabled === true;
+              const hidroHours = settings.hidro_timer_hours ?? (hidroEnabled ? '1' : 'D');
+              setHidroTimerEnabled(hidroEnabled);
+              setHidroTimerHours(hidroEnabled ? (hidroHours === 'off' ? 'D' : hidroHours) : 'D');
+              localStorage.setItem('hidro_timer_enabled', String(hidroEnabled));
+              localStorage.setItem('hidro_timer_hours', hidroEnabled ? hidroHours : 'D');
+            }
           }
         } catch (err) {
           console.warn("Error loading device settings from Supabase:", err);
@@ -888,7 +1198,25 @@ export default function PoolControllerPage() {
     if (!isSupabaseConfigured() || !userId) return [];
 
     const dbDevices = await fetchUserDevices(userId);
-    const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+    let deletedIds: string[] = [];
+    try {
+      deletedIds = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+    } catch {
+      deletedIds = [];
+    }
+
+    // Cloud is source of truth: if Supabase still has the device as active,
+    // purge it from the local deleted blacklist (legacy hard-delete failures left stale IDs).
+    const activeDbIds = (dbDevices || []).map((d: any) => String(d.id || '')).filter(Boolean);
+    if (activeDbIds.length > 0 && deletedIds.length > 0) {
+      const pruned = deletedIds.filter(
+        (del) => !activeDbIds.some((id) => areDeviceIdsMatching(del, id))
+      );
+      if (pruned.length !== deletedIds.length) {
+        deletedIds = pruned;
+        localStorage.setItem('deleted_device_ids', JSON.stringify(pruned));
+      }
+    }
 
     const isDeleted = (id: string) => {
       if (!id) return false;
@@ -904,21 +1232,20 @@ export default function PoolControllerPage() {
       rawLocal = [];
     }
 
-    const mappedDb = (dbDevices || [])
-      .filter((d: any) => !isDeleted(d.id))
-      .map((d: any) => ({
-        id: d.id,
-        model: d.model || 'MM12TW',
-        serial: d.serial || d.id,
-        pairing_token: d.pairing_token,
-        manufacturer: 'MASTERLAZER',
-        userEmail: userEmail || '',
-        access: d.access === 'shared' ? 'shared' as const : 'owner' as const,
-        permission:
-          d.access === 'shared'
-            ? ((d.permission === 'configure' ? 'configure' : 'control') as SharePermission)
-            : ('owner' as const),
-      }));
+    // Prefer Supabase rows; never hide an active cloud device behind localStorage blacklist
+    const mappedDb = (dbDevices || []).map((d: any) => ({
+      id: d.id,
+      model: d.model || 'MM12TW',
+      serial: d.serial || d.id,
+      pairing_token: d.pairing_token,
+      manufacturer: 'MASTERLAZER',
+      userEmail: userEmail || '',
+      access: d.access === 'shared' ? 'shared' as const : 'owner' as const,
+      permission:
+        d.access === 'shared'
+          ? ((d.permission === 'configure' ? 'configure' : 'control') as SharePermission)
+          : ('owner' as const),
+    }));
 
     const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
 
@@ -973,6 +1300,12 @@ export default function PoolControllerPage() {
       if (session?.user) {
         // Fetch user profile and role from profiles table
         const profile = await fetchProfile(session.user.id);
+        if (profile?.status === 'deleted') {
+          console.warn('[Auth] Soft-deleted profile attempted session — signing out');
+          await signOut();
+          setCurrentUser(null);
+          return;
+        }
         if (profile) {
           const loggedUser = {
             email: session.user.email,
@@ -1181,7 +1514,7 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
-  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
+  // 3b. Load all synced user profiles, devices and audit events live from Supabase when administrative tab opens
   useEffect(() => {
     if (activeScreen === 'admin' && isSupabaseConfigured()) {
       const loadProfiles = async () => {
@@ -1194,7 +1527,10 @@ export default function PoolControllerPage() {
         })));
       };
       loadProfiles();
+      loadAdminAllDevices();
+      loadAuditEvents();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen]);
 
   // 4. Color HSV to RGB Converter Math helper helper
@@ -1322,6 +1658,11 @@ export default function PoolControllerPage() {
           if (!profile) {
             await signOut();
             throw new Error('Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
+          }
+
+          if (profile.status === 'deleted') {
+            await signOut();
+            throw new Error('Esta conta foi desativada. Entre em contato com o administrador.');
           }
 
           const loggedUser = {
@@ -2234,14 +2575,26 @@ export default function PoolControllerPage() {
     const targetUser = simUsers.find(u => u.uid === uid);
     if (!targetUser) return;
 
-    if (!confirm(`Tem certeza que deseja excluir o perfil do usuário ${targetUser.email} do Supabase? Esta ação não pode ser desfeita.`)) {
+    if (targetUser.role === 'owner') {
+      showToast('Ação Inválida', 'Contas owner não podem ser desativadas por esta ação.', 'warning');
+      return;
+    }
+
+    if (!confirm(`Desativar a conta de ${targetUser.email}?\n\nIsso fará soft delete (status=deleted), marcará a data, desativará os equipamentos do usuário e registrará o evento na auditoria.`)) {
       return;
     }
 
     try {
-      await deleteProfile(uid);
-      
-      // Reload list
+      const ok = await deleteProfile(uid);
+      if (!ok) {
+        showToast(
+          'Falha ao desativar',
+          'Não foi possível desativar a conta no servidor (apenas operators ativos).',
+          'error'
+        );
+        return;
+      }
+
       const profiles = await fetchAllProfiles();
       setSimUsers(profiles.map(p => ({
         uid: p.id,
@@ -2249,9 +2602,13 @@ export default function PoolControllerPage() {
         full_name: p.full_name,
         role: p.role
       })));
-      
-      logUserAction(`Removeu usuário: ${targetUser.email}`);
-      showToast('Usuário Removido', `Usuário ${targetUser.email} removido com sucesso.`, 'success');
+
+      // Refresh admin devices list (operator devices were soft-deleted too)
+      await loadAdminAllDevices();
+      await loadAuditEvents();
+
+      logUserAction(`Desativou conta (soft delete): ${targetUser.email}`);
+      showToast('Conta desativada', `${targetUser.email} foi desativada e registrada na auditoria.`, 'success');
     } catch (err: any) {
       showToast('Erro ao remover usuário', err.message, 'error');
     }
@@ -2713,6 +3070,17 @@ export default function PoolControllerPage() {
     localStorage.setItem('filter_start_hour', filterInit1 === 'D' ? '08' : filterInit1);
     localStorage.setItem('filter_hours', filterHours1);
 
+    // Persist to Supabase device_settings (also writes audit_events via DB trigger)
+    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+      void saveDeviceSettings(deviceId, {
+        filter_init1: filterInit1,
+        filter_hours1: filterHours1,
+        filter_init2: filterInit2,
+        filter_hours2: filterHours2,
+        filter_days: filterDays,
+      });
+    }
+
     const isModelMM12TW = activeModel === 'MM12TW';
     const targetMotor = isModelMM12TW ? 'mt2' : 'mt4';
     const activeMotorName = isModelMM12TW ? motor2Name : motor4Name;
@@ -2797,6 +3165,15 @@ export default function PoolControllerPage() {
     localStorage.setItem('led_duration', ledDuration);
     localStorage.setItem('led_program', ledProgram);
 
+    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+      void saveDeviceSettings(deviceId, {
+        led_start_hour: ledStartHour,
+        led_start_minute: ledStartMinute,
+        led_duration: ledDuration,
+        led_program: ledProgram,
+      });
+    }
+
     const formattedHour = ledStartHour.padStart(2, '0');
     const formattedMinute = ledStartMinute.padStart(2, '0');
     const startingTime = `${formattedHour}:${formattedMinute}`;
@@ -2827,6 +3204,13 @@ export default function PoolControllerPage() {
 
     localStorage.setItem('hidro_timer_enabled', String(isEnabled));
     localStorage.setItem('hidro_timer_hours', hoursVal);
+
+    if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId) {
+      void saveDeviceSettings(deviceId, {
+        hidro_timer_enabled: isEnabled,
+        hidro_timer_hours: hoursVal,
+      });
+    }
 
     const data = {
       enabled: isEnabled,
@@ -5415,6 +5799,22 @@ export default function PoolControllerPage() {
                                             const targetClean = cleanDeviceId(eq.id).toLowerCase();
                                             const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
 
+                                            let cloudOk = true;
+                                            if (isSupabaseConfigured() && currentUser?.isSupabase) {
+                                              const userIdentifier = currentUser?.uid || currentUser?.id;
+                                              cloudOk = await deleteDevice(eq.id, userIdentifier);
+                                              if (!cloudOk) {
+                                                showToast(
+                                                  'Falha ao remover',
+                                                  'Não foi possível desativar o equipamento no servidor. Tente novamente.',
+                                                  'error'
+                                                );
+                                                setConfirmDeleteDeviceId(null);
+                                                return;
+                                              }
+                                              logUserAction(`Desativou equipamento (soft delete): ${eq.id}`);
+                                            }
+
                                             const filtered = registeredEquipments.filter(item => !areDeviceIdsMatching(item.id, eq.id));
                                             setRegisteredEquipments(filtered);
                                             localStorage.setItem('registered_equipments', JSON.stringify(filtered));
@@ -5433,10 +5833,8 @@ export default function PoolControllerPage() {
 
                                             setConfirmDeleteDeviceId(null);
 
-                                            if (isSupabaseConfigured()) {
-                                              const userIdentifier = currentUser?.uid || currentUser?.id;
-                                              await deleteDevice(eq.id, userIdentifier);
-                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
+                                            if (cloudOk) {
+                                              showToast('Equipamento removido', `${eq.id} foi desativado (soft delete).`, 'success');
                                             }
 
                                             if (isActive) {
@@ -5944,7 +6342,7 @@ export default function PoolControllerPage() {
                       }`}
                     >
                       <Activity className="w-4 h-4" />
-                      Estatísticas de Uso
+                      Logs & Auditoria
                     </button>
                     <button
                       onClick={() => setAdminTab('aba4')}
@@ -5988,30 +6386,30 @@ export default function PoolControllerPage() {
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Totais</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
+                              <span className="text-3xl font-extrabold text-white">{adminAllDevices.length}</span>
                               <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos cadastrados em todo o sistema.</p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-purple-500/10 to-pink-500/5 border border-purple-500/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Histórico de Eventos</span>
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Eventos de Auditoria</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{userLogs.length}</span>
-                              <span className="text-xs text-purple-400 font-semibold">Logs</span>
+                              <span className="text-3xl font-extrabold text-white">{auditEvents.length}</span>
+                              <span className="text-xs text-purple-400 font-semibold">Registros</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Ações de comando e auditoria registradas.</p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Eventos gravados em audit_events (Supabase).</p>
                           </div>
 
                           <div className="p-5 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Conexão MQTT Broker</span>
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className={`inline-block w-2.5 h-2.5 rounded-full ${mqttConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-                              <span className="text-base font-bold text-white truncate max-w-full font-mono">{mqttBroker || 'broker.hivemq.com'}</span>
+                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Modelos no Catálogo</span>
+                            <div className="flex items-baseline gap-2 mt-2">
+                              <span className="text-3xl font-extrabold text-white">{deviceCatalog.length}</span>
+                              <span className="text-xs text-emerald-400 font-semibold">Modelos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Porta de escuta configurada em {mqttPort || '8000'}.</p>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Modelos de equipamento cadastrados no catálogo.</p>
                           </div>
                         </div>
 
@@ -6019,7 +6417,7 @@ export default function PoolControllerPage() {
                         <div className="space-y-4">
                           <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest text-left">Navegação Administrativa</h3>
                           
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {/* Card 1 */}
                             <button
                               onClick={() => setAdminTab('aba1')}
@@ -6029,12 +6427,12 @@ export default function PoolControllerPage() {
                                 <Users className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Controle de Usuários & Equipamentos</h4>
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Usuários & Equipamentos</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Cadastre e edite operadores, vincule e gerencie equipamentos residenciais em tempo real.</p>
                               </div>
                             </button>
 
-                            {/* Card 3 */}
+                            {/* Card 2 */}
                             <button
                               onClick={() => setAdminTab('aba3')}
                               className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
@@ -6044,14 +6442,42 @@ export default function PoolControllerPage() {
                               </div>
                               <div className="space-y-1">
                                 <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Logs & Auditoria</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Monitore as ações dos operadores, com filtros de busca avançada e limpeza de histórico.</p>
+                                <p className="text-xs text-slate-400 leading-relaxed">Monitore os eventos registrados em audit_events, com KPIs e histórico detalhado.</p>
+                              </div>
+                            </button>
+
+                            {/* Card 3 */}
+                            <button
+                              onClick={() => setAdminTab('firmware')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Upload className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Atualizações de Firmware</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Publique e gerencie versões de firmware OTA por modelo de equipamento.</p>
                               </div>
                             </button>
 
                             {/* Card 4 */}
                             <button
-                              onClick={() => setAdminTab('aba4')}
+                              onClick={() => setAdminTab('aba5')}
                               className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <SlidersHorizontal className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Catálogo de Dispositivos</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Gerencie os modelos disponíveis e suas capacidades (motores, timers, aquecimento solar).</p>
+                              </div>
+                            </button>
+
+                            {/* Card 5 */}
+                            <button
+                              onClick={() => setAdminTab('aba4')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] sm:col-span-2"
                             >
                               <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
                                 <Database className="w-5 h-5" />
@@ -6064,18 +6490,54 @@ export default function PoolControllerPage() {
                           </div>
                         </div>
 
-                        {/* Operator View CTA Section */}
-                        <div className="p-6 bg-gradient-to-r from-amber-500/10 to-[#007AFF]/10 border border-white/10 rounded-2xl text-left flex flex-col md:flex-row justify-between items-center gap-4">
-                          <div className="space-y-1.5 max-w-xl">
-                            <h4 className="text-sm font-bold text-white font-sans">Interface de Operação de Piscinas</h4>
-                            <p className="text-xs text-slate-400 leading-relaxed">Deseja simular ou testar a interface de uso final (controle de bombas, LED, temporizadores e aquecimento) que o operador vê no celular?</p>
+                        {/* Últimos eventos preview */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h3 className="text-sm font-bold text-white">Últimos Eventos</h3>
+                              <p className="text-[10px] text-slate-400">5 eventos mais recentes de audit_events</p>
+                            </div>
+                            <button
+                              onClick={() => setAdminTab('aba3')}
+                              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                            >
+                              Ver Todos
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
                           </div>
+
+                          <div className="divide-y divide-white/5">
+                            {auditEvents.slice(0, 5).map((event) => (
+                              <div key={event.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-white font-semibold truncate">{formatAuditEventType(event.event_type)}</p>
+                                  <p className="text-[10px] text-slate-400 truncate">
+                                    {event.actor_email || '—'} · {event.entity_type}/{event.entity_id}
+                                    {' · '}
+                                    {formatAuditMetadata(event.metadata, event.event_type)}
+                                  </p>
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                                  {new Date(event.created_at).toLocaleString('pt-BR')}
+                                </span>
+                              </div>
+                            ))}
+                            {auditEvents.length === 0 && (
+                              <p className="py-4 text-center text-xs text-slate-500">
+                                {auditLoading ? 'Carregando eventos...' : 'Nenhum evento em audit_events ainda.'}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Back to App */}
+                        <div className="flex justify-center pt-2">
                           <button
                             onClick={() => setActiveScreen('home')}
-                            className="px-5 py-3 bg-amber-400 hover:bg-amber-500 text-black rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-400/10 whitespace-nowrap font-sans"
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
                           >
                             <Sliders className="w-4 h-4" />
-                            Acessar o App
+                            Voltar ao App
                           </button>
                         </div>
                       </div>
@@ -6197,30 +6659,16 @@ export default function PoolControllerPage() {
                                         <tr 
                                           key={u.uid || u.email} 
                                           onClick={() => {
-                                            if (u.role === 'operator') {
-                                              const emailLower = (u.email || '').toLowerCase().trim();
-                                              if (selectedUserForEquip === u.email) {
-                                                setSelectedUserForEquip(null);
-                                                setAdminSearchEquip('');
-                                              } else {
-                                                setSelectedUserForEquip(u.email);
-                                                const associatedEquip = registeredEquipments.find(
-                                                  eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
-                                                );
-                                                if (associatedEquip) {
-                                                  setAdminSearchEquip(associatedEquip.id);
-                                                } else {
-                                                  setAdminSearchEquip('');
-                                                }
-                                              }
-                                            } else {
+                                            if (selectedUserForEquip === u.email) {
                                               setSelectedUserForEquip(null);
-                                              setAdminSearchEquip('');
+                                            } else {
+                                              setSelectedUserForEquip(u.email);
                                             }
+                                            setAdminSearchEquip('');
                                           }}
-                                          className={`border-b border-white/5 transition-colors cursor-pointer ${
-                                            u.role === 'operator' ? 'hover:bg-amber-400/5' : 'hover:bg-white/2'
-                                          } ${isSelected ? 'bg-amber-400/10 border-l-2 border-l-amber-400' : ''}`}
+                                          className={`border-b border-white/5 transition-colors cursor-pointer hover:bg-amber-400/5 ${
+                                            isSelected ? 'bg-amber-400/10 border-l-2 border-l-amber-400' : ''
+                                          }`}
                                         >
                                           <td className="p-3 font-semibold text-white">
                                             <div className="flex items-center gap-1.5 font-sans">
@@ -6279,7 +6727,7 @@ export default function PoolControllerPage() {
                                                   handleDeleteUserAdmin(u.uid);
                                                 }}
                                                 disabled={isRoot || isSelf}
-                                                title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Deletar Usuário'}
+                                                title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Desativar conta (soft delete)'}
                                                 className={`p-1.5 rounded-lg border transition-colors ${
                                                   isRoot || isSelf
                                                     ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
@@ -6301,116 +6749,121 @@ export default function PoolControllerPage() {
                           {/* Equipments Panel */}
                           <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                             <div>
-                              <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
-                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
+                              <h3 className="text-sm font-bold text-white">
+                                {selectedUserForEquip ? 'Equipamentos do Usuário' : 'Equipamentos'}
+                              </h3>
+                              <p className="text-[10px] text-slate-400">
+                                {selectedUserForEquip
+                                  ? `${adminEquipmentsForSelectedUser.length} ${adminEquipmentsForSelectedUser.length === 1 ? 'equipamento vinculado a' : 'equipamentos vinculados a'} ${selectedUserForEquip}`
+                                  : `Total de ${adminAllDevices.length} dispositivos cadastrados no sistema`}
+                              </p>
                             </div>
 
-                            <div className="relative">
-                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                              <input
-                                type="text"
-                                placeholder="Buscar por ID ou modelo..."
-                                value={adminSearchEquip}
-                                onChange={(e) => setAdminSearchEquip(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
-                              />
-                            </div>
+                            {selectedUserForEquip && (
+                              <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                                <input
+                                  type="text"
+                                  placeholder="Buscar por ID ou modelo..."
+                                  value={adminSearchEquip}
+                                  onChange={(e) => setAdminSearchEquip(e.target.value)}
+                                  className="w-full pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                                />
+                              </div>
+                            )}
 
                              <div className="space-y-2.5">
-                              {registeredEquipments
-                                .filter(eq => 
-                                  eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
-                                  eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
-                                  (eq.userEmail || '').toLowerCase().includes(adminSearchEquip.toLowerCase())
-                                )
-                                .map((eq) => {
-                                  const isActive = areDeviceIdsMatching(deviceId, eq.id);
-                                  const isUserEquip = selectedUserForEquip && (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim();
-                                  return (
-                                    <div
-                                      key={eq.id}
-                                      className={`p-4 rounded-xl border transition-all text-left flex justify-between items-center ${
-                                        isUserEquip
-                                          ? 'bg-amber-500/10 border-amber-400 shadow-lg shadow-amber-500/10'
-                                          : isActive
-                                          ? 'bg-[#4398fa]/10 border-[#4398fa] shadow-lg shadow-[#4398fa]/5'
-                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                      }`}
-                                    >
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-1.5 font-sans">
-                                          <span className="font-mono text-xs font-bold text-white">{eq.id}</span>
-                                          {isUserEquip && (
-                                            <span className="text-[8px] bg-amber-400 text-black px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">🏠 DO OPERADOR SELECIONADO</span>
-                                          )}
-                                          {isActive && !isUserEquip && (
-                                            <span className="text-[8px] bg-[#4398fa]/20 text-[#4398fa] border border-[#4398fa]/30 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">ATIVO</span>
-                                          )}
-                                        </div>
-                                        <div className="text-[10px] text-slate-400">
-                                          Modelo: <span className="text-slate-200 font-semibold">{eq.model}</span>
-                                        </div>
-                                        {eq.userEmail && (
-                                          <div className="text-[9px] text-cyan-400 font-semibold">
-                                            Vinculado: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
-                                          </div>
-                                        )}
-                                      </div>
-
-                                      {!isActive && (
-                                        <button
-                                          onClick={() => {
-                                            setDeviceId(eq.id);
-                                            localStorage.setItem('mqtt_device', eq.id);
-                                            logUserAction(`Ativou equipamento ID: ${eq.id}`);
-                                            showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
-                                          }}
-                                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
-                                        >
-                                          Ativar
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-
-                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
-                                <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
-                                  <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
-                                  <div className="flex flex-col gap-1.5 pt-1">
-                                    <span className="text-[10px] text-slate-400 font-bold">Vincular equipamento disponível:</span>
-                                    <select 
-                                      onChange={async (e) => {
-                                        const eqId = e.target.value;
-                                        if (!eqId) return;
-                                        
-                                        const targetUser = simUsers.find(u => u.email === selectedUserForEquip);
-                                        if (!targetUser) {
-                                          showToast('Usuário não encontrado', 'Operador selecionado não foi localizado.', 'error');
-                                          return;
-                                        }
-
-                                        const updated = registeredEquipments.map(eq => 
-                                          eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
-                                        );
-                                        setRegisteredEquipments(updated);
-                                        
-                                        if (isSupabaseConfigured()) {
-                                          await updateDeviceOwner(eqId, targetUser.uid);
-                                        }
-
-                                        setAdminSearchEquip(eqId);
-                                        showToast('Equipamento Vinculado', `Equipamento ${eqId} vinculado ao operador ${selectedUserForEquip}!`, 'success');
-                                      }}
-                                      className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
-                                    >
-                                      <option value="">Selecione um equipamento...</option>
-                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
-                                        <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
-                                      ))}
-                                    </select>
-                                  </div>
+                              {!selectedUserForEquip ? (
+                                <div className="p-6 text-center bg-white/5 border border-dashed border-white/15 rounded-xl">
+                                  <Users className="w-6 h-6 text-slate-500 mx-auto mb-2" />
+                                  <p className="text-xs text-slate-400 leading-relaxed">
+                                    Selecione um usuário à esquerda para ver os equipamentos dele.
+                                  </p>
                                 </div>
+                              ) : (
+                                <>
+                                  {adminEquipmentsForSelectedUser
+                                    .filter(eq =>
+                                      eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
+                                      eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase())
+                                    )
+                                    .map((eq) => {
+                                      const isActive = areDeviceIdsMatching(deviceId, eq.id);
+                                      return (
+                                        <div
+                                          key={eq.id}
+                                          className={`p-4 rounded-xl border transition-all text-left flex justify-between items-center ${
+                                            isActive
+                                              ? 'bg-[#4398fa]/10 border-[#4398fa] shadow-lg shadow-[#4398fa]/5'
+                                              : 'bg-amber-500/10 border-amber-400/50'
+                                          }`}
+                                        >
+                                          <div className="space-y-1">
+                                            <div className="flex items-center gap-1.5 font-sans">
+                                              <span className="font-mono text-xs font-bold text-white">{eq.id}</span>
+                                              {isActive && (
+                                                <span className="text-[8px] bg-[#4398fa]/20 text-[#4398fa] border border-[#4398fa]/30 px-1.5 py-0.2 rounded-full font-black uppercase tracking-wider">ATIVO</span>
+                                              )}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">
+                                              Modelo: <span className="text-slate-200 font-semibold">{eq.model}</span>
+                                            </div>
+                                          </div>
+
+                                          {!isActive && (
+                                            <button
+                                              onClick={() => {
+                                                setDeviceId(eq.id);
+                                                localStorage.setItem('mqtt_device', eq.id);
+                                                logUserAction(`Ativou equipamento ID: ${eq.id}`);
+                                                showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
+                                              }}
+                                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
+                                            >
+                                              Ativar
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+
+                                  {adminEquipmentsForSelectedUser.length === 0 && (
+                                    <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
+                                      <p className="text-xs font-semibold text-rose-300">Este usuário ({selectedUserForEquip}) não tem nenhum equipamento vinculado.</p>
+                                      <div className="flex flex-col gap-1.5 pt-1">
+                                        <span className="text-[10px] text-slate-400 font-bold">Vincular equipamento disponível:</span>
+                                        <select
+                                          value=""
+                                          onChange={async (e) => {
+                                            const eqId = e.target.value;
+                                            if (!eqId) return;
+
+                                            const targetUser = simUsers.find(u => u.email === selectedUserForEquip);
+                                            if (!targetUser) {
+                                              showToast('Usuário não encontrado', 'Usuário selecionado não foi localizado.', 'error');
+                                              return;
+                                            }
+
+                                            if (isSupabaseConfigured()) {
+                                              await updateDeviceOwner(eqId, targetUser.uid);
+                                              await loadAdminAllDevices();
+                                            }
+
+                                            showToast('Equipamento Vinculado', `Equipamento ${eqId} vinculado ao usuário ${selectedUserForEquip}!`, 'success');
+                                          }}
+                                          className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
+                                        >
+                                          <option value="">Selecione um equipamento...</option>
+                                          {adminEquipmentsAvailableToLink.map(eq => (
+                                            <option key={eq.id} value={eq.id}>
+                                              {eq.id} ({eq.model}){eq.userEmail ? ` — atual: ${eq.userEmail}` : ' — sem dono'}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
@@ -6430,276 +6883,378 @@ export default function PoolControllerPage() {
                       </div>
                     )}
 
-                    {/* Tab 3: Usage Statistics */}
+                    {/* Tab 3: Logs & Auditoria profissional (audit_events) */}
                     {adminTab === 'aba3' && (
-                      <div className="space-y-6">
-                        
-                        {/* KPI Block */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          
-                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ações Gravadas</span>
-                            <div className="text-2xl font-black text-[#4398fa] font-mono">{userLogs.length}</div>
-                            <span className="text-[9px] text-slate-500">Histórico de ações neste navegador</span>
-                          </div>
+                      <div className="space-y-5">
 
-                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Usuário Mais Ativo</span>
-                            <div className="text-sm font-bold text-emerald-400 truncate mt-1">
-                              {(() => {
-                                if (userLogs.length === 0) return 'Nenhum';
-                                const counts: any = {};
-                                userLogs.forEach(l => { counts[l.email] = (counts[l.email] || 0) + 1; });
-                                let maxUser = 'Nenhum';
-                                let maxVal = 0;
-                                Object.keys(counts).forEach(k => {
-                                  if (counts[k] > maxVal) { maxVal = counts[k]; maxUser = k; }
-                                });
-                                return `${maxUser} (${maxVal})`;
-                              })()}
-                            </div>
-                            <span className="text-[9px] text-slate-500">Com maior número de disparos</span>
+                        {/* Header */}
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-amber-400" />
+                              Logs & Auditoria
+                            </h3>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              Trilha de auditoria da tabela <span className="font-mono text-amber-300">audit_events</span>
+                              {' · '}
+                              {filteredAuditEvents.length} de {auditEvents.length} eventos
+                              {auditFiltersActiveCount > 0 ? ` · ${auditFiltersActiveCount} filtro(s) ativo(s)` : ''}
+                            </p>
                           </div>
-
-                          <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-left space-y-1">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Comando Predominante</span>
-                            <div className="text-sm font-bold text-amber-400 mt-1">
-                              {(() => {
-                                if (userLogs.length === 0) return 'Nenhum';
-                                let motors = 0, led = 0, timer = 0;
-                                userLogs.forEach(l => {
-                                  const act = l.action.toLowerCase();
-                                  if (act.includes('motor') || act.includes('togglou')) motors++;
-                                  else if (act.includes('led') || act.includes('cor')) led++;
-                                  else if (act.includes('timer') || act.includes('configurou')) timer++;
-                                });
-                                const max = Math.max(motors, led, timer);
-                                if (max === motors) return `Motores & Bombas (${motors})`;
-                                if (max === led) return `LED Iluminação (${led})`;
-                                return `Configuração de Timers (${timer})`;
-                              })()}
-                            </div>
-                            <span className="text-[9px] text-slate-500">Grupo mais comandado</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setAuditFiltersOpen((v) => !v)}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5"
+                            >
+                              <Filter className="w-3.5 h-3.5 text-amber-400" />
+                              Filtros
+                              {auditFiltersActiveCount > 0 && (
+                                <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-400 text-black text-[10px] font-black flex items-center justify-center">
+                                  {auditFiltersActiveCount}
+                                </span>
+                              )}
+                              {auditFiltersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => exportAuditEventsCsv(filteredAuditEvents)}
+                              disabled={filteredAuditEvents.length === 0}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-40"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Exportar CSV
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => loadAuditEvents()}
+                              disabled={auditLoading}
+                              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${auditLoading ? 'animate-spin' : ''}`} />
+                              Atualizar
+                            </button>
                           </div>
-
                         </div>
 
-                        {/* Interactive Responsive SVG Charts */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          
-                          {/* Bar chart panel */}
-                          <div className="p-5 bg-white/5 border border-white/10 rounded-2xl space-y-4 text-left">
-                            <div>
-                              <h4 className="text-xs font-black text-white uppercase tracking-wider">Ações por Usuário</h4>
-                              <p className="text-[10px] text-slate-400">Total de disparos efetuados por e-mail de usuário</p>
-                            </div>
-
-                            <div className="h-44 flex items-end justify-between gap-2 border-b border-white/10 pb-2 relative z-10 pt-4">
-                              {(() => {
-                                const counts: any = {};
-                                userLogs.forEach(l => { counts[l.email] = (counts[l.email] || 0) + 1; });
-                                const users = Object.keys(counts).slice(0, 5);
-                                if (users.length === 0) {
-                                  return <div className="text-xs text-slate-500 m-auto">Sem dados de telemetria suficientes</div>;
-                                }
-                                const maxVal = Math.max(...users.map(u => counts[u]));
-                                return users.map((u, i) => {
-                                  const val = counts[u];
-                                  const pct = maxVal > 0 ? (val / maxVal) * 100 : 0;
-                                  const emailPrefix = u.split('@')[0];
-                                  return (
-                                    <div key={u} className="flex-1 flex flex-col items-center group relative cursor-pointer">
-                                      {/* Bar trigger tooltip */}
-                                      <div className="absolute -top-7 scale-0 group-hover:scale-100 bg-[#4398fa] text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg transition-transform pointer-events-none whitespace-nowrap z-30">
-                                        {val} ações
-                                      </div>
-                                      <div
-                                        style={{ height: `${Math.max(pct, 12)}%` }}
-                                        className={`w-8 rounded-t-md transition-all duration-500 group-hover:brightness-125 ${
-                                          i === 0 ? 'bg-gradient-to-t from-[#0055CC] to-[#4398fa]' :
-                                          i === 1 ? 'bg-gradient-to-t from-amber-600 to-amber-400' :
-                                          i === 2 ? 'bg-gradient-to-t from-emerald-600 to-emerald-400' :
-                                          'bg-gradient-to-t from-slate-600 to-slate-400'
-                                        }`}
-                                      />
-                                      <span className="text-[8px] font-mono font-medium text-slate-400 truncate w-full text-center mt-2" title={u}>
-                                        {emailPrefix}
-                                      </span>
-                                    </div>
-                                  );
-                                });
-                              })()}
-                            </div>
+                        {/* KPI strip */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                          <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 text-left">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Total carregado</span>
+                            <div className="text-xl font-black text-white font-mono mt-1">{auditEvents.length}</div>
                           </div>
-
-                          {/* Pie chart / Donut Breakdown */}
-                          <div className="p-5 bg-white/5 border border-white/10 rounded-2xl space-y-4 text-left">
-                            <div>
-                              <h4 className="text-xs font-black text-white uppercase tracking-wider">Breakdown de Comandos</h4>
-                              <p className="text-[10px] text-slate-400">Classificação percentual das interações registradas</p>
-                            </div>
-
-                            <div className="h-44 flex items-center justify-around gap-2">
-                              {(() => {
-                                let m = 0, l = 0, t = 0;
-                                userLogs.forEach(log => {
-                                  const act = log.action.toLowerCase();
-                                  if (act.includes('motor') || act.includes('togglou')) m++;
-                                  else if (act.includes('led') || act.includes('cor')) l++;
-                                  else if (act.includes('timer') || act.includes('configurou')) t++;
-                                });
-                                const total = m + l + t;
-                                if (total === 0) {
-                                  return <div className="text-xs text-slate-500">Sem logs suficientes para cálculo</div>;
-                                }
-                                const mPct = ((m / total) * 100).toFixed(0);
-                                const lPct = ((l / total) * 100).toFixed(0);
-                                const tPct = ((t / total) * 100).toFixed(0);
-
-                                return (
-                                  <>
-                                    {/* Simulated Circular Donut Layout using SVG */}
-                                    <div className="w-24 h-24 relative flex items-center justify-center">
-                                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                                        <path
-                                          className="text-white/5"
-                                          strokeWidth="3.5"
-                                          stroke="currentColor"
-                                          fill="none"
-                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                        />
-                                        <path
-                                          className="text-[#4398fa]"
-                                          strokeDasharray={`${mPct}, 100`}
-                                          strokeWidth="3.8"
-                                          strokeLinecap="round"
-                                          stroke="currentColor"
-                                          fill="none"
-                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                        />
-                                        <path
-                                          className="text-amber-400"
-                                          strokeDasharray={`${lPct}, 100`}
-                                          strokeDashoffset={`-${mPct}`}
-                                          strokeWidth="3.8"
-                                          strokeLinecap="round"
-                                          stroke="currentColor"
-                                          fill="none"
-                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                        />
-                                        <path
-                                          className="text-emerald-400"
-                                          strokeDasharray={`${tPct}, 100`}
-                                          strokeDashoffset={`-${parseInt(mPct) + parseInt(lPct)}`}
-                                          strokeWidth="3.8"
-                                          strokeLinecap="round"
-                                          stroke="currentColor"
-                                          fill="none"
-                                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                        />
-                                      </svg>
-                                      <div className="absolute flex flex-col text-center">
-                                        <span className="text-xs font-mono font-black text-white">{total}</span>
-                                        <span className="text-[7px] text-slate-400 font-bold uppercase tracking-widest leading-none">AÇÕES</span>
-                                      </div>
-                                    </div>
-
-                                    {/* Custom legend */}
-                                    <div className="space-y-1.5 text-[10px] font-semibold text-slate-300">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="w-2.5 h-2.5 rounded bg-[#4398fa] inline-block"></span>
-                                        <span>Motores: {mPct}%</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block"></span>
-                                        <span>Iluminação: {lPct}%</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="w-2.5 h-2.5 rounded bg-emerald-400 inline-block"></span>
-                                        <span>Timers/Filtr.: {tPct}%</span>
-                                      </div>
-                                    </div>
-                                  </>
-                                );
-                              })()}
-                            </div>
+                          <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 text-left">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Após filtros</span>
+                            <div className="text-xl font-black text-[#4398fa] font-mono mt-1">{filteredAuditEvents.length}</div>
                           </div>
-
+                          <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 text-left">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Atores distintos</span>
+                            <div className="text-xl font-black text-emerald-400 font-mono mt-1">{auditFilterOptions.actors.length}</div>
+                          </div>
+                          <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 text-left">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tipos de evento</span>
+                            <div className="text-xl font-black text-amber-400 font-mono mt-1">{auditFilterOptions.eventTypes.length}</div>
+                          </div>
                         </div>
 
-                        {/* Search and logs history */}
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                            <div>
-                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Histórico Detalhado de Operações</h4>
-                              <p className="text-[10px] text-slate-400">Relação completa de todos os gatilhos gerados</p>
-                            </div>
-                            {!showConfirmClearLogs ? (
+                        {/* Filter panel */}
+                        {auditFiltersOpen && (
+                          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Painel de Filtros</span>
                               <button
-                                onClick={() => setShowConfirmClearLogs(true)}
-                                className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 text-xs font-bold rounded-lg transition-colors text-center"
+                                type="button"
+                                onClick={clearAuditFilters}
+                                className="text-[10px] font-bold text-slate-400 hover:text-white underline-offset-2 hover:underline"
                               >
-                                Limpar Todos os Logs
+                                Limpar filtros
                               </button>
-                            ) : (
-                              <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5 animate-fadeIn">
-                                <span className="text-[10px] text-rose-300 font-medium px-1">Confirmar limpeza?</span>
-                                <button
-                                  onClick={() => {
-                                    setUserLogs([]);
-                                    setShowConfirmClearLogs(false);
-                                  }}
-                                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded transition-colors"
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                              <div className="space-y-1 sm:col-span-2">
+                                <label className="text-[10px] font-bold text-slate-300">Busca livre</label>
+                                <div className="relative">
+                                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                                  <input
+                                    type="text"
+                                    value={auditFilterSearch}
+                                    onChange={(e) => { setAuditFilterSearch(e.target.value); setAuditPage(1); }}
+                                    placeholder="Usuário, entidade, evento, metadata..."
+                                    className="w-full pl-9 pr-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Usuário (actor)</label>
+                                <select
+                                  value={auditFilterActor}
+                                  onChange={(e) => { setAuditFilterActor(e.target.value); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
                                 >
-                                  Sim
-                                </button>
-                                <button
-                                  onClick={() => setShowConfirmClearLogs(false)}
-                                  className="px-2.5 py-1 bg-white/10 text-slate-300 hover:text-white text-[10px] font-bold rounded transition-colors"
+                                  <option value="">Todos os usuários</option>
+                                  {auditFilterOptions.actors.map((email) => (
+                                    <option key={email} value={email}>{email}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Tipo de entidade</label>
+                                <select
+                                  value={auditFilterEntityType}
+                                  onChange={(e) => { setAuditFilterEntityType(e.target.value); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
                                 >
-                                  Não
+                                  <option value="">Todas</option>
+                                  {['profile', 'device', ...auditFilterOptions.entityTypes.filter((t) => t !== 'profile' && t !== 'device')].map((t) => (
+                                    <option key={t} value={t}>{t}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Tipo de evento</label>
+                                <select
+                                  value={auditFilterEventType}
+                                  onChange={(e) => { setAuditFilterEventType(e.target.value); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                >
+                                  <option value="">Todos os eventos</option>
+                                  {auditFilterOptions.eventTypes.map((t) => (
+                                    <option key={t} value={t}>{formatAuditEventType(t)}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">ID da entidade</label>
+                                <input
+                                  type="text"
+                                  value={auditFilterEntityId}
+                                  onChange={(e) => { setAuditFilterEntityId(e.target.value); setAuditPage(1); }}
+                                  placeholder="UUID / device id..."
+                                  className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Data inicial</label>
+                                <input
+                                  type="date"
+                                  value={auditFilterDateFrom}
+                                  onChange={(e) => { setAuditFilterDateFrom(e.target.value); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Data final</label>
+                                <input
+                                  type="date"
+                                  value={auditFilterDateTo}
+                                  onChange={(e) => { setAuditFilterDateTo(e.target.value); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Ordenação</label>
+                                <select
+                                  value={auditFilterSort}
+                                  onChange={(e) => { setAuditFilterSort(e.target.value as 'asc' | 'desc'); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                >
+                                  <option value="desc">Mais recentes primeiro</option>
+                                  <option value="asc">Mais antigos primeiro</option>
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Itens por página</label>
+                                <select
+                                  value={auditPageSize}
+                                  onChange={(e) => { setAuditPageSize(Number(e.target.value)); setAuditPage(1); }}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+                                >
+                                  <option value={25}>25</option>
+                                  <option value={50}>50</option>
+                                  <option value={100}>100</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Quick chips for event types */}
+                            {auditFilterOptions.eventTypes.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => { setAuditFilterEventType(''); setAuditPage(1); }}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                    !auditFilterEventType
+                                      ? 'bg-amber-400/15 border-amber-400/40 text-amber-300'
+                                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  Todos
                                 </button>
+                                {auditFilterOptions.eventTypes.map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => {
+                                      setAuditFilterEventType(auditFilterEventType === t ? '' : t);
+                                      setAuditPage(1);
+                                    }}
+                                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                      auditFilterEventType === t
+                                        ? 'bg-amber-400/15 border-amber-400/40 text-amber-300'
+                                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                                    }`}
+                                    title={t}
+                                  >
+                                    {formatAuditEventType(t)}
+                                  </button>
+                                ))}
                               </div>
                             )}
                           </div>
+                        )}
 
-                          <div className="overflow-x-auto rounded-xl border border-white/10">
-                            <table className="w-full text-xs text-left">
+                        {/* Results table */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                          <div className="px-4 py-3 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Registro de Eventos</h4>
+                              <p className="text-[10px] text-slate-400">
+                                Página {auditPageSafe} de {auditTotalPages}
+                                {' · '}
+                                exibindo {pagedAuditEvents.length} item(ns)
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left min-w-[860px]">
                               <thead>
-                                <tr className="bg-black/20 text-slate-400 border-b border-white/10">
-                                  <th className="p-3">Data & Hora</th>
+                                <tr className="bg-black/30 text-slate-400 border-b border-white/10">
+                                  <th className="p-3 w-8"></th>
+                                  <th className="p-3">Data/Hora</th>
                                   <th className="p-3">Usuário</th>
-                                  <th className="p-3">Equipamento</th>
-                                  <th className="p-3">Comando Executado</th>
+                                  <th className="p-3">Entidade</th>
+                                  <th className="p-3">Evento</th>
+                                  <th className="p-3">Resumo</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {userLogs.slice(0, 45).map((log) => (
-                                  <tr key={log.id} className="border-b border-white/5 hover:bg-white/2 text-[11px]">
-                                    <td className="p-3 font-mono text-slate-400">
-                                      {new Date(log.timestamp).toLocaleString('pt-BR')}
-                                    </td>
-                                    <td className="p-3 font-semibold text-white">{log.email}</td>
-                                    <td className="p-3 font-mono text-slate-400">{log.deviceId}</td>
-                                    <td className="p-3">
-                                      <span className="px-2 py-0.5 bg-white/5 border border-white/5 rounded text-slate-200">
-                                        {log.action}
-                                      </span>
-                                    </td>
-                                  </tr>
-                                ))}
-                                {userLogs.length === 0 && (
+                                {pagedAuditEvents.map((event) => {
+                                  const expanded = auditExpandedId === event.id;
+                                  return (
+                                    <React.Fragment key={event.id}>
+                                      <tr
+                                        className={`border-b border-white/5 hover:bg-white/[0.03] text-[11px] cursor-pointer ${expanded ? 'bg-white/[0.04]' : ''}`}
+                                        onClick={() => setAuditExpandedId(expanded ? null : event.id)}
+                                      >
+                                        <td className="p-3 text-slate-500">
+                                          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </td>
+                                        <td className="p-3 font-mono text-slate-400 whitespace-nowrap">
+                                          {new Date(event.created_at).toLocaleString('pt-BR')}
+                                        </td>
+                                        <td className="p-3 font-semibold text-white">
+                                          {event.actor_email || <span className="text-slate-500">—</span>}
+                                        </td>
+                                        <td className="p-3">
+                                          <div className="flex flex-col gap-0.5">
+                                            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">{event.entity_type}</span>
+                                            <span className="font-mono text-slate-300 truncate max-w-[180px]" title={event.entity_id}>{event.entity_id}</span>
+                                          </div>
+                                        </td>
+                                        <td className="p-3">
+                                          <span
+                                            className={`inline-flex px-2 py-0.5 rounded-md border text-[10px] font-bold ${auditEventBadgeClass(event.event_type)}`}
+                                            title={event.event_type}
+                                          >
+                                            {formatAuditEventType(event.event_type)}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-slate-400 max-w-[260px] truncate" title={formatAuditMetadata(event.metadata, event.event_type)}>
+                                          {formatAuditMetadata(event.metadata, event.event_type)}
+                                        </td>
+                                      </tr>
+                                      {expanded && (
+                                        <tr className="border-b border-white/10 bg-black/20">
+                                          <td colSpan={6} className="p-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                                              <div className="space-y-1.5">
+                                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Identificação</p>
+                                                <p><span className="text-slate-500">Event ID:</span> <span className="font-mono text-slate-300">{event.id}</span></p>
+                                                <p><span className="text-slate-500">Actor UID:</span> <span className="font-mono text-slate-300">{event.actor_user_id || '—'}</span></p>
+                                                <p><span className="text-slate-500">Actor email:</span> <span className="text-white">{event.actor_email || '—'}</span></p>
+                                                <p><span className="text-slate-500">Created at:</span> <span className="font-mono text-slate-300">{event.created_at}</span></p>
+                                              </div>
+                                              <div className="space-y-1.5">
+                                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Metadata (JSON)</p>
+                                                <pre className="p-3 rounded-xl bg-black/40 border border-white/10 text-[10px] font-mono text-emerald-300 overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+                                                  {JSON.stringify(event.metadata || {}, null, 2)}
+                                                </pre>
+                                              </div>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                })}
+
+                                {pagedAuditEvents.length === 0 && (
                                   <tr>
-                                    <td colSpan={4} className="p-8 text-center text-slate-500">Nenhum comando disparado ainda. Use o app e alterne os motores para popular os registros!</td>
+                                    <td colSpan={6} className="p-10 text-center text-slate-500">
+                                      {auditLoading
+                                        ? 'Carregando eventos...'
+                                        : auditEvents.length === 0
+                                          ? 'Nenhum evento em audit_events ainda.'
+                                          : 'Nenhum evento corresponde aos filtros atuais.'}
+                                    </td>
                                   </tr>
                                 )}
                               </tbody>
                             </table>
                           </div>
+
+                          {/* Pagination */}
+                          <div className="px-4 py-3 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3">
+                            <span className="text-[10px] text-slate-400">
+                              {filteredAuditEvents.length === 0
+                                ? 'Sem resultados'
+                                : `Mostrando ${(auditPageSafe - 1) * auditPageSize + 1}–${Math.min(auditPageSafe * auditPageSize, filteredAuditEvents.length)} de ${filteredAuditEvents.length}`}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={auditPageSafe <= 1}
+                                onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                                className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-xs font-bold text-slate-300 disabled:opacity-40 hover:bg-white/10"
+                              >
+                                Anterior
+                              </button>
+                              <span className="text-[11px] font-mono text-slate-400 px-2">
+                                {auditPageSafe}/{auditTotalPages}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={auditPageSafe >= auditTotalPages}
+                                onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                                className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-xs font-bold text-slate-300 disabled:opacity-40 hover:bg-white/10"
+                              >
+                                Próxima
+                              </button>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-2">
+                        <div className="flex justify-center pt-1">
                           <button
                             onClick={() => setAdminTab('home')}
                             className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
@@ -6708,7 +7263,6 @@ export default function PoolControllerPage() {
                             Voltar para a Tela Inicial
                           </button>
                         </div>
-
                       </div>
                     )}
 

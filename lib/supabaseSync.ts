@@ -25,6 +25,17 @@ export interface SupabaseDeviceSettings {
   motor6_name?: string;
   motor7_name?: string;
   motor8_name?: string;
+  filter_init1?: string | null;
+  filter_hours1?: string | null;
+  filter_init2?: string | null;
+  filter_hours2?: string | null;
+  filter_days?: boolean[] | null;
+  led_start_hour?: string | null;
+  led_start_minute?: string | null;
+  led_duration?: string | null;
+  led_program?: string | null;
+  hidro_timer_enabled?: boolean | null;
+  hidro_timer_hours?: string | null;
   updated_at?: string;
 }
 
@@ -136,6 +147,10 @@ function cleanDeviceIdStr(id: string): string {
   return trimmed;
 }
 
+/**
+ * Soft-deletes a device in Supabase (same as deviceService.deleteDevice).
+ * Kept for callers that historically used this sync helper.
+ */
 export async function deleteDeviceInSupabase(deviceId: string, userId?: string): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
 
@@ -143,95 +158,53 @@ export async function deleteDeviceInSupabase(deviceId: string, userId?: string):
     const rawId = (deviceId || '').trim();
     if (!rawId) return true;
 
-    const clean = cleanDeviceIdStr(rawId);
-    const isMlz = rawId.toLowerCase().startsWith('mlz-');
-    const withoutMlz = isMlz ? rawId.substring(4) : rawId;
-    const withMlz = isMlz ? rawId : `MLZ-${rawId}`;
-    const cleanWithoutMlz = cleanDeviceIdStr(withoutMlz);
-    const cleanWithMlz = `MLZ-${cleanWithoutMlz}`;
+    const { data: exact } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('id', rawId)
+      .neq('status', 'deleted')
+      .maybeSingle();
 
-    const candidates = new Set<string>([
-      rawId,
-      rawId.toLowerCase(),
-      rawId.toUpperCase(),
-      clean,
-      clean.toLowerCase(),
-      clean.toUpperCase(),
-      withoutMlz,
-      withoutMlz.toLowerCase(),
-      withoutMlz.toUpperCase(),
-      withMlz,
-      withMlz.toLowerCase(),
-      withMlz.toUpperCase(),
-      cleanWithoutMlz,
-      cleanWithoutMlz.toLowerCase(),
-      cleanWithoutMlz.toUpperCase(),
-      cleanWithMlz,
-      cleanWithMlz.toLowerCase(),
-      cleanWithMlz.toUpperCase(),
-    ]);
+    let targetIds: string[] = exact?.id ? [exact.id] : [];
 
-    const dbIdsToDelete = Array.from(candidates);
-    try {
-      const { data: dbDevices } = await supabase.from('devices').select('id, user_id');
-      if (dbDevices && dbDevices.length > 0) {
-        const cleanTarget = clean.toLowerCase();
-        const withoutMlzLower = withoutMlz.toLowerCase();
-        for (const d of dbDevices) {
-          const dClean = cleanDeviceIdStr(d.id).toLowerCase();
-          const dLower = d.id.toLowerCase();
-          if (
-            dLower === rawId.toLowerCase() ||
-            (cleanTarget && dClean === cleanTarget) ||
-            (cleanTarget && dLower.includes(cleanTarget)) ||
-            (withoutMlzLower && dLower.includes(withoutMlzLower))
-          ) {
-            dbIdsToDelete.push(d.id);
-          }
+    if (targetIds.length === 0) {
+      const clean = cleanDeviceIdStr(rawId);
+      const { data: dbDevices } = await supabase
+        .from('devices')
+        .select('id')
+        .neq('status', 'deleted');
+
+      const cleanTarget = clean.toLowerCase();
+      for (const d of dbDevices || []) {
+        if (
+          d.id.toLowerCase() === rawId.toLowerCase() ||
+          cleanDeviceIdStr(d.id).toLowerCase() === cleanTarget
+        ) {
+          targetIds.push(d.id);
         }
       }
-    } catch (e) {
-      console.warn('[Supabase Sync] Query devices for deletion warning:', e);
     }
 
-    const uniqueIds = Array.from(new Set(dbIdsToDelete.filter(Boolean)));
-
-    try {
-      await supabase
-        .from('device_settings')
-        .delete()
-        .in('device_id', uniqueIds);
-    } catch (e) {
-      console.warn('[Supabase Sync] Delete device_settings warning:', e);
+    if (targetIds.length === 0) {
+      console.warn('[Supabase Sync] No active device to soft-delete:', rawId);
+      return false;
     }
 
-    if (userId) {
-      try {
-        await supabase
-          .from('devices')
-          .delete()
-          .in('id', uniqueIds)
-          .eq('user_id', userId);
-      } catch (e) {
-        console.warn('[Supabase Sync] User-filtered delete warning:', e);
+    let ok = false;
+    for (const id of Array.from(new Set(targetIds))) {
+      const { data, error } = await supabase.rpc('soft_delete_device', {
+        target_device_id: id,
+      });
+      if (error) {
+        console.error('[Supabase Sync] soft_delete_device failed:', id, error.message);
+        continue;
       }
+      if (data === true || data === null) ok = true;
     }
 
-    const { error: deleteError } = await supabase
-      .from('devices')
-      .delete()
-      .in('id', uniqueIds);
-
-    if (!deleteError) {
-      return true;
-    }
-
-    await supabase
-      .from('devices')
-      .update({ user_id: null })
-      .in('id', uniqueIds);
-
-    return true;
+    // userId kept for API compatibility; ownership is enforced inside the RPC via auth.uid()
+    void userId;
+    return ok;
   } catch (err) {
     console.warn('[Supabase Sync] Delete device exception:', err);
     return false;
@@ -313,20 +286,11 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
 }
 
 /**
- * Updates motor names in device_settings (UPSERT based on device_id).
+ * Updates device_settings (UPSERT based on device_id) — motor names and/or timer config.
  */
 export async function saveDeviceSettings(
   deviceId: string,
-  settings: {
-    motor1_name?: string;
-    motor2_name?: string;
-    motor3_name?: string;
-    motor4_name?: string;
-    motor5_name?: string;
-    motor6_name?: string;
-    motor7_name?: string;
-    motor8_name?: string;
-  }
+  settings: Partial<Omit<SupabaseDeviceSettings, 'device_id' | 'id'>>
 ): Promise<SupabaseDeviceSettings | null> {
   if (!isSupabaseConfigured()) return null;
 
