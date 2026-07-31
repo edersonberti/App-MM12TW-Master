@@ -40,8 +40,6 @@ import {
   Minus,
   Trash2,
   Search,
-  MapPin,
-  Compass,
   Menu,
   CheckCircle2,
   PowerOff,
@@ -97,12 +95,6 @@ const DEFAULT_PRESET_MODELS: Record<string, { motor_count: number; has_filter_ti
   'MM08TW': { motor_count: 1, has_filter_timer: true, has_led_timer: true, has_hidro_timer: false, has_solar_heating: false },
   'MM14TW': { motor_count: 4, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
 };
-
-const DEFAULT_CATALOG_ITEMS: DeviceCatalogItem[] = [
-  { id: 'cat-mm12tw', model: 'MM12TW', motor_count: 2, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
-  { id: 'cat-mm08tw', model: 'MM08TW', motor_count: 1, has_filter_timer: true, has_led_timer: true, has_hidro_timer: false, has_solar_heating: false },
-  { id: 'cat-mm14tw', model: 'MM14TW', motor_count: 4, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
-];
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -205,7 +197,7 @@ export default function PoolControllerPage() {
   const [manualSuccessMsg, setManualSuccessMsg] = useState('');
 
   // Admin & Owner Dashboard states
-  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba2' | 'aba3' | 'aba4' | 'aba5' | 'firmware'>('home');
+  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware'>('home');
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogItem[]>([]);
   const [catalogModel, setCatalogModel] = useState('');
@@ -252,11 +244,10 @@ export default function PoolControllerPage() {
   const [userLogs, setUserLogs] = useState<any[]>([]);
   const [showConfirmClearLogs, setShowConfirmClearLogs] = useState(false);
 
-  // Sensors simulator (Aba 2)
+  // Solar sensor readings (from device / UI)
   const [sensorCollectorTemp, setSensorCollectorTemp] = useState<number>(45);
   const [sensorPoolTemp, setSensorPoolTemp] = useState<number>(28);
   const [sensorErrorActive, setSensorErrorActive] = useState<boolean>(false);
-  const [flowErrorActive, setFlowErrorActive] = useState<boolean>(false);
 
   // Solar heating controls
   const [solarWorkMode, setSolarWorkMode] = useState<'off' | 'manual' | 'auto'>('auto');
@@ -265,63 +256,6 @@ export default function PoolControllerPage() {
   const [sensorCollectorError, setSensorCollectorError] = useState<boolean>(false);
   const [sensorPoolError, setSensorPoolError] = useState<boolean>(false);
 
-  // Individual telemetry search & data state
-  const [telemetrySearchId, setTelemetrySearchId] = useState('');
-  const [deviceTelemetryMap, setDeviceTelemetryMap] = useState<Record<string, {
-    mostUsedLedProgram: string;
-    maxFilteringTime: number;
-    minFilteringTime: number;
-    hydroTimerUsageMinutes: number;
-    latitude: number;
-    longitude: number;
-  }>>({});
-
-  const getDeviceTelemetry = (id: string) => {
-    const key = id.toUpperCase();
-    if (deviceTelemetryMap[key]) {
-      return deviceTelemetryMap[key];
-    }
-    // Return deterministic stable defaults based on the key to prevent blank states
-    const latBase = -23.5505;
-    const lngBase = -46.6333;
-    let charSum = 0;
-    for (let i = 0; i < key.length; i++) {
-      charSum += key.charCodeAt(i);
-    }
-    const offsetLat = ((charSum % 100) - 50) / 200; // between -0.25 and +0.25
-    const offsetLng = (((charSum * 3) % 100) - 50) / 200;
-    
-    const ledPrograms = ['Arco-Íris Dinâmico', 'Azul Real Fixo', 'Verde Relax', 'Cromoterapia Suave', 'Festa Estroboscópica', 'Lilás Zen'];
-    const chosenLed = ledPrograms[charSum % ledPrograms.length];
-    
-    return {
-      mostUsedLedProgram: chosenLed,
-      maxFilteringTime: 4 + (charSum % 7), // 4h to 10h
-      minFilteringTime: 1 + (charSum % 3), // 1h to 3h
-      hydroTimerUsageMinutes: 15 * (1 + (charSum % 4)), // 15, 30, 45, 60
-      latitude: Number((latBase + offsetLat).toFixed(4)),
-      longitude: Number((lngBase + offsetLng).toFixed(4))
-    };
-  };
-
-  const updateDeviceTelemetry = (id: string, updatedFields: Partial<{
-    mostUsedLedProgram: string;
-    maxFilteringTime: number;
-    minFilteringTime: number;
-    hydroTimerUsageMinutes: number;
-    latitude: number;
-    longitude: number;
-  }>) => {
-    const key = id.toUpperCase();
-    const current = getDeviceTelemetry(id);
-    const newMap = {
-      ...deviceTelemetryMap,
-      [key]: { ...current, ...updatedFields }
-    };
-    setDeviceTelemetryMap(newMap);
-    localStorage.setItem('device_telemetry_map', JSON.stringify(newMap));
-  };
-  
   // Auth inputs
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
@@ -381,9 +315,9 @@ export default function PoolControllerPage() {
   const hasFilterTimer = activeCatalogItem?.has_filter_timer ?? (presetSpec?.has_filter_timer ?? true);
   const hasLedTimer = activeCatalogItem?.has_led_timer ?? (presetSpec?.has_led_timer ?? true);
   const hasHidroTimer = activeCatalogItem?.has_hidro_timer ?? (presetSpec?.has_hidro_timer ?? true);
-  const hasSolarHeating = activeCatalogItem?.has_solar_heating ?? (presetSpec?.has_solar_heating ?? true);
-  const searchedEquip = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim()));
-  const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
+  const hasSolarHeating = activeCatalogItem
+    ? activeCatalogItem.has_solar_heating === true
+    : (presetSpec?.has_solar_heating ?? false);
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
   const [equipmentManufacturer, setEquipmentManufacturer] = useState<string>('MASTERLAZER');
 
@@ -556,6 +490,12 @@ export default function PoolControllerPage() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const loadDeviceCatalogFromSupabase = useCallback(async () => {
+    const items = await fetchDeviceCatalog();
+    setDeviceCatalog(items);
+    return items;
+  }, []);
+
   const setUserWantsMqtt = (val: boolean) => {
     userWantsMqttRef.current = val;
     setUserWantsMqttState(val);
@@ -648,52 +588,6 @@ export default function PoolControllerPage() {
         }];
         setRegisteredEquipments(defaultList);
         localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
-      }
-
-      const storedTelemetry = localStorage.getItem('device_telemetry_map');
-      if (storedTelemetry) {
-        try {
-          setDeviceTelemetryMap(JSON.parse(storedTelemetry));
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        const initialTelemetry = {
-          'MLZ-MM12TW-EEA39F-000003': {
-            mostUsedLedProgram: 'Arco-Íris Dinâmico',
-            maxFilteringTime: 6,
-            minFilteringTime: 2,
-            hydroTimerUsageMinutes: 30,
-            latitude: -23.5505,
-            longitude: -46.6333
-          },
-          'MM12TW-EEA39F-000003': {
-            mostUsedLedProgram: 'Arco-Íris Dinâmico',
-            maxFilteringTime: 6,
-            minFilteringTime: 2,
-            hydroTimerUsageMinutes: 30,
-            latitude: -23.5505,
-            longitude: -46.6333
-          },
-          'MM03TW-1002': {
-            mostUsedLedProgram: 'Azul Fixo',
-            maxFilteringTime: 4,
-            minFilteringTime: 1,
-            hydroTimerUsageMinutes: 15,
-            latitude: -22.9068,
-            longitude: -43.1729
-          },
-          'MM08TSW-20045': {
-            mostUsedLedProgram: 'Cromoterapia Relax',
-            maxFilteringTime: 8,
-            minFilteringTime: 3,
-            hydroTimerUsageMinutes: 45,
-            latitude: -30.0346,
-            longitude: -51.2177
-          }
-        };
-        setDeviceTelemetryMap(initialTelemetry);
-        localStorage.setItem('device_telemetry_map', JSON.stringify(initialTelemetry));
       }
 
       // Fetch Supabase configuration from server dynamically
@@ -1123,61 +1017,39 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabaseStateLoaded, activeScreen]);
 
+  // Load device catalog from Supabase (devices_catalog is the source of truth)
   useEffect(() => {
     let cancelled = false;
     setCatalogLoading(true);
 
-    const getFallbackList = () => {
-      try {
-        const stored = localStorage.getItem('local_device_catalog');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    const load = async () => {
+      if (!currentUser?.isSupabase || !isSupabaseConfigured()) {
+        if (!cancelled) {
+          setDeviceCatalog([]);
+          setCatalogLoading(false);
         }
-      } catch (e) {}
-      return DEFAULT_CATALOG_ITEMS;
+        return;
+      }
+
+      try {
+        await loadDeviceCatalogFromSupabase();
+      } catch (err) {
+        console.warn('[Catalog] Failed to load devices_catalog:', err);
+        if (!cancelled) {
+          setDeviceCatalog([]);
+          showToast('Catálogo', 'Não foi possível carregar devices_catalog do Supabase.', 'error');
+        }
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
     };
 
-    const fallbackList = getFallbackList();
-
-    if (currentUser?.isSupabase) {
-      fetchDeviceCatalog()
-        .then((items) => {
-          if (!cancelled) {
-            if (items && items.length > 0) {
-              const enriched = items.map(it => {
-                const preset = DEFAULT_PRESET_MODELS[it.model.toUpperCase()];
-                return {
-                  ...it,
-                  has_filter_timer: it.has_filter_timer ?? (preset?.has_filter_timer ?? true),
-                  has_led_timer: it.has_led_timer ?? (preset?.has_led_timer ?? true),
-                  has_hidro_timer: it.has_hidro_timer ?? (preset?.has_hidro_timer ?? true),
-                  has_solar_heating: it.has_solar_heating ?? (preset?.has_solar_heating ?? true),
-                };
-              });
-              setDeviceCatalog(enriched);
-            } else {
-              setDeviceCatalog(fallbackList);
-            }
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setDeviceCatalog(fallbackList);
-        })
-        .finally(() => {
-          if (!cancelled) setCatalogLoading(false);
-        });
-    } else {
-      Promise.resolve().then(() => {
-        setDeviceCatalog(fallbackList);
-        setCatalogLoading(false);
-      });
-    }
+    void load();
 
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.uid, currentUser?.isSupabase]);
+  }, [currentUser?.uid, currentUser?.isSupabase, loadDeviceCatalogFromSupabase, showToast]);
 
   // 2b. Load firmware list (published OTA updates) once the user session is known
   useEffect(() => {
@@ -2385,14 +2257,23 @@ export default function PoolControllerPage() {
     }
   };
 
-  const saveLocalCatalog = (items: DeviceCatalogItem[]) => {
-    try {
-      localStorage.setItem('local_device_catalog', JSON.stringify(items));
-    } catch (e) {}
-  };
-
   const handleCreateCatalogItem = async () => {
-    if (currentUser?.role !== 'owner') return;
+    console.info('[Catalog] handleCreateCatalogItem clicked', {
+      role: currentUser?.role,
+      isSupabase: currentUser?.isSupabase,
+      configured: isSupabaseConfigured(),
+      model: catalogModel,
+      motors: catalogMotorCount,
+    });
+
+    if (currentUser?.role !== 'owner') {
+      showToast('Sem permissão', 'Apenas o proprietário (owner) pode cadastrar modelos no catálogo.', 'warning');
+      return;
+    }
+    if (!isSupabaseConfigured() || !currentUser?.isSupabase) {
+      showToast('Supabase necessário', 'Conecte-se ao Supabase para gerenciar o catálogo.', 'warning');
+      return;
+    }
 
     const model = catalogModel.trim().toUpperCase();
     const motorCount = Number(catalogMotorCount);
@@ -2407,38 +2288,17 @@ export default function PoolControllerPage() {
 
     setCatalogSaving(true);
     try {
-      let created: DeviceCatalogItem | null = null;
-      if (isSupabaseConfigured() && currentUser?.isSupabase) {
-        created = await createDeviceCatalogItem(
-          model,
-          motorCount,
-          catalogHasFilterTimer,
-          catalogHasLedTimer,
-          catalogHasHidroTimer,
-          catalogHasSolarHeating
-        );
-      }
-      
-      if (!created) {
-        created = {
-          id: `local-cat-${Date.now()}`,
-          model,
-          motor_count: motorCount,
-          has_filter_timer: catalogHasFilterTimer,
-          has_led_timer: catalogHasLedTimer,
-          has_hidro_timer: catalogHasHidroTimer,
-          has_solar_heating: catalogHasSolarHeating,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-      }
+      console.info('[Catalog] Calling createDeviceCatalogItem...');
+      const created = await createDeviceCatalogItem(
+        model,
+        motorCount,
+        catalogHasFilterTimer,
+        catalogHasLedTimer,
+        catalogHasHidroTimer,
+        catalogHasSolarHeating
+      );
 
-      setDeviceCatalog((current) => {
-        const filtered = current.filter(c => c.model.toUpperCase() !== model);
-        const updated = [...filtered, created!].sort((a, b) => a.model.localeCompare(b.model));
-        saveLocalCatalog(updated);
-        return updated;
-      });
+      await loadDeviceCatalogFromSupabase();
 
       setCatalogModel('');
       setCatalogMotorCount('2');
@@ -2447,9 +2307,18 @@ export default function PoolControllerPage() {
       setCatalogHasHidroTimer(true);
       setCatalogHasSolarHeating(true);
 
-      showToast('Catálogo Atualizado', `Modelo ${created.model} adicionado ao catálogo.`, 'success');
+      showToast(
+        'Salvo no Supabase',
+        `${created.model} • ${created.motor_count} motor(es) • Filtro:${created.has_filter_timer ? 'sim' : 'não'} LED:${created.has_led_timer ? 'sim' : 'não'} Hidro:${created.has_hidro_timer ? 'sim' : 'não'} Solar:${created.has_solar_heating ? 'sim' : 'não'}`,
+        'success'
+      );
     } catch (err: any) {
-      showToast('Erro no Catálogo', err?.message || 'Não foi possível adicionar o modelo ao catálogo.', 'error');
+      console.error('[Catalog] create failed:', err);
+      showToast(
+        'Erro ao salvar no Supabase',
+        err?.message || err?.error_description || 'Não foi possível adicionar o modelo ao catálogo.',
+        'error'
+      );
     } finally {
       setCatalogSaving(false);
     }
@@ -2459,14 +2328,19 @@ export default function PoolControllerPage() {
     setEditingCatalogItem(item);
     setEditModelName(item.model);
     setEditMotorCount(String(item.motor_count));
-    setEditHasFilterTimer(item.has_filter_timer ?? true);
-    setEditHasLedTimer(item.has_led_timer ?? true);
-    setEditHasHidroTimer(item.has_hidro_timer ?? true);
-    setEditHasSolarHeating(item.has_solar_heating ?? true);
+    setEditHasFilterTimer(item.has_filter_timer === true);
+    setEditHasLedTimer(item.has_led_timer === true);
+    setEditHasHidroTimer(item.has_hidro_timer === true);
+    setEditHasSolarHeating(item.has_solar_heating === true);
   };
 
   const handleSaveEditCatalogItem = async () => {
     if (!editingCatalogItem) return;
+    if (!isSupabaseConfigured() || !currentUser?.isSupabase) {
+      showToast('Supabase necessário', 'Conecte-se ao Supabase para gerenciar o catálogo.', 'warning');
+      return;
+    }
+
     const model = editModelName.trim().toUpperCase();
     const motorCount = Number(editMotorCount);
     if (!model) {
@@ -2480,42 +2354,30 @@ export default function PoolControllerPage() {
 
     setCatalogSaving(true);
     try {
-      let updated: DeviceCatalogItem | null = null;
-      if (isSupabaseConfigured() && currentUser?.isSupabase) {
-        updated = await updateDeviceCatalogItem(
-          editingCatalogItem.id,
-          model,
-          motorCount,
-          editHasFilterTimer,
-          editHasLedTimer,
-          editHasHidroTimer,
-          editHasSolarHeating
-        );
-      }
+      const updated = await updateDeviceCatalogItem(
+        editingCatalogItem.id,
+        model,
+        motorCount,
+        editHasFilterTimer,
+        editHasLedTimer,
+        editHasHidroTimer,
+        editHasSolarHeating
+      );
 
-      if (!updated) {
-        updated = {
-          ...editingCatalogItem,
-          model,
-          motor_count: motorCount,
-          has_filter_timer: editHasFilterTimer,
-          has_led_timer: editHasLedTimer,
-          has_hidro_timer: editHasHidroTimer,
-          has_solar_heating: editHasSolarHeating,
-          updated_at: new Date().toISOString(),
-        };
-      }
-
-      setDeviceCatalog((current) => {
-        const list = current.map(item => item.id === editingCatalogItem.id ? updated! : item);
-        saveLocalCatalog(list);
-        return list;
-      });
-
+      await loadDeviceCatalogFromSupabase();
       setEditingCatalogItem(null);
-      showToast('Catálogo Atualizado', `Modelo ${model} atualizado com sucesso.`, 'success');
+      showToast(
+        'Atualizado no Supabase',
+        `${updated.model} • ${updated.motor_count} motor(es) • Filtro:${updated.has_filter_timer ? 'sim' : 'não'} LED:${updated.has_led_timer ? 'sim' : 'não'} Hidro:${updated.has_hidro_timer ? 'sim' : 'não'} Solar:${updated.has_solar_heating ? 'sim' : 'não'}`,
+        'success'
+      );
     } catch (err: any) {
-      showToast('Erro ao Atualizar', err?.message || 'Não foi possível atualizar o modelo.', 'error');
+      console.error('[Catalog] update failed:', err);
+      showToast(
+        'Erro ao atualizar no Supabase',
+        err?.message || err?.error_description || 'Não foi possível atualizar o modelo.',
+        'error'
+      );
     } finally {
       setCatalogSaving(false);
     }
@@ -2523,18 +2385,16 @@ export default function PoolControllerPage() {
 
   const handleDeleteCatalogItem = async (item: DeviceCatalogItem) => {
     if (currentUser?.role !== 'owner') return;
+    if (!isSupabaseConfigured() || !currentUser?.isSupabase) {
+      showToast('Supabase necessário', 'Conecte-se ao Supabase para gerenciar o catálogo.', 'warning');
+      return;
+    }
     if (!confirm(`Remover o modelo ${item.model} do catálogo?`)) return;
 
     try {
-      if (isSupabaseConfigured() && currentUser?.isSupabase) {
-        await deleteDeviceCatalogItem(item.id);
-      }
-      setDeviceCatalog((current) => {
-        const updated = current.filter((catalogItem) => catalogItem.id !== item.id);
-        saveLocalCatalog(updated);
-        return updated;
-      });
-      showToast('Modelo Removido', `Modelo ${item.model} removido do catálogo.`, 'info');
+      await deleteDeviceCatalogItem(item.id);
+      await loadDeviceCatalogFromSupabase();
+      showToast('Modelo Removido', `Modelo ${item.model} removido de devices_catalog.`, 'info');
     } catch (err: any) {
       showToast(
         'Erro ao Remover Modelo',
@@ -3359,6 +3219,13 @@ export default function PoolControllerPage() {
     }
   }, [activeScreen, shareDeviceId]);
 
+  // Hide/leave solar screen when catalog disables aquecimento solar for the active model
+  useEffect(() => {
+    if (activeScreen === 'solar' && !hasSolarHeating) {
+      setActiveScreen('home');
+    }
+  }, [activeScreen, hasSolarHeating]);
+
   const handleCreateShareInvite = useCallback(async () => {
     if (!shareDeviceId) return;
     setShareBusy(true);
@@ -3752,9 +3619,9 @@ export default function PoolControllerPage() {
                 </div>
               </div>
 
-              {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS, SOLAR */}
+              {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS, (SOLAR if catalog enables it) */}
               <div className="px-3.5 pb-3 pt-1">
-                <div className="grid grid-cols-5 gap-1 p-1 bg-black/20 rounded-xl border-2 border-white/10">
+                <div className={`grid gap-1 p-1 bg-black/20 rounded-xl border-2 border-white/10 ${hasSolarHeating ? 'grid-cols-5' : 'grid-cols-4'}`}>
                   <button 
                     id="tab-home"
                     onClick={() => setActiveScreen('home')}
@@ -3807,18 +3674,20 @@ export default function PoolControllerPage() {
                     <span>TIMERS</span>
                   </button>
 
-                  <button 
-                    id="tab-solar"
-                    onClick={() => setActiveScreen('solar')}
-                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
-                      activeScreen === 'solar' 
-                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
-                        : 'text-slate-400 hover:text-white border border-transparent'
-                    }`}
-                  >
-                    <Sun className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
-                    <span>AQUEC</span>
-                  </button>
+                  {hasSolarHeating && (
+                    <button 
+                      id="tab-solar"
+                      onClick={() => setActiveScreen('solar')}
+                      className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
+                        activeScreen === 'solar' 
+                          ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
+                          : 'text-slate-400 hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <Sun className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                      <span>AQUEC</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </header>
@@ -6165,20 +6034,6 @@ export default function PoolControllerPage() {
                               </div>
                             </button>
 
-                            {/* Card 2 */}
-                            <button
-                              onClick={() => setAdminTab('aba2')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
-                            >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
-                                <Terminal className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Simulador de Telemetria</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Injete telemetrias de sensores e simule cenários de erro para testar a robustez do painel.</p>
-                              </div>
-                            </button>
-
                             {/* Card 3 */}
                             <button
                               onClick={() => setAdminTab('aba3')}
@@ -6558,658 +6413,6 @@ export default function PoolControllerPage() {
                                 </div>
                               )}
                             </div>
-                          </div>
-
-                        </div>
-
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-2">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tab 2: Sensors Simulator / Telemetry Search */}
-                    {adminTab === 'aba2' && !searchedEquip && (
-                      <div className="space-y-6 max-w-xl mx-auto py-8">
-                        <div className="text-center space-y-2">
-                          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/5">
-                            <Compass className="w-8 h-8 text-amber-400" />
-                          </div>
-                          <h3 className="text-lg font-bold text-white mt-4">Consulta de Telemetria por Dispositivo</h3>
-                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                            Insira um Device ID cadastrado para visualizar relatórios individuais de hardware, localização e tempos de uso.
-                          </p>
-                        </div>
-
-                        {/* Search Input Box */}
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4 shadow-xl">
-                          <div className="relative">
-                            <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
-                            <input
-                              type="text"
-                              placeholder="Insira o ID do Equipamento (Ex: MLZ-MM12TW-EEA39F-000003)"
-                              value={telemetrySearchId}
-                              onChange={(e) => setTelemetrySearchId(e.target.value)}
-                              className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
-                            />
-                            {telemetrySearchId && (
-                              <button 
-                                onClick={() => setTelemetrySearchId('')}
-                                className="absolute right-3 top-3.5 text-slate-400 hover:text-white"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                const found = registeredEquipments.find(
-                                  eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim())
-                                );
-                                if (found) {
-                                  setTelemetrySearchId(found.id);
-                                } else {
-                                  showToast('Dispositivo não encontrado', 'Nenhum dispositivo cadastrado com este ID.', 'warning');
-                                }
-                              }}
-                              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-xl transition-colors active:scale-95 shadow-lg shadow-amber-500/20"
-                            >
-                              Consultar Telemetria
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Suggestions List */}
-                        <div className="space-y-3">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-center">
-                            Dispositivos Cadastrados (Clique para Consultar)
-                          </span>
-                          <div className="grid grid-cols-1 gap-2.5">
-                            {registeredEquipments.map((eq) => {
-                              const isSelected = areDeviceIdsMatching(telemetrySearchId.trim(), eq.id);
-                              return (
-                                <button
-                                  key={eq.id}
-                                  onClick={() => {
-                                    setTelemetrySearchId(eq.id);
-                                    setDeviceId(eq.id);
-                                    localStorage.setItem('mqtt_device', eq.id);
-                                  }}
-                                  className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                    isSelected
-                                      ? 'bg-amber-500/10 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/5'
-                                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                  }`}
-                                >
-                                  <div className="space-y-0.5">
-                                    <div className="text-xs font-bold font-mono">{eq.id}</div>
-                                    <div className="text-[10px] opacity-70">Modelo: {eq.model} • Fabricante: MASTERLAZER</div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase">Online</span>
-                                    <ChevronRight className="w-4 h-4 text-slate-500" />
-                                  </div>
-                                </button>
-                              );
-                            })}
-                            {registeredEquipments.length === 0 && (
-                              <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
-                                Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-4">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Validated Telemetry & Simulator View */}
-                    {adminTab === 'aba2' && searchedEquip && telemetry && (
-                      <div className="space-y-6">
-                        {/* Header banner */}
-                        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">
-                          <div className="flex items-center gap-3 text-left">
-                            <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400">
-                              <Compass className="w-5 h-5 animate-spin" style={{ animationDuration: '6s' }} />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="text-sm font-bold text-white font-mono">{searchedEquip.id}</h3>
-                                <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded font-black tracking-wider uppercase">VALIDADO</span>
-                              </div>
-                              <p className="text-[10px] text-slate-400">
-                                Modelo: <span className="text-slate-200 font-semibold">{searchedEquip.model}</span> • 
-                                Fabricante: <span className="text-slate-200 font-semibold">MASTERLAZER</span> • 
-                                Simulador de hardware sincronizado.
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => setTelemetrySearchId('')}
-                            className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5"
-                          >
-                            <Search className="w-3.5 h-3.5" />
-                            Consultar Outro ID
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                          
-                          {/* LEFT COLUMN: INDIVIDUAL TELEMETRY DETAILS */}
-                          <div className="lg:col-span-6 space-y-6">
-                            
-                            {/* Most Used LED Program */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Programa de LED Mais Utilizado</h4>
-                                  <p className="text-[10px] text-slate-400">Padrão de iluminação com maior tempo acumulado de ativação no dispositivo.</p>
-                                </div>
-                                <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400">
-                                  <Tv className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-                                <div className="space-y-1">
-                                  <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Programa Atual de Pico</div>
-                                  <div className="text-sm font-black text-amber-400 flex items-center gap-1.5">
-                                    <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-rose-500 via-green-500 to-blue-500 animate-pulse"></span>
-                                    {telemetry.mostUsedLedProgram}
-                                  </div>
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-xs font-mono font-bold text-emerald-400">58% das ativações</span>
-                                  <div className="text-[8px] text-slate-500">Total: 184 ativações</div>
-                                </div>
-                              </div>
-
-                              {/* Selector to change simulated most used program */}
-                              <div className="space-y-2">
-                                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                                  Alterar Programa de Pico (Simulação)
-                                </label>
-                                <select
-                                  value={telemetry.mostUsedLedProgram}
-                                  onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { mostUsedLedProgram: e.target.value })}
-                                  className="w-full bg-black/40 border border-white/10 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-amber-400"
-                                >
-                                  <option value="Arco-Íris Dinâmico">Arco-Íris Dinâmico</option>
-                                  <option value="Azul Real Fixo">Azul Real Fixo</option>
-                                  <option value="Verde Relax">Verde Relax</option>
-                                  <option value="Cromoterapia Suave">Cromoterapia Suave</option>
-                                  <option value="Festa Estroboscópica">Festa Estroboscópica</option>
-                                  <option value="Lilás Zen">Lilás Zen</option>
-                                </select>
-                              </div>
-
-                              {/* Simulated progress breakdown */}
-                              <div className="space-y-2 pt-1">
-                                <div className="flex justify-between text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                                  <span>Distribuição Histórica</span>
-                                  <span>Tempo de Uso (%)</span>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>{telemetry.mostUsedLedProgram}</span>
-                                      <span>58%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-amber-400 h-full rounded-full" style={{ width: '58%' }}></div>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>Azul Clássico</span>
-                                      <span>24%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-blue-400 h-full rounded-full" style={{ width: '24%' }}></div>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
-                                      <span>Vermelho Festivo</span>
-                                      <span>18%</span>
-                                    </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-rose-400 h-full rounded-full" style={{ width: '18%' }}></div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Min and Max Filtration Times */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Configuração de Filtragem Individual</h4>
-                                  <p className="text-[10px] text-slate-400">Tempos limites de segurança e preservação ambiental para este equipamento.</p>
-                                </div>
-                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
-                                  <Droplet className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-4">
-                                {/* Min filtration card */}
-                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
-                                  <span className="text-[9px] text-[#4398fa] font-bold uppercase tracking-wider block">Tempo Mínimo</span>
-                                  <div className="flex items-baseline gap-1">
-                                    <span className="text-2xl font-mono font-black text-white">{telemetry.minFilteringTime}</span>
-                                    <span className="text-xs text-slate-400">horas/dia</span>
-                                  </div>
-                                  <p className="text-[8px] text-slate-400">Evita estagnação da água e acúmulo de microrganismos.</p>
-                                  
-                                  <div className="flex gap-1.5 pt-1">
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.max(1, telemetry.minFilteringTime - 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      -
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.min(telemetry.maxFilteringTime, telemetry.minFilteringTime + 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Max filtration card */}
-                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
-                                  <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider block">Tempo Máximo</span>
-                                  <div className="flex items-baseline gap-1">
-                                    <span className="text-2xl font-mono font-black text-white">{telemetry.maxFilteringTime}</span>
-                                    <span className="text-xs text-slate-400">horas/dia</span>
-                                  </div>
-                                  <p className="text-[8px] text-slate-400">Previsão contra desgaste do motor da bomba por sobrecarga.</p>
-
-                                  <div className="flex gap-1.5 pt-1">
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.max(telemetry.minFilteringTime, telemetry.maxFilteringTime - 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      -
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const nextVal = Math.min(24, telemetry.maxFilteringTime + 1);
-                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
-                                      }}
-                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Hydro Massage Timer usage */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Timer de Hidromassagem Recorrente</h4>
-                                  <p className="text-[10px] text-slate-400">Histórico e configuração do temporizador de segurança da hidromassagem.</p>
-                                </div>
-                                <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400">
-                                  <Clock className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-                                <div className="space-y-1">
-                                  <span className="text-[9px] text-slate-400 uppercase tracking-wider font-semibold block">Duração de Uso por Ciclo</span>
-                                  <div className="text-lg font-black text-emerald-400 font-mono">
-                                    {telemetry.hydroTimerUsageMinutes} minutos
-                                  </div>
-                                  <p className="text-[8px] text-slate-500">O motor desliga sozinho após este intervalo.</p>
-                                </div>
-
-                                <div className="flex flex-wrap gap-1 max-w-[150px]">
-                                  {[15, 30, 45, 60].map((mins) => {
-                                    const isActive = telemetry.hydroTimerUsageMinutes === mins;
-                                    return (
-                                      <button
-                                        key={mins}
-                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { hydroTimerUsageMinutes: mins })}
-                                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-colors ${
-                                          isActive
-                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-                                        }`}
-                                      >
-                                        {mins}m
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              <div className="flex justify-between items-center text-[10px] text-slate-400 px-1 pt-1">
-                                <span>Uso Total Acumulado:</span>
-                                <span className="text-slate-200 font-mono font-bold">128 ciclos (64 horas de funcionamento)</span>
-                              </div>
-                            </div>
-
-                            {/* Device Location & Map Coordinates */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <h4 className="text-sm font-bold text-white">Localização Geográfica do Equipamento</h4>
-                                  <p className="text-[10px] text-slate-400">Visualização de coordenadas GPS e rastreamento de instalação ativa.</p>
-                                </div>
-                                <div className="p-2 bg-rose-500/10 rounded-xl text-rose-400">
-                                  <MapPin className="w-4 h-4" />
-                                </div>
-                              </div>
-
-                              {/* Coordinate Inputs */}
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Latitude</label>
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    value={telemetry.latitude}
-                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { latitude: parseFloat(e.target.value) || -23.5505 })}
-                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Longitude</label>
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    value={telemetry.longitude}
-                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { longitude: parseFloat(e.target.value) || -46.6333 })}
-                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Quick Teleport buttons */}
-                              <div className="space-y-1.5">
-                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Simular Locais de Instalação:</span>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {[
-                                    { name: 'São Paulo - SP', lat: -23.5505, lng: -46.6333 },
-                                    { name: 'Rio de Janeiro - RJ', lat: -22.9068, lng: -43.1729 },
-                                    { name: 'Porto Alegre - RS', lat: -30.0346, lng: -51.2177 },
-                                    { name: 'Belo Horizonte - MG', lat: -19.9173, lng: -43.9345 },
-                                  ].map((loc) => {
-                                    const isActive = Math.abs(telemetry.latitude - loc.lat) < 0.01 && Math.abs(telemetry.longitude - loc.lng) < 0.01;
-                                    return (
-                                      <button
-                                        key={loc.name}
-                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { latitude: loc.lat, longitude: loc.lng })}
-                                        className={`px-2.5 py-1 text-[9px] rounded-lg border transition-all ${
-                                          isActive
-                                            ? 'bg-rose-500/20 border-rose-500 text-rose-300'
-                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
-                                        }`}
-                                      >
-                                        {loc.name}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              {/* Map Embed Frame */}
-                              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40 h-[200px] relative">
-                                <iframe
-                                  title="Google Maps Coordinates"
-                                  width="100%"
-                                  height="200"
-                                  style={{ border: 0, filter: 'grayscale(0.6) invert(0.9) contrast(1.2)' }}
-                                  src={`https://maps.google.com/maps?q=${telemetry.latitude},${telemetry.longitude}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
-                                  allowFullScreen
-                                  referrerPolicy="no-referrer"
-                                />
-                              </div>
-
-                              <div className="flex justify-end pt-1">
-                                <a
-                                  href={`https://www.google.com/maps/search/?api=1&query=${telemetry.latitude},${telemetry.longitude}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
-                                >
-                                  <Compass className="w-3.5 h-3.5" />
-                                  Ver no Google Maps Real
-                                </a>
-                              </div>
-                            </div>
-
-                          </div>
-
-                          {/* RIGHT COLUMN: HARDWARE SIMULATOR & MQTT LOGS */}
-                          <div className="lg:col-span-6 space-y-6">
-                            
-                            {/* Hardware Simulation Panel */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-6 text-left">
-                              <div>
-                                <h3 className="text-sm font-bold text-white">Central de Simulação de Hardware</h3>
-                                <p className="text-[10px] text-slate-400">Altere os parâmetros abaixo para testar as reações do aplicativo e das proteções em tempo real para este dispositivo.</p>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                
-                                {/* Temp Collector */}
-                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-xs font-bold text-slate-300">Sensor Coletor Solar</span>
-                                    <span className="text-sm font-mono font-black text-rose-400">{sensorErrorActive ? '---' : `${sensorCollectorTemp}°C`}</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    disabled={sensorErrorActive}
-                                    value={sensorCollectorTemp}
-                                    onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSensorCollectorTemp(val);
-                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_collector`, String(val));
-                                    }}
-                                    className="w-full accent-rose-500 cursor-pointer disabled:opacity-30"
-                                  />
-                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
-                                    <span>0°C</span>
-                                    <span>50°C</span>
-                                    <span>100°C</span>
-                                  </div>
-                                </div>
-
-                                {/* Temp Pool */}
-                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-xs font-bold text-slate-300">Sensor Piscina</span>
-                                    <span className="text-sm font-mono font-black text-[#4398fa]">{sensorPoolTemp}°C</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="50"
-                                    value={sensorPoolTemp}
-                                    onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSensorPoolTemp(val);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/temp_pool`, String(val));
-                                    }}
-                                    className="w-full accent-[#4398fa] cursor-pointer"
-                                  />
-                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
-                                    <span>0°C</span>
-                                    <span>25°C</span>
-                                    <span>50°C</span>
-                                  </div>
-                                </div>
-
-                              </div>
-
-                              {/* Simulated Delta calculation */}
-                              <div className="p-4 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Delta Diferencial (T1 - T2)</span>
-                                  <div className="text-xs text-slate-300">Diferença de temperatura para circulação solar</div>
-                                </div>
-                                <div className="text-right">
-                                  <span className={`text-xl font-mono font-black ${sensorCollectorTemp - sensorPoolTemp >= 8 ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`}>
-                                    {sensorErrorActive ? 'Erro Sensor' : `${(sensorCollectorTemp - sensorPoolTemp).toFixed(0)}°C`}
-                                  </span>
-                                  <div className="text-[8px] text-slate-400 uppercase tracking-widest mt-1">
-                                    {sensorCollectorTemp - sensorPoolTemp >= 8 ? 'Circulação Ativa' : 'Aguardando Delta'}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Fault Injection */}
-                              <div className="space-y-3">
-                                <span className="text-xs font-bold text-slate-300 block">Simulação de Falhas & Diagnósticos</span>
-                                
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <button
-                                    onClick={() => {
-                                      const newVal = !sensorErrorActive;
-                                      setSensorErrorActive(newVal);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
-                                      logUserAction(`Simulou Erro de Sensor Coletor Solar para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
-                                    }}
-                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                      sensorErrorActive
-                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                    }`}
-                                  >
-                                    <div className="space-y-0.5">
-                                      <div className="text-xs font-bold">Erro no Sensor Coletor</div>
-                                      <div className="text-[9px] opacity-70">Sensor de temperatura aberto</div>
-                                    </div>
-                                    <AlertTriangle className="w-4 h-4" />
-                                  </button>
-
-                                  <button
-                                    onClick={() => {
-                                      const newVal = !flowErrorActive;
-                                      setFlowErrorActive(newVal);
-                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
-                                      logUserAction(`Simulou Erro de Fluxo de Água para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
-                                    }}
-                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
-                                      flowErrorActive
-                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                                    }`}
-                                  >
-                                    <div className="space-y-0.5">
-                                      <div className="text-xs font-bold">Sem Fluxo de Água</div>
-                                      <div className="text-[9px] opacity-70">Bomba ligada sem vazão</div>
-                                    </div>
-                                    <AlertTriangle className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-
-                            </div>
-
-                            {/* Telemetry Log panel */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 flex flex-col justify-between text-left">
-                              <div className="space-y-4">
-                                <div>
-                                  <h3 className="text-sm font-bold text-white">Central de Logs Mqtt</h3>
-                                  <p className="text-[10px] text-slate-400">Mensagens enviadas em formato bruto para depuração técnica do dispositivo selecionado.</p>
-                                </div>
-
-                                <div className="space-y-2.5 font-mono text-[10px]">
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div className="text-amber-400 font-bold">{"// Tópicos Publicados Recorrentes:"}</div>
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_coll</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{sensorErrorActive ? 'ERR' : sensorCollectorTemp}</span></div>
-                                  </div>
-
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_pool</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{sensorPoolTemp}</span></div>
-                                  </div>
-
-                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
-                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/flow_state</span></div>
-                                    <div>Payload: <span className="text-emerald-400">{flowErrorActive ? 'FAIL' : 'OK'}</span></div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="space-y-2 pt-2">
-                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Seeding de Testes</span>
-                                <button
-                                  onClick={() => {
-                                    try {
-                                      const actions = [
-                                        'Ligou Motor 3 (M3)', 'Desligou Motor 3 (M3)', 
-                                        `Alterou LED para ${telemetry.mostUsedLedProgram}`, 
-                                        'Desligou Motor de Filtro (M2)', 'Ligou Motor Hidro (M1)', 
-                                        'Configurou Timer do LED'
-                                      ];
-                                      const emails = [currentUser?.email || 'operador@lazer.com'];
-                                      
-                                      const generated: any[] = [];
-                                      for (let i = 0; i < 5; i++) {
-                                        generated.push({
-                                          id: 'seeded-' + Math.random().toString(36).substr(2, 9),
-                                          timestamp: new Date(Date.now() - (Math.random() * 24 * 60 * 60 * 1000)).toISOString(),
-                                          email: emails[Math.floor(Math.random() * emails.length)],
-                                          action: actions[Math.floor(Math.random() * actions.length)],
-                                          deviceId: searchedEquip.id
-                                        });
-                                      }
-
-                                      const combined = [...generated, ...userLogs].slice(0, 200);
-                                      setUserLogs(combined);
-                                      showToast('Logs de Teste', `5 Logs de teste inseridos para ${searchedEquip.id}!`, 'info');
-                                    } catch (e) {}
-                                  }}
-                                  className="w-full py-2 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors"
-                                >
-                                  Inserir Logs de Uso Fictícios para este Dispositivo
-                                </button>
-                              </div>
-
-                            </div>
-
                           </div>
 
                         </div>
@@ -7699,7 +6902,7 @@ export default function PoolControllerPage() {
                         <div>
                           <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider">Gerenciar Catálogo de Modelos</h3>
                           <p className="text-[10px] text-slate-400">
-                            Configure o nome do equipamento (ex: MM12TW, MM08TW, MM14TW), a quantidade de motores e os acessórios/timers ativos para cada modelo.
+                            Gerencie a tabela <span className="font-mono text-amber-300">devices_catalog</span> no Supabase: modelo, quantidade de motores e acessórios/timers (filtragem, LED, hidro, solar).
                           </p>
                         </div>
 
@@ -7800,9 +7003,30 @@ export default function PoolControllerPage() {
                       </div>
 
                       <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
-                          <span className="text-xs font-bold text-white">Modelos Cadastrados no Catálogo</span>
-                          <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded-full font-mono text-slate-300">{deviceCatalog.length} modelos</span>
+                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+                          <span className="text-xs font-bold text-white">Modelos em devices_catalog</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!currentUser?.isSupabase || !isSupabaseConfigured()) return;
+                                setCatalogLoading(true);
+                                try {
+                                  await loadDeviceCatalogFromSupabase();
+                                  showToast('Catálogo', 'Lista atualizada do Supabase.', 'success');
+                                } catch (err: any) {
+                                  showToast('Catálogo', err?.message || 'Falha ao atualizar do Supabase.', 'error');
+                                } finally {
+                                  setCatalogLoading(false);
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white rounded-lg text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              Atualizar
+                            </button>
+                            <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded-full font-mono text-slate-300">{deviceCatalog.length} modelos</span>
+                          </div>
                         </div>
 
                         {catalogLoading ? (
@@ -7919,16 +7143,16 @@ export default function PoolControllerPage() {
                                           </span>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_filter_timer !== false ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_filter_timer === true ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
                                             Timer Filtragem
                                           </span>
-                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_led_timer !== false ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_led_timer === true ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
                                             Timer Iluminação
                                           </span>
-                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_hidro_timer !== false ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_hidro_timer === true ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
                                             Timer Hidro
                                           </span>
-                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_solar_heating !== false ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_solar_heating === true ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
                                             Aquecimento Solar
                                           </span>
                                         </div>
