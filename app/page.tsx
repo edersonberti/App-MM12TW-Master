@@ -44,49 +44,34 @@ import {
   Menu,
   CheckCircle2,
   PowerOff,
-  Cpu,
-  Upload,
-  RefreshCw,
-  Share2,
-  Copy,
-  UserMinus,
-  ChevronLeft,
+  Cpu
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
-import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { fetchUserDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import { deleteDeviceInSupabase } from '../lib/supabaseSync';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
-  acceptDeviceInvite,
-  buildInviteUrl,
-  buildWhatsAppShareUrl,
-  createDeviceInvite,
-  INVITE_STORAGE_KEY,
-  leaveSharedDevice,
-  listDeviceMembers,
-  peekDeviceInvite,
-  revokeDeviceMember,
-  type CreatedInvite,
-  type DeviceInvitePreview,
-  type DeviceMember,
-  type SharePermission,
-} from '../services/shareService';
-import {
   createDeviceCatalogItem,
+  updateDeviceCatalogItem,
   deleteDeviceCatalogItem,
   fetchDeviceCatalog,
   type DeviceCatalogItem,
 } from '../services/deviceCatalogService';
-import {
-  createOtaUpdateUrl,
-  fetchActiveFirmware,
-  fetchAllFirmware,
-  uploadFirmware,
-  updateFirmware,
-  type FirmwareItem,
-} from '../services/firmwareService';
+
+const DEFAULT_PRESET_MODELS: Record<string, { motor_count: number; has_filter_timer: boolean; has_led_timer: boolean; has_hidro_timer: boolean; has_solar_heating: boolean }> = {
+  'MM12TW': { motor_count: 2, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
+  'MM08TW': { motor_count: 1, has_filter_timer: true, has_led_timer: true, has_hidro_timer: false, has_solar_heating: false },
+  'MM14TW': { motor_count: 4, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
+};
+
+const DEFAULT_CATALOG_ITEMS: DeviceCatalogItem[] = [
+  { id: 'cat-mm12tw', model: 'MM12TW', motor_count: 2, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
+  { id: 'cat-mm08tw', model: 'MM08TW', motor_count: 1, has_filter_timer: true, has_led_timer: true, has_hidro_timer: false, has_solar_heating: false },
+  { id: 'cat-mm14tw', model: 'MM14TW', motor_count: 4, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
+];
 
 // TypeScript declarations for browser-loaded scripts
 declare global {
@@ -175,17 +160,9 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
   </div>
 );
 
-type AppScreen = 'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'share' | 'invite' | 'admin';
-
-const APP_SCREENS: readonly AppScreen[] = ['login', 'register', 'home', 'aux', 'led', 'timers', 'setup', 'share', 'invite', 'admin'];
-const MAIN_TAB_SCREENS: readonly AppScreen[] = ['home', 'aux', 'led', 'timers'];
-
-const isAppScreen = (value: unknown): value is AppScreen =>
-  typeof value === 'string' && (APP_SCREENS as readonly string[]).includes(value);
-
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<AppScreen>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
 
@@ -201,110 +178,26 @@ export default function PoolControllerPage() {
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogItem[]>([]);
   const [catalogModel, setCatalogModel] = useState('');
-  const [catalogMotorCount, setCatalogMotorCount] = useState('4');
+  const [catalogMotorCount, setCatalogMotorCount] = useState('2');
+  const [catalogHasFilterTimer, setCatalogHasFilterTimer] = useState(true);
+  const [catalogHasLedTimer, setCatalogHasLedTimer] = useState(true);
+  const [catalogHasHidroTimer, setCatalogHasHidroTimer] = useState(true);
+  const [catalogHasSolarHeating, setCatalogHasSolarHeating] = useState(true);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSaving, setCatalogSaving] = useState(false);
 
-  // Firmware OTA (.bin) — linked to devices_catalog.model
-  const [firmwareList, setFirmwareList] = useState<FirmwareItem[]>([]);
-  const [firmwareLoading, setFirmwareLoading] = useState(false);
-  const [firmwareSaving, setFirmwareSaving] = useState(false);
-  const [firmwareModel, setFirmwareModel] = useState('');
-  const [firmwareNome, setFirmwareNome] = useState('');
-  const [firmwareVersao, setFirmwareVersao] = useState('');
-  const [firmwareFile, setFirmwareFile] = useState<File | null>(null);
-  const [firmwareEditingId, setFirmwareEditingId] = useState<string | null>(null);
-  const [firmwareUpdatingModel, setFirmwareUpdatingModel] = useState<string | null>(null);
-
-  // Sync app screens with browser history so the phone back button works in PWA/mobile.
-  const activeScreenRef = useRef<AppScreen>(activeScreen);
-  activeScreenRef.current = activeScreen;
-  const navDepthRef = useRef(0);
-
-  const navigateToScreen = useCallback((
-    screen: AppScreen,
-    options?: { replace?: boolean; resetStack?: boolean }
-  ) => {
-    const current = activeScreenRef.current;
-    const isMainTabSwitch =
-      (MAIN_TAB_SCREENS as readonly string[]).includes(screen) &&
-      ((MAIN_TAB_SCREENS as readonly string[]).includes(current) ||
-        current === 'setup' ||
-        current === 'admin' ||
-        current === 'share');
-    const shouldReplace =
-      options?.replace === true ||
-      options?.resetStack === true ||
-      current === screen ||
-      isMainTabSwitch;
-
-    setActiveScreen(screen);
-    setShowNavMenu(false);
-
-    if (typeof window === 'undefined') return;
-
-    const url = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (shouldReplace) {
-      if (options?.resetStack) {
-        navDepthRef.current = 0;
-      }
-      window.history.replaceState({ screen, depth: navDepthRef.current }, '', url);
-    } else {
-      navDepthRef.current += 1;
-      window.history.pushState({ screen, depth: navDepthRef.current }, '', url);
-    }
-  }, []);
-
-  const goBack = useCallback(() => {
-    if (typeof window !== 'undefined' && navDepthRef.current > 0) {
-      window.history.back();
-      return;
-    }
-    navigateToScreen('home', { replace: true, resetStack: true });
-  }, [navigateToScreen]);
+  // Edit state for catalog item
+  const [editingCatalogItem, setEditingCatalogItem] = useState<DeviceCatalogItem | null>(null);
+  const [editModelName, setEditModelName] = useState('');
+  const [editMotorCount, setEditMotorCount] = useState('2');
+  const [editHasFilterTimer, setEditHasFilterTimer] = useState(true);
+  const [editHasLedTimer, setEditHasLedTimer] = useState(true);
+  const [editHasHidroTimer, setEditHasHidroTimer] = useState(true);
+  const [editHasSolarHeating, setEditHasSolarHeating] = useState(true);
 
   const handleBackToHome = () => {
-    goBack();
+    setActiveScreen('home');
   };
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const url = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    const existing = window.history.state;
-    const existingScreen =
-      existing && typeof existing === 'object' ? (existing as { screen?: unknown }).screen : undefined;
-
-    if (!isAppScreen(existingScreen)) {
-      window.history.replaceState(
-        {
-          ...(existing && typeof existing === 'object' ? existing : {}),
-          screen: activeScreenRef.current,
-          depth: 0,
-        },
-        '',
-        url
-      );
-      navDepthRef.current = 0;
-    } else {
-      const depth = (existing as { depth?: unknown }).depth;
-      navDepthRef.current = typeof depth === 'number' && depth >= 0 ? depth : 0;
-    }
-
-    const onPopState = (event: PopStateEvent) => {
-      const state = event.state as { screen?: unknown; depth?: unknown } | null;
-      const screen = state?.screen;
-      if (isAppScreen(screen)) {
-        setActiveScreen(screen);
-        setShowNavMenu(false);
-      }
-      const depth = state?.depth;
-      navDepthRef.current = typeof depth === 'number' && depth >= 0 ? depth : 0;
-    };
-
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
   const [adminSearchUser, setAdminSearchUser] = useState('');
@@ -415,34 +308,20 @@ export default function PoolControllerPage() {
     manufacturer?: string; 
     userEmail?: string; 
     userPassword?: string;
-    access?: 'owner' | 'shared';
-    permission?: SharePermission | 'owner';
-  }[]>([]);
-  // Lista completa só para o painel admin (owners); a tela do app usa registeredEquipments (só do usuário logado).
-  const [adminAllEquipments, setAdminAllEquipments] = useState<{
-    id: string;
-    model: string;
-    serial?: string;
-    manufacturer?: string;
-    userEmail?: string;
   }[]>([]);
   const [selectedEquipmentModel, setSelectedEquipmentModel] = useState<string>('MM12TW');
   const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
   const activeModel = activeEquipment?.model || 'MM12TW';
-  // Shared "control" must NOT edit names/settings — only "configure" (or owner) may.
-  const canConfigureActiveDevice = (() => {
-    if (!currentUser?.isSupabase) return true;
-    if (!activeEquipment) return false;
-    if (activeEquipment.access === 'shared') {
-      return activeEquipment.permission === 'configure';
-    }
-    // Owned equipment (or legacy rows without access flag)
-    return true;
-  })();
   const activeCatalogItem = deviceCatalog.find(
-    item => item.model.toUpperCase() === activeModel.trim().toUpperCase()
+    item => item.model.trim().toUpperCase() === activeModel.trim().toUpperCase()
   );
-  const activeMotorCount = activeCatalogItem?.motor_count ?? 0;
+  const presetSpec = DEFAULT_PRESET_MODELS[activeModel.trim().toUpperCase()];
+
+  const activeMotorCount = activeCatalogItem?.motor_count ?? (presetSpec?.motor_count ?? 2);
+  const hasFilterTimer = activeCatalogItem?.has_filter_timer ?? (presetSpec?.has_filter_timer ?? true);
+  const hasLedTimer = activeCatalogItem?.has_led_timer ?? (presetSpec?.has_led_timer ?? true);
+  const hasHidroTimer = activeCatalogItem?.has_hidro_timer ?? (presetSpec?.has_hidro_timer ?? true);
+  const hasSolarHeating = activeCatalogItem?.has_solar_heating ?? (presetSpec?.has_solar_heating ?? true);
   const searchedEquip = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim()));
   const telemetry = searchedEquip ? getDeviceTelemetry(searchedEquip.id) : null;
   const [equipmentSerial, setEquipmentSerial] = useState<string>('');
@@ -454,16 +333,6 @@ export default function PoolControllerPage() {
   const [scannedData, setScannedData] = useState<any | null>(null);
   const [confirmDeleteDeviceId, setConfirmDeleteDeviceId] = useState<string | null>(null);
   const qrScannerRef = useRef<any>(null);
-
-  // Device sharing
-  const [shareDeviceId, setShareDeviceId] = useState<string | null>(null);
-  const [sharePermission, setSharePermission] = useState<SharePermission>('control');
-  const [shareInvite, setShareInvite] = useState<CreatedInvite | null>(null);
-  const [shareMembers, setShareMembers] = useState<DeviceMember[]>([]);
-  const [shareBusy, setShareBusy] = useState(false);
-  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
-  const [invitePreview, setInvitePreview] = useState<DeviceInvitePreview | null>(null);
-  const [inviteAcceptBusy, setInviteAcceptBusy] = useState(false);
   
   // Real-time Controls / Statuses
   const [motorHidro, setMotorHidro] = useState(false);
@@ -667,7 +536,7 @@ export default function PoolControllerPage() {
         if (savedSimUser) {
           try {
             setCurrentUser(JSON.parse(savedSimUser));
-            navigateToScreen('home', { replace: true, resetStack: true });
+            setActiveScreen('home');
           } catch (e) {
             localStorage.removeItem('sim_user');
           }
@@ -676,47 +545,39 @@ export default function PoolControllerPage() {
       localStorage.removeItem('supabase_url_cache');
       localStorage.removeItem('supabase_anon_key_cache');
 
-      // Equipamentos: com Supabase, a fonte é o banco por user_id (nunca lista compartilhada do celular).
-      // Sem Supabase (modo simulado), mantém cache local.
-      if (!isSupabaseConfigured()) {
-        const storedEquips = localStorage.getItem('registered_equipments');
-        const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
-        const isDefaultDeleted = deletedIds.some(del => areDeviceIdsMatching(del, 'MLZ-MM12TW-EEA39F-000003'));
+      const storedEquips = localStorage.getItem('registered_equipments');
+      const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+      const isDefaultDeleted = deletedIds.some(del => areDeviceIdsMatching(del, 'MLZ-MM12TW-EEA39F-000003'));
 
-        if (storedEquips) {
-          try {
-            const parsed = JSON.parse(storedEquips);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setRegisteredEquipments(parsed);
-            } else if (Array.isArray(parsed) && parsed.length === 0 && !isDefaultDeleted) {
-              const defaultList = [{
-                id: 'MLZ-MM12TW-EEA39F-000003',
-                model: 'MM12TW',
-                serial: 'MLZ-MM12TW-EEA39F-000003',
-                manufacturer: 'MASTERLAZER'
-              }];
-              setRegisteredEquipments(defaultList);
-              localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
-            } else if (Array.isArray(parsed)) {
-              setRegisteredEquipments(parsed);
-            }
-          } catch (e) {
-            console.error('[Storage] Error loading registered_equipments:', e);
+      if (storedEquips) {
+        try {
+          const parsed = JSON.parse(storedEquips);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setRegisteredEquipments(parsed);
+          } else if (Array.isArray(parsed) && parsed.length === 0 && !isDefaultDeleted) {
+            const defaultList = [{
+              id: 'MLZ-MM12TW-EEA39F-000003',
+              model: 'MM12TW',
+              serial: 'MLZ-MM12TW-EEA39F-000003',
+              manufacturer: 'MASTERLAZER'
+            }];
+            setRegisteredEquipments(defaultList);
+            localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
+          } else if (Array.isArray(parsed)) {
+            setRegisteredEquipments(parsed);
           }
-        } else if (!isDefaultDeleted) {
-          const defaultList = [{
-            id: 'MLZ-MM12TW-EEA39F-000003',
-            model: 'MM12TW',
-            serial: 'MLZ-MM12TW-EEA39F-000003',
-            manufacturer: 'MASTERLAZER'
-          }];
-          setRegisteredEquipments(defaultList);
-          localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
+        } catch (e) {
+          console.error('[Storage] Error loading registered_equipments:', e);
         }
-      } else {
-        setRegisteredEquipments([]);
-        // Remove legacy shared key that leaked devices between accounts on the same phone
-        localStorage.removeItem('registered_equipments');
+      } else if (!isDefaultDeleted) {
+        const defaultList = [{
+          id: 'MLZ-MM12TW-EEA39F-000003',
+          model: 'MM12TW',
+          serial: 'MLZ-MM12TW-EEA39F-000003',
+          manufacturer: 'MASTERLAZER'
+        }];
+        setRegisteredEquipments(defaultList);
+        localStorage.setItem('registered_equipments', JSON.stringify(defaultList));
       }
 
       const storedTelemetry = localStorage.getItem('device_telemetry_map');
@@ -895,26 +756,27 @@ export default function PoolControllerPage() {
 
   // 1d. Reconnect MQTT whenever active deviceId changes to update subscriptions
   useEffect(() => {
-    // Reset device specific metrics on ID change to avoid showing old values wrapped in setTimeout to prevent cascading render error
-    setTimeout(() => {
-      setIsUpdatingData(true);
-      setShowUpdatedMessage(false);
-      setDeviceIp('---');
-      setDeviceMac('---');
-      const matched = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
-      if (matched) {
-        setDeviceModelo(matched.model || '---');
-        setDeviceSerial(matched.serial || '---');
-      } else {
-        setDeviceModelo('---');
-        setDeviceSerial('---');
-      }
-      setDeviceOnline(null);
-    }, 0);
-    lastMessageTimeRef.current = 0;
+    if (!deviceId) return;
 
-    if (prevDeviceIdRef.current && prevDeviceIdRef.current !== deviceId) {
-      if (typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
+    if (prevDeviceIdRef.current !== deviceId) {
+      setTimeout(() => {
+        setIsUpdatingData(true);
+        setShowUpdatedMessage(false);
+        setDeviceIp('---');
+        setDeviceMac('---');
+        const matched = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
+        if (matched) {
+          setDeviceModelo(matched.model || '---');
+          setDeviceSerial(matched.serial || '---');
+        } else {
+          setDeviceModelo('---');
+          setDeviceSerial('---');
+        }
+        setDeviceOnline(null);
+      }, 0);
+      lastMessageTimeRef.current = Date.now();
+
+      if (prevDeviceIdRef.current && typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
         console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
         disconnectMQTT(true);
         const t = setTimeout(() => {
@@ -923,10 +785,10 @@ export default function PoolControllerPage() {
         prevDeviceIdRef.current = deviceId;
         return () => clearTimeout(t);
       }
+      prevDeviceIdRef.current = deviceId;
     }
-    prevDeviceIdRef.current = deviceId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId, registeredEquipments]);
+  }, [deviceId, registeredEquipments, currentUser, userWantsMqtt]);
 
   // 1e. Fetch Supabase device settings (e.g. motor names) when active device changes
   useEffect(() => {
@@ -1057,50 +919,81 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt]);
 
-  // Sync equipment from Supabase — owned + shared devices.
-  const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string, _role?: string) => {
+  // Sync equipment from Supabase for logged-in user
+  const syncUserDevicesFromSupabase = useCallback(async (userId: string, userEmail?: string) => {
     if (!isSupabaseConfigured() || !userId) return [];
 
     const dbDevices = await fetchUserDevices(userId);
+    const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
 
-    const mappedDb = (dbDevices || []).map((d: any) => ({
-      id: d.id,
-      model: d.model || 'MM12TW',
-      serial: d.serial || d.id,
-      pairing_token: d.pairing_token,
-      manufacturer: 'MASTERLAZER',
-      userEmail: userEmail || '',
-      access: d.access === 'shared' ? 'shared' as const : 'owner' as const,
-      permission:
-        d.access === 'shared'
-          ? ((d.permission === 'configure' ? 'configure' : 'control') as SharePermission)
-          : ('owner' as const),
-    }));
+    const isDeleted = (id: string) => {
+      if (!id) return false;
+      const idLower = id.toLowerCase();
+      const cleanLower = cleanDeviceId(id).toLowerCase();
+      return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
+    };
 
-    setRegisteredEquipments(mappedDb);
-
-    // Optional per-user cache only (never the shared key)
+    let rawLocal: any[] = [];
     try {
-      localStorage.setItem(`registered_equipments:${userId}`, JSON.stringify(mappedDb));
-      localStorage.removeItem('registered_equipments');
-    } catch (e) {}
-
-    if (mappedDb.length > 0) {
-      const storedDevice = (localStorage.getItem(`mqtt_device:${userId}`) || localStorage.getItem('mqtt_device') || deviceId || '').trim();
-      const matched = mappedDb.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
-      const nextDeviceId = matched?.id || mappedDb[0].id;
-      setDeviceId(nextDeviceId);
-      localStorage.setItem(`mqtt_device:${userId}`, nextDeviceId);
-      localStorage.removeItem('mqtt_device');
-    } else {
-      setDeviceId('');
-      localStorage.removeItem('mqtt_device');
-      try {
-        localStorage.removeItem(`mqtt_device:${userId}`);
-      } catch (e) {}
+      rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
+    } catch (e) {
+      rawLocal = [];
     }
 
-    return mappedDb;
+    const mappedDb = (dbDevices || [])
+      .filter((d: any) => !isDeleted(d.id))
+      .map((d: any) => ({
+        id: d.id,
+        model: d.model || 'MM12TW',
+        serial: d.serial || d.id,
+        pairing_token: d.pairing_token,
+        manufacturer: 'MASTERLAZER',
+        userEmail: userEmail || ''
+      }));
+
+    const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
+
+    // Combine DB devices and valid local devices avoiding duplicates
+    const combined: any[] = [...mappedDb];
+    for (const item of validLocal) {
+      const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
+      if (!exists) {
+        combined.push(item);
+      }
+    }
+
+    // Auto-seed default equipment if user has 0 devices and default equipment hasn't been deleted
+    const defaultId = 'MLZ-MM12TW-EEA39F-000003';
+    if (combined.length === 0 && !isDeleted(defaultId)) {
+      const defaultDevice = {
+        id: defaultId,
+        model: 'MM12TW',
+        serial: defaultId,
+        manufacturer: 'MASTERLAZER',
+        userEmail: userEmail || ''
+      };
+
+      try {
+        await registerDevice(defaultId, 'MM12TW', userId, defaultId);
+      } catch (e) {
+        console.warn('[Supabase] Auto-seed device error:', e);
+      }
+
+      combined.push(defaultDevice);
+    }
+
+    setRegisteredEquipments(combined);
+    localStorage.setItem('registered_equipments', JSON.stringify(combined));
+
+    if (combined.length > 0) {
+      const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
+      const matched = combined.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
+      const nextDeviceId = matched?.id || combined[0].id;
+      setDeviceId(nextDeviceId);
+      localStorage.setItem('mqtt_device', nextDeviceId);
+    }
+
+    return combined;
   }, [deviceId]);
 
   // 2. Initialize Supabase Auth state observer
@@ -1122,32 +1015,23 @@ export default function PoolControllerPage() {
           setCurrentUser(loggedUser);
           
           // Load devices for the user from Supabase and sync state
-          await syncUserDevicesFromSupabase(session.user.id, session.user.email, profile.role);
+          await syncUserDevicesFromSupabase(session.user.id, session.user.email);
           
           if (activeScreen === 'login' || activeScreen === 'register') {
-            const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY);
-            navigateToScreen(hasInvite ? 'invite' : 'home', { replace: true, resetStack: true });
+            setActiveScreen('home');
           }
         } else {
           // No profile exists, show error and logout
           setAuthErrorMessage('Erro: Perfil do usuário não encontrado na tabela "profiles". O administrador precisa liberar o seu acesso.');
           signOut();
           setCurrentUser(null);
-          navigateToScreen('login', { replace: true, resetStack: true });
+          setActiveScreen('login');
         }
       } else {
         setCurrentUser(null);
         setRegisteredEquipments([]);
-        setDeviceId('');
-        localStorage.removeItem('registered_equipments');
-        localStorage.removeItem('mqtt_device');
-        const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY);
-        if (activeScreen === 'register') {
-          // stay on register
-        } else if (hasInvite || activeScreen === 'invite') {
-          navigateToScreen('invite', { replace: true, resetStack: true });
-        } else {
-          navigateToScreen('login', { replace: true, resetStack: true });
+        if (activeScreen !== 'register') {
+          setActiveScreen('login');
         }
       }
     });
@@ -1159,44 +1043,60 @@ export default function PoolControllerPage() {
   }, [supabaseStateLoaded, activeScreen]);
 
   useEffect(() => {
-    if (!currentUser?.isSupabase) {
-      Promise.resolve().then(() => {
-        setDeviceCatalog([]);
-        setFirmwareList([]);
-      });
-      return;
-    }
-
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCatalogLoading(true);
-    setFirmwareLoading(true);
 
-    fetchDeviceCatalog()
-      .then((items) => {
-        if (!cancelled) setDeviceCatalog(items);
-      })
-      .finally(() => {
-        if (!cancelled) setCatalogLoading(false);
+    const getFallbackList = () => {
+      try {
+        const stored = localStorage.getItem('local_device_catalog');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+      return DEFAULT_CATALOG_ITEMS;
+    };
+
+    const fallbackList = getFallbackList();
+
+    if (currentUser?.isSupabase) {
+      fetchDeviceCatalog()
+        .then((items) => {
+          if (!cancelled) {
+            if (items && items.length > 0) {
+              const enriched = items.map(it => {
+                const preset = DEFAULT_PRESET_MODELS[it.model.toUpperCase()];
+                return {
+                  ...it,
+                  has_filter_timer: it.has_filter_timer ?? (preset?.has_filter_timer ?? true),
+                  has_led_timer: it.has_led_timer ?? (preset?.has_led_timer ?? true),
+                  has_hidro_timer: it.has_hidro_timer ?? (preset?.has_hidro_timer ?? true),
+                  has_solar_heating: it.has_solar_heating ?? (preset?.has_solar_heating ?? true),
+                };
+              });
+              setDeviceCatalog(enriched);
+            } else {
+              setDeviceCatalog(fallbackList);
+            }
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setDeviceCatalog(fallbackList);
+        })
+        .finally(() => {
+          if (!cancelled) setCatalogLoading(false);
+        });
+    } else {
+      Promise.resolve().then(() => {
+        setDeviceCatalog(fallbackList);
+        setCatalogLoading(false);
       });
-
-    const loadFirmware =
-      currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support'
-        ? fetchAllFirmware()
-        : fetchActiveFirmware();
-
-    loadFirmware
-      .then((items) => {
-        if (!cancelled) setFirmwareList(items);
-      })
-      .finally(() => {
-        if (!cancelled) setFirmwareLoading(false);
-      });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.uid, currentUser?.isSupabase, currentUser?.role]);
+  }, [currentUser?.uid, currentUser?.isSupabase]);
 
   // 3. Dynamic setup of Iro.js Color picker when active screen is 'led'
   useEffect(() => {
@@ -1297,10 +1197,10 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
-  // 3b. Load profiles + all devices when administrative tab opens (management view only)
+  // 3b. Load all synced user profiles live from Supabase when administrative tab opens
   useEffect(() => {
     if (activeScreen === 'admin' && isSupabaseConfigured()) {
-      const loadAdminData = async () => {
+      const loadProfiles = async () => {
         const profiles = await fetchAllProfiles();
         setSimUsers(profiles.map(p => ({
           uid: p.id,
@@ -1308,19 +1208,8 @@ export default function PoolControllerPage() {
           full_name: p.full_name,
           role: p.role
         })));
-
-        const allDevices = await fetchAllActiveDevices();
-        setAdminAllEquipments(
-          (allDevices || []).map((d) => ({
-            id: d.id,
-            model: d.model || 'MM12TW',
-            serial: d.serial || d.id,
-            manufacturer: 'MASTERLAZER',
-            userEmail: d.owner_email || '',
-          }))
-        );
       };
-      loadAdminData();
+      loadProfiles();
     }
   }, [activeScreen]);
 
@@ -1462,10 +1351,9 @@ export default function PoolControllerPage() {
           setCurrentUser(loggedUser);
 
           // Fetch user's registered devices from Supabase & sync
-          await syncUserDevicesFromSupabase(data.user.id, data.user.email, profile.role);
+          await syncUserDevicesFromSupabase(data.user.id, data.user.email);
 
-          const hasInvite = !!sessionStorage.getItem(INVITE_STORAGE_KEY) || !!pendingInviteToken;
-          navigateToScreen(hasInvite ? 'invite' : 'home', { replace: true, resetStack: true });
+          setActiveScreen('home');
         }
       } else {
         // Register mode
@@ -1473,7 +1361,7 @@ export default function PoolControllerPage() {
         if (error) throw error;
         if (data?.user) {
           showToast('Conta cadastrada com sucesso!', 'Verifique seu e-mail para confirmação se necessário.', 'success');
-          navigateToScreen('login', { replace: true, resetStack: true });
+          setActiveScreen('login');
         }
       }
     } catch (err: any) {
@@ -1513,7 +1401,7 @@ export default function PoolControllerPage() {
     };
     setCurrentUser(demoUser);
     localStorage.setItem('sim_user', JSON.stringify(demoUser));
-    navigateToScreen('home', { replace: true, resetStack: true });
+    setActiveScreen('home');
     setAuthErrorMessage('');
   };
 
@@ -1526,15 +1414,10 @@ export default function PoolControllerPage() {
       console.error(err);
     }
     localStorage.removeItem('sim_user');
-    localStorage.removeItem('registered_equipments');
-    localStorage.removeItem('mqtt_device');
-    setRegisteredEquipments([]);
-    setAdminAllEquipments([]);
-    setDeviceId('');
     setCurrentUser(null);
     setEmailInput('');
     setPasswordInput('');
-    navigateToScreen('login', { replace: true, resetStack: true });
+    setActiveScreen('login');
     disconnectMQTT();
   };
 
@@ -2025,7 +1908,7 @@ export default function PoolControllerPage() {
       const options: any = {
         useSSL: isSSL,
         cleanSession: true,
-        keepAliveInterval: 25, // Send ping every 25 seconds to keep connection alive
+        keepAliveInterval: 45, // Send ping every 45 seconds to keep connection rock-solid
         timeout: 10,            // 10s connect timeout
         onSuccess: () => {
           failedAttemptsRef.current = 0;
@@ -2390,6 +2273,12 @@ export default function PoolControllerPage() {
     }
   };
 
+  const saveLocalCatalog = (items: DeviceCatalogItem[]) => {
+    try {
+      localStorage.setItem('local_device_catalog', JSON.stringify(items));
+    } catch (e) {}
+  };
+
   const handleCreateCatalogItem = async () => {
     if (currentUser?.role !== 'owner') return;
 
@@ -2399,24 +2288,122 @@ export default function PoolControllerPage() {
       showToast('Campo Obrigatório', 'Informe o modelo do equipamento.', 'warning');
       return;
     }
-    if (!Number.isInteger(motorCount) || motorCount < 1 || motorCount > 8) {
-      showToast('Quantidade Inválida', 'A quantidade de motores deve ser de 1 a 8.', 'warning');
+    if (!Number.isInteger(motorCount) || motorCount < 0 || motorCount > 8) {
+      showToast('Quantidade Inválida', 'A quantidade de motores deve ser de 0 a 8.', 'warning');
       return;
     }
 
     setCatalogSaving(true);
     try {
-      const created = await createDeviceCatalogItem(model, motorCount);
-      if (created) {
-        setDeviceCatalog((current) =>
-          [...current, created].sort((a, b) => a.model.localeCompare(b.model))
+      let created: DeviceCatalogItem | null = null;
+      if (isSupabaseConfigured() && currentUser?.isSupabase) {
+        created = await createDeviceCatalogItem(
+          model,
+          motorCount,
+          catalogHasFilterTimer,
+          catalogHasLedTimer,
+          catalogHasHidroTimer,
+          catalogHasSolarHeating
         );
-        setCatalogModel('');
-        setCatalogMotorCount('4');
-        showToast('Catálogo Atualizado', `Modelo ${created.model} adicionado ao catálogo.`, 'success');
       }
+      
+      if (!created) {
+        created = {
+          id: `local-cat-${Date.now()}`,
+          model,
+          motor_count: motorCount,
+          has_filter_timer: catalogHasFilterTimer,
+          has_led_timer: catalogHasLedTimer,
+          has_hidro_timer: catalogHasHidroTimer,
+          has_solar_heating: catalogHasSolarHeating,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      setDeviceCatalog((current) => {
+        const filtered = current.filter(c => c.model.toUpperCase() !== model);
+        const updated = [...filtered, created!].sort((a, b) => a.model.localeCompare(b.model));
+        saveLocalCatalog(updated);
+        return updated;
+      });
+
+      setCatalogModel('');
+      setCatalogMotorCount('2');
+      setCatalogHasFilterTimer(true);
+      setCatalogHasLedTimer(true);
+      setCatalogHasHidroTimer(true);
+      setCatalogHasSolarHeating(true);
+
+      showToast('Catálogo Atualizado', `Modelo ${created.model} adicionado ao catálogo.`, 'success');
     } catch (err: any) {
       showToast('Erro no Catálogo', err?.message || 'Não foi possível adicionar o modelo ao catálogo.', 'error');
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
+  const handleStartEditCatalogItem = (item: DeviceCatalogItem) => {
+    setEditingCatalogItem(item);
+    setEditModelName(item.model);
+    setEditMotorCount(String(item.motor_count));
+    setEditHasFilterTimer(item.has_filter_timer ?? true);
+    setEditHasLedTimer(item.has_led_timer ?? true);
+    setEditHasHidroTimer(item.has_hidro_timer ?? true);
+    setEditHasSolarHeating(item.has_solar_heating ?? true);
+  };
+
+  const handleSaveEditCatalogItem = async () => {
+    if (!editingCatalogItem) return;
+    const model = editModelName.trim().toUpperCase();
+    const motorCount = Number(editMotorCount);
+    if (!model) {
+      showToast('Campo Obrigatório', 'Informe o modelo do equipamento.', 'warning');
+      return;
+    }
+    if (!Number.isInteger(motorCount) || motorCount < 0 || motorCount > 8) {
+      showToast('Quantidade Inválida', 'A quantidade de motores deve ser de 0 a 8.', 'warning');
+      return;
+    }
+
+    setCatalogSaving(true);
+    try {
+      let updated: DeviceCatalogItem | null = null;
+      if (isSupabaseConfigured() && currentUser?.isSupabase) {
+        updated = await updateDeviceCatalogItem(
+          editingCatalogItem.id,
+          model,
+          motorCount,
+          editHasFilterTimer,
+          editHasLedTimer,
+          editHasHidroTimer,
+          editHasSolarHeating
+        );
+      }
+
+      if (!updated) {
+        updated = {
+          ...editingCatalogItem,
+          model,
+          motor_count: motorCount,
+          has_filter_timer: editHasFilterTimer,
+          has_led_timer: editHasLedTimer,
+          has_hidro_timer: editHasHidroTimer,
+          has_solar_heating: editHasSolarHeating,
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      setDeviceCatalog((current) => {
+        const list = current.map(item => item.id === editingCatalogItem.id ? updated! : item);
+        saveLocalCatalog(list);
+        return list;
+      });
+
+      setEditingCatalogItem(null);
+      showToast('Catálogo Atualizado', `Modelo ${model} atualizado com sucesso.`, 'success');
+    } catch (err: any) {
+      showToast('Erro ao Atualizar', err?.message || 'Não foi possível atualizar o modelo.', 'error');
     } finally {
       setCatalogSaving(false);
     }
@@ -2427,10 +2414,15 @@ export default function PoolControllerPage() {
     if (!confirm(`Remover o modelo ${item.model} do catálogo?`)) return;
 
     try {
-      await deleteDeviceCatalogItem(item.id);
-      setDeviceCatalog((current) =>
-        current.filter((catalogItem) => catalogItem.id !== item.id)
-      );
+      if (isSupabaseConfigured() && currentUser?.isSupabase) {
+        await deleteDeviceCatalogItem(item.id);
+      }
+      setDeviceCatalog((current) => {
+        const updated = current.filter((catalogItem) => catalogItem.id !== item.id);
+        saveLocalCatalog(updated);
+        return updated;
+      });
+      showToast('Modelo Removido', `Modelo ${item.model} removido do catálogo.`, 'info');
     } catch (err: any) {
       showToast(
         'Erro ao Remover Modelo',
@@ -2441,145 +2433,6 @@ export default function PoolControllerPage() {
       );
     }
   };
-
-  const refreshFirmwareList = async () => {
-    setFirmwareLoading(true);
-    try {
-      const items =
-        currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support'
-          ? await fetchAllFirmware()
-          : await fetchActiveFirmware();
-      setFirmwareList(items);
-    } finally {
-      setFirmwareSaving(false);
-      setFirmwareLoading(false);
-    }
-  };
-
-  const resetFirmwareForm = () => {
-    setFirmwareEditingId(null);
-    setFirmwareModel('');
-    setFirmwareNome('');
-    setFirmwareVersao('');
-    setFirmwareFile(null);
-  };
-
-  const handleUploadFirmware = async () => {
-    if (
-      currentUser?.role !== 'owner' &&
-      currentUser?.role !== 'admin' &&
-      currentUser?.role !== 'support'
-    ) {
-      return;
-    }
-
-    const model = firmwareModel.trim().toUpperCase();
-    if (!model || !firmwareNome.trim() || !firmwareVersao.trim()) {
-      showToast('Campos Obrigatórios', 'Informe modelo, nome e versão do firmware.', 'warning');
-      return;
-    }
-    if (!firmwareFile && !firmwareEditingId) {
-      showToast('Arquivo Obrigatório', 'Selecione o arquivo .bin para enviar.', 'warning');
-      return;
-    }
-
-    setFirmwareSaving(true);
-    try {
-      if (firmwareEditingId) {
-        await updateFirmware({
-          id: firmwareEditingId,
-          nome: firmwareNome,
-          versao: firmwareVersao,
-          file: firmwareFile || undefined,
-          uploadedBy: currentUser?.uid,
-        });
-        showToast('Firmware Atualizado', `Versão ${firmwareVersao} do modelo ${model} atualizada.`, 'success');
-      } else {
-        if (!firmwareFile) return;
-        await uploadFirmware({
-          model,
-          nome: firmwareNome,
-          versao: firmwareVersao,
-          file: firmwareFile,
-          uploadedBy: currentUser?.uid,
-        });
-        showToast('Firmware Publicado', `Nova atualização ${firmwareVersao} disponível para ${model}.`, 'success');
-      }
-      resetFirmwareForm();
-      await refreshFirmwareList();
-    } catch (err: any) {
-      showToast('Erro no Firmware', err?.message || 'Não foi possível salvar o firmware.', 'error');
-      setFirmwareSaving(false);
-    }
-  };
-
-  const handleStartEditFirmware = (item: FirmwareItem) => {
-    setFirmwareEditingId(item.id);
-    setFirmwareModel(item.model);
-    setFirmwareNome(item.nome);
-    setFirmwareVersao(item.versao);
-    setFirmwareFile(null);
-    setAdminTab('aba2');
-  };
-
-  const handleOperatorFirmwareUpdate = async (item: FirmwareItem) => {
-    setFirmwareUpdatingModel(item.model);
-    try {
-      const modelKey = item.model.trim().toUpperCase();
-      const targets = registeredEquipments.filter(
-        (eq) => (eq.model || '').trim().toUpperCase() === modelKey
-      );
-
-      if (targets.length === 0) {
-        showToast('Sem equipamento', `Nenhum equipamento do modelo ${item.model} encontrado.`, 'warning');
-        return;
-      }
-
-      const isConn =
-        mqttClientRef.current &&
-        typeof mqttClientRef.current.isConnected === 'function' &&
-        mqttClientRef.current.isConnected();
-
-      if (!isConn) {
-        showToast('MQTT offline', 'Conecte o MQTT antes de enviar a atualização OTA.', 'warning');
-        if (userWantsMqttRef.current) {
-          connectMQTT();
-        }
-        return;
-      }
-
-      // Short-lived public URL on /ota/ — device downloads the .bin; the phone never receives the file.
-      const otaUrl = await createOtaUpdateUrl(item);
-
-      for (const eq of targets) {
-        const rawId = (eq.id || '').trim();
-        const cleanId = cleanDeviceId(rawId).trim() || rawId;
-        if (!cleanId) continue;
-        publishTopic(`MLZ/${cleanId}/ota`, otaUrl);
-        publishTopic(`MLZ/${cleanId}/ota/url`, otaUrl);
-      }
-
-      logUserAction(`OTA ${item.model} v${item.versao}`);
-      showToast(
-        'OTA enviado',
-        `Comando de atualização ${item.model} v${item.versao} enviado ao equipamento via MQTT.`,
-        'success'
-      );
-    } catch (err: any) {
-      showToast('Erro na Atualização', err?.message || 'Não foi possível iniciar o OTA.', 'error');
-    } finally {
-      setFirmwareUpdatingModel(null);
-    }
-  };
-
-  const operatorFirmwareUpdates = (() => {
-    const userModels = new Set(
-      registeredEquipments.map((eq) => (eq.model || '').trim().toUpperCase()).filter(Boolean)
-    );
-    return firmwareList.filter(
-      (fw) => fw.is_active && userModels.has(fw.model.trim().toUpperCase())
-    );
-  })();
 
   const setMotorName = (motorNum: MotorNumber, newName: string) => {
     const setters: Record<MotorNumber, React.Dispatch<React.SetStateAction<string>>> = {
@@ -2601,12 +2454,6 @@ export default function PoolControllerPage() {
       return;
     }
 
-    if (!canConfigureActiveDevice) {
-      setMotorSettingsSaveState('error');
-      showToast('Sem permissão', 'Você tem acesso só de controle neste equipamento compartilhado.', 'warning');
-      return;
-    }
-
     setMotorSettingsSaveState('saving');
     const column = `motor${motorNum}_name` as
       | 'motor1_name'
@@ -2622,10 +2469,6 @@ export default function PoolControllerPage() {
   };
 
   const handleUpdateMotorName = (motorNum: MotorNumber, newName: string) => {
-    if (!canConfigureActiveDevice) {
-      showToast('Sem permissão', 'Seu acesso é só de controle — não é possível editar nomes.', 'warning');
-      return;
-    }
     setMotorName(motorNum, newName);
     localStorage.setItem(`${deviceId}_motor${motorNum}_name`, newName);
 
@@ -2640,7 +2483,6 @@ export default function PoolControllerPage() {
   };
 
   const flushMotorNameUpdate = (motorNum: MotorNumber, newName: string) => {
-    if (!canConfigureActiveDevice) return;
     const pendingTimer = motorNameSaveTimersRef.current[motorNum];
     if (pendingTimer) {
       clearTimeout(pendingTimer);
@@ -3150,170 +2992,6 @@ export default function PoolControllerPage() {
     };
   }, []);
 
-  // Capture invite token from URL (?invite=...) or sessionStorage → open invite page
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const fromUrl = params.get('invite');
-      const fromStorage = sessionStorage.getItem(INVITE_STORAGE_KEY);
-      const token = (fromUrl || fromStorage || '').trim();
-      if (!token) return;
-
-      setPendingInviteToken(token);
-      sessionStorage.setItem(INVITE_STORAGE_KEY, token);
-
-      if (fromUrl) {
-        params.delete('invite');
-        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-        window.history.replaceState(
-          {
-            ...(typeof window.history.state === 'object' && window.history.state ? window.history.state : {}),
-            screen: 'invite',
-            depth: 0,
-          },
-          '',
-          next
-        );
-        navDepthRef.current = 0;
-      }
-
-      navigateToScreen('invite', { replace: true, resetStack: true });
-
-      void peekDeviceInvite(token).then((preview) => {
-        setInvitePreview(preview);
-        if (preview.status !== 'pending') {
-          sessionStorage.removeItem(INVITE_STORAGE_KEY);
-        }
-      });
-    } catch (e) {}
-  }, []);
-
-  const dismissInviteScreen = useCallback(() => {
-    setPendingInviteToken(null);
-    setInvitePreview(null);
-    try {
-      sessionStorage.removeItem(INVITE_STORAGE_KEY);
-    } catch (e) {}
-    navigateToScreen(currentUser?.isSupabase ? 'home' : 'login', { replace: true, resetStack: true });
-  }, [currentUser, navigateToScreen]);
-
-  const clearPendingInvite = useCallback(() => {
-    setPendingInviteToken(null);
-    setInvitePreview(null);
-    try {
-      sessionStorage.removeItem(INVITE_STORAGE_KEY);
-    } catch (e) {}
-  }, []);
-
-  const handleAcceptPendingInvite = useCallback(async () => {
-    if (!pendingInviteToken || !currentUser?.isSupabase) return;
-    setInviteAcceptBusy(true);
-    try {
-      const result = await acceptDeviceInvite(pendingInviteToken);
-      if (!result.ok) {
-        showToast('Convite', result.error, 'warning');
-        return;
-      }
-      clearPendingInvite();
-      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
-      setDeviceId(result.device_id);
-      localStorage.setItem(`mqtt_device:${currentUser.uid}`, result.device_id);
-      showToast('Acesso concedido', 'Você agora pode controlar este equipamento.', 'success');
-      navigateToScreen('aux', { replace: true, resetStack: true });
-    } finally {
-      setInviteAcceptBusy(false);
-    }
-  }, [pendingInviteToken, currentUser, clearPendingInvite, syncUserDevicesFromSupabase, showToast, navigateToScreen]);
-
-  // Refresh invite preview after login if needed
-  useEffect(() => {
-    if (!pendingInviteToken) return;
-    if (invitePreview) return;
-    void peekDeviceInvite(pendingInviteToken).then((preview) => setInvitePreview(preview));
-  }, [currentUser, pendingInviteToken, invitePreview]);
-
-  const openSharePanel = useCallback(async (deviceIdToShare: string) => {
-    setShareDeviceId(deviceIdToShare);
-    setShareInvite(null);
-    setSharePermission('control');
-    setShareMembers([]);
-    navigateToScreen('share');
-    setShareBusy(true);
-    try {
-      const members = await listDeviceMembers(deviceIdToShare);
-      setShareMembers(members);
-    } finally {
-      setShareBusy(false);
-    }
-  }, [navigateToScreen]);
-
-  const closeSharePanel = useCallback(() => {
-    setShareInvite(null);
-    setShareMembers([]);
-    if (typeof window !== 'undefined' && navDepthRef.current > 0) {
-      window.history.back();
-    } else {
-      navigateToScreen('setup', { replace: true });
-    }
-    setShareDeviceId(null);
-  }, [navigateToScreen]);
-
-  useEffect(() => {
-    if (activeScreen === 'share' && !shareDeviceId) {
-      // Recover if share was opened without a device (e.g. stale state after refresh).
-      navigateToScreen('setup', { replace: true });
-    }
-  }, [activeScreen, shareDeviceId, navigateToScreen]);
-
-  const handleCreateShareInvite = useCallback(async () => {
-    if (!shareDeviceId) return;
-    setShareBusy(true);
-    try {
-      const { invite, error } = await createDeviceInvite(shareDeviceId, sharePermission);
-      if (!invite) {
-        showToast('Compartilhar', error || 'Não foi possível criar o convite.', 'warning');
-        return;
-      }
-      setShareInvite(invite);
-      showToast('Convite criado', 'Link válido por 24 horas · uso único.', 'success');
-    } finally {
-      setShareBusy(false);
-    }
-  }, [shareDeviceId, sharePermission, showToast]);
-
-  const handleRevokeMember = useCallback(async (memberUserId: string) => {
-    if (!shareDeviceId) return;
-    setShareBusy(true);
-    try {
-      const result = await revokeDeviceMember(shareDeviceId, memberUserId);
-      if (!result.ok) {
-        showToast('Revogar', result.error || 'Falha ao revogar.', 'warning');
-        return;
-      }
-      setShareMembers((prev) => prev.filter((m) => m.user_id !== memberUserId));
-      showToast('Acesso revogado', 'O usuário não controla mais este equipamento.', 'success');
-    } finally {
-      setShareBusy(false);
-    }
-  }, [shareDeviceId, showToast]);
-
-  const handleLeaveShared = useCallback(async (eqId: string) => {
-    if (!currentUser?.isSupabase) return;
-    setShareBusy(true);
-    try {
-      const result = await leaveSharedDevice(eqId);
-      if (!result.ok) {
-        showToast('Sair', result.error || 'Não foi possível sair.', 'warning');
-        return;
-      }
-      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
-      showToast('Acesso removido', 'Você saiu deste equipamento compartilhado.', 'success');
-    } finally {
-      setShareBusy(false);
-    }
-  }, [currentUser, syncUserDevicesFromSupabase, showToast]);
-
   // Save specific equipment
   async function handleSaveEquipment(idOverride?: string, modelOverride?: string, serialOverride?: string, manufacturerOverride?: string, pairingTokenOverride?: string) {
     const finalId = idOverride || bleDeviceId;
@@ -3360,7 +3038,7 @@ export default function PoolControllerPage() {
     // Previously this ran in the background, so the empty state could remain visible
     // (or a later auth refresh could overwrite the optimistic local list).
     if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      const registerResult = await registerDevice(
+      const registeredDevice = await registerDevice(
         trimmedId,
         normalizedModel as any,
         currentUser.uid,
@@ -3368,46 +3046,14 @@ export default function PoolControllerPage() {
         pairingTokenOverride
       );
 
-      if (!registerResult.ok) {
-        const msg =
-          registerResult.code === 'owned_by_other'
-            ? registerResult.message
-            : registerResult.message ||
-              'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.';
-        setQrScannerError(msg);
-        showToast(
-          registerResult.code === 'owned_by_other' ? 'Equipamento já cadastrado' : 'Falha no cadastro',
-          msg,
-          'warning'
+      if (!registeredDevice) {
+        setQrScannerError(
+          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
         );
         return;
       }
 
-      const savedId = registerResult.device.id || trimmedId;
-
-      await ensureDeviceSettings(savedId);
-
-      // Recarrega do banco para garantir isolamento por user_id
-      await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email, currentUser.role);
-      setDeviceId(savedId);
-      localStorage.setItem(`mqtt_device:${currentUser.uid}`, savedId);
-      localStorage.removeItem('mqtt_device');
-      setScannedData(null);
-      setQrScannerError(null);
-      navigateToScreen('aux', { replace: true, resetStack: true });
-
-      setBleLog(prev => [
-        ...prev,
-        `[REGISTRO] Equipamento salvo: ${normalizedModel}`,
-        `[REGISTRO] ID único: ${savedId}`,
-        `[REGISTRO] Número de Série: ${finalSerial || 'N/A'}`,
-        `[REGISTRO] Fabricante: ${finalManufacturer || 'N/A'}`,
-        `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
-        `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
-      ]);
-
-      showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${savedId}) associado com sucesso.`, 'success');
-      return;
+      await ensureDeviceSettings(trimmedId);
     }
 
     // Functional update always uses the latest list and immediately removes the
@@ -3422,16 +3068,13 @@ export default function PoolControllerPage() {
             return isMatch ? { ...eq, ...newItem } : eq;
           });
 
-      // Cache per usuário autenticado — nunca a chave compartilhada do aparelho
+      localStorage.setItem('registered_equipments', JSON.stringify(nextList));
+
+      // Remove from deleted_device_ids in localStorage if re-registering
       try {
-        if (currentUser?.uid && currentUser?.isSupabase) {
-          localStorage.setItem(`registered_equipments:${currentUser.uid}`, JSON.stringify(nextList));
-          localStorage.setItem(`mqtt_device:${currentUser.uid}`, trimmedId);
-          localStorage.removeItem('registered_equipments');
-          localStorage.removeItem('mqtt_device');
-        } else {
-          localStorage.setItem('registered_equipments', JSON.stringify(nextList));
-        }
+        const deletedIds: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
+        const updatedDeleted = deletedIds.filter(d => !areDeviceIdsMatching(d, trimmedId));
+        localStorage.setItem('deleted_device_ids', JSON.stringify(updatedDeleted));
       } catch (e) {}
 
       return nextList;
@@ -3439,12 +3082,10 @@ export default function PoolControllerPage() {
     
     // Also make this the active device under control!
     setDeviceId(trimmedId);
-    if (!(currentUser?.uid && currentUser?.isSupabase)) {
-      localStorage.setItem('mqtt_device', trimmedId);
-    }
+    localStorage.setItem('mqtt_device', trimmedId);
     setScannedData(null);
     setQrScannerError(null);
-    navigateToScreen('aux', { replace: true, resetStack: true });
+    setActiveScreen('aux');
     
     // Log registration info in the Equipment terminal console
     setBleLog(prev => [
@@ -3469,8 +3110,10 @@ export default function PoolControllerPage() {
     localStorage.setItem('mqtt_pass', mqttPassword);
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
-    showToast('Configurações Salvas', 'Configurações armazenadas no navegador! Reconectando...', 'success');
-    navigateToScreen('home', { replace: true, resetStack: true });
+    showToast('Configurações Salvas', 'Servidor MQTT atualizado e salvo no painel de administração!', 'success');
+    if (userWantsMqtt) {
+      forceReconnectMQTT();
+    }
   };
 
   const handleResetToDefaultConfig = () => {
@@ -3489,8 +3132,6 @@ export default function PoolControllerPage() {
 
   const isCurrentlyAdmin = activeScreen === 'admin';
   const hasRegisteredEquipment = registeredEquipments.length > 0;
-  // No painel admin: visão de gestão (todos). No app do usuário: só os do user_id logado.
-  const devicesForAdminPanel = adminAllEquipments;
 
   // Shared empty-state shown on HOME/BOMBAS/LED/TIMERS when no equipment is registered
   const renderNoEquipmentScreen = (key: string, featureLabel: string) => (
@@ -3510,7 +3151,7 @@ export default function PoolControllerPage() {
       </p>
       <button
         type="button"
-        onClick={() => navigateToScreen('setup')}
+        onClick={() => setActiveScreen('setup')}
         className="mt-2 px-5 py-2.5 bg-gradient-to-r from-[#0055CC] to-[#0077EE] hover:brightness-110 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 transition-all flex items-center gap-2"
       >
         <QrCode className="w-4 h-4" />
@@ -3603,7 +3244,7 @@ export default function PoolControllerPage() {
         <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup sheets) */}
-          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && (
+          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'admin' && (
             <header className="border-b border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-40">
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
@@ -3629,7 +3270,7 @@ export default function PoolControllerPage() {
                   {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
                     <button
                       type="button"
-                      onClick={() => navigateToScreen('admin')}
+                      onClick={() => setActiveScreen('admin')}
                       className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-all hover:bg-amber-500/20 active:scale-95"
                       title="Painel de Administração (Proprietário)"
                     >
@@ -3669,7 +3310,7 @@ export default function PoolControllerPage() {
                               type="button"
                               onClick={() => {
                                 setShowNavMenu(false);
-                                navigateToScreen('setup');
+                                setActiveScreen('setup');
                               }}
                               className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-slate-200 hover:bg-white/10 transition-colors"
                             >
@@ -3701,7 +3342,7 @@ export default function PoolControllerPage() {
                 <div className="grid grid-cols-4 gap-1.5 p-1 bg-black/20 rounded-xl border-2 border-white/10">
                   <button 
                     id="tab-home"
-                    onClick={() => navigateToScreen('home')}
+                    onClick={() => setActiveScreen('home')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'home' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3714,7 +3355,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-aux"
-                    onClick={() => navigateToScreen('aux')}
+                    onClick={() => setActiveScreen('aux')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'aux' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3727,7 +3368,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-led"
-                    onClick={() => navigateToScreen('led')}
+                    onClick={() => setActiveScreen('led')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'led' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3740,7 +3381,7 @@ export default function PoolControllerPage() {
 
                   <button 
                     id="tab-piscina"
-                    onClick={() => navigateToScreen('timers')}
+                    onClick={() => setActiveScreen('timers')}
                     className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'timers' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
@@ -3979,7 +3620,7 @@ export default function PoolControllerPage() {
                     <p className="text-xs text-slate-400">
                       Não tem cadastro?{' '}
                       <button
-                        onClick={() => navigateToScreen('register')}
+                        onClick={() => setActiveScreen('register')}
                         className="text-[#4398fa] hover:underline font-bold"
                       >
                         Criar nova conta
@@ -4069,7 +3710,7 @@ export default function PoolControllerPage() {
                     <p className="text-xs text-slate-400">
                       Já é cadastrado?{' '}
                       <button
-                        onClick={() => navigateToScreen('login', { replace: true })}
+                        onClick={() => setActiveScreen('login')}
                         className="text-[#4398fa] hover:underline font-bold"
                       >
                         Voltar para o Login
@@ -4096,7 +3737,7 @@ export default function PoolControllerPage() {
                       {/* Left: LED Status Indicator */}
                       <button
                         id="home-status-led"
-                        onClick={() => navigateToScreen('led')}
+                        onClick={() => setActiveScreen('led')}
                         className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                         title="Ver controle do LED / Iluminação"
                       >
@@ -4123,7 +3764,7 @@ export default function PoolControllerPage() {
                       {/* Right: Timers Status Indicator */}
                       <button
                         id="home-status-timers"
-                        onClick={() => navigateToScreen('timers')}
+                        onClick={() => setActiveScreen('timers')}
                         className="p-3 bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] text-left flex flex-col justify-between h-[72px] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                         title="Ver Programação de Timers / Automação"
                       >
@@ -4137,17 +3778,19 @@ export default function PoolControllerPage() {
                         
                         <div className="mt-1">
                           <p className="text-[11px] text-white font-bold truncate">
-                            {filterInit1 !== 'D' || filterInit2 !== 'D' ? (
-                              `${activeModel === 'MM12TW' ? motor2Name : motor4Name}: ${filterInit1 !== 'D' ? `T1 ${filterInit1}h(${filterHours1}h)` : ''}${filterInit1 !== 'D' && filterInit2 !== 'D' ? ' / ' : ''}${filterInit2 !== 'D' ? `T2 ${filterInit2}h(${filterHours2}h)` : ''}`
+                            {hasFilterTimer && (filterInit1 !== 'D' || filterInit2 !== 'D') ? (
+                              `${activeMotorCount <= 2 ? motor2Name : motor4Name}: ${filterInit1 !== 'D' ? `T1 ${filterInit1}h(${filterHours1}h)` : ''}${filterInit1 !== 'D' && filterInit2 !== 'D' ? ' / ' : ''}${filterInit2 !== 'D' ? `T2 ${filterInit2}h(${filterHours2}h)` : ''}`
                             ) : (
-                              `${activeModel === 'MM12TW' ? motor2Name : motor4Name}: Inativo`
+                              `${hasFilterTimer ? (activeMotorCount <= 2 ? motor2Name : motor4Name) + ': Inativo' : 'Sem Filtragem Programada'}`
                             )}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium truncate flex items-center gap-1.5">
-                            <span>LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>{ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}</span></span>
-                            {hidroTimerHours !== 'D' && hidroTimerHours !== 'off' && (
+                            {hasLedTimer && (
+                              <span>LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>{ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}</span></span>
+                            )}
+                            {hasHidroTimer && hidroTimerHours !== 'D' && hidroTimerHours !== 'off' && (
                               <>
-                                <span className="text-slate-600">|</span>
+                                {hasLedTimer && <span>•</span>}
                                 <span className="truncate">{motor1Name}: <span className="text-cyan-400 font-bold">{hidroTimerHours}h</span></span>
                               </>
                             )}
@@ -4162,7 +3805,7 @@ export default function PoolControllerPage() {
                       <button
                           key={number}
                           id={`home-status-motor${number}`}
-                        onClick={() => navigateToScreen('aux')}
+                        onClick={() => setActiveScreen('aux')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl backdrop-blur-sm cursor-pointer transition-all active:scale-[0.98] h-[72px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-[#4398fa]/50"
                           title={`Ver controle: ${name}`}
                       >
@@ -4267,18 +3910,16 @@ export default function PoolControllerPage() {
                               ) : (
                                 <div className="flex items-center gap-2 group min-w-0">
                                   <p className="text-xs font-bold text-white truncate">{name}</p>
-                                  {canConfigureActiveDevice && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingMotorNum(number);
-                                      }}
-                                      title="Editar nome"
-                                      className="text-slate-400 hover:text-white transition-colors shrink-0"
-                                    >
-                                      <Edit2 className="w-3 h-3" />
-                                    </button>
-                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingMotorNum(number);
+                                    }}
+                                    title="Editar nome"
+                                    className="text-slate-400 hover:text-white transition-colors shrink-0"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -4300,7 +3941,7 @@ export default function PoolControllerPage() {
                     {!mqttConnected && (
                       <p className="text-[10px] text-[#e8fa00]/90 leading-snug mt-3 flex items-start gap-1 bg-[#e8fa00]/10 p-2 rounded-xl border border-[#e8fa00]/25">
                         <Info className="w-3.5 h-3.5 shrink-0" />
-                        Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba Configurações.
+                        Aviso: Para acionar os motores, certifique-se de realizar a conexão com o sistema remoto IoT na aba HOME.
                       </p>
                     )}
                   </div>
@@ -4454,11 +4095,22 @@ export default function PoolControllerPage() {
                   exit={{ opacity: 0 }}
                   className="space-y-4"
                 >
+                  {!hasFilterTimer && !hasLedTimer && !hasHidroTimer && !hasSolarHeating && (
+                    <div className="p-5 bg-white/5 border border-white/10 rounded-2xl text-center space-y-2">
+                      <Clock className="w-8 h-8 text-slate-400 mx-auto" />
+                      <p className="text-xs font-bold text-white">Nenhum Timer Habilitado</p>
+                      <p className="text-[10px] text-slate-400">
+                        O modelo <span className="text-[#4398fa] font-bold">{activeModel}</span> não possui timers (filtragem, iluminação ou hidro) habilitados.
+                      </p>
+                    </div>
+                  )}
+
                   {/* FILTRAGEM Card */}
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-4">
-                    <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> {activeModel === 'MM12TW' ? motor2Name.toUpperCase() : motor4Name.toUpperCase()}
-                    </h3>
+                  {hasFilterTimer && (
+                    <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-4">
+                      <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" /> {activeMotorCount <= 2 ? motor2Name.toUpperCase() : motor4Name.toUpperCase()}
+                      </h3>
 
                     <div className="space-y-4">
                       {/* TIMER 1 CONFIG */}
@@ -4601,12 +4253,14 @@ export default function PoolControllerPage() {
                       onClick={handleSaveFilter}
                       className="w-full py-2 bg-[#007AFF] hover:bg-[#4398fa] active:scale-95 text-xs text-white font-bold rounded-lg transition-all shadow-md shadow-[#007AFF]/20"
                     >
-                      Salvar {activeModel === 'MM12TW' ? motor2Name : motor4Name}
+                      Salvar {activeMotorCount <= 2 ? motor2Name : motor4Name}
                     </button>
                   </div>
+                  )}
 
                   {/* TIMER ILUMINAÇÃO Card */}
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
+                  {hasLedTimer && (
+                    <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
                     <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <SlidersHorizontal className="w-3.5 h-3.5" /> TIMER ILUMINAÇÃO
                     </h3>
@@ -4662,9 +4316,11 @@ export default function PoolControllerPage() {
                       Salvar Timer LED
                     </button>
                   </div>
+                  )}
 
                   {/* TIMER HIDRO Card */}
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
+                  {hasHidroTimer && (
+                    <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
                     <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase pb-1.5 border-b border-white/10 flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5" /> TIMER {motor1Name.toUpperCase()}
                     </h3>
@@ -4698,6 +4354,7 @@ export default function PoolControllerPage() {
                       </button>
                     </form>
                   </div>
+                  )}
                 </motion.div>
               )}
 
@@ -4916,21 +4573,16 @@ export default function PoolControllerPage() {
                               return (
                                 <div 
                                   key={eq.id} 
-                                  className={`p-3 rounded-xl transition-all border space-y-2 ${
+                                  className={`flex items-center justify-between p-3 rounded-xl transition-all border ${
                                     isActive 
                                       ? 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
                                       : 'bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
                                   }`}
                                 >
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 flex-1 pr-2">
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-mono text-xs font-extrabold text-white break-all select-all">{eq.id}</span>
                                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[9px] font-extrabold text-cyan-300 border border-cyan-500/30">{eq.model}</span>
-                                      {eq.access === 'shared' && (
-                                        <span className="px-1.5 py-0.5 rounded bg-violet-500/20 text-[9px] font-extrabold text-violet-300 border border-violet-500/30">
-                                          Compartilhado{eq.permission === 'configure' ? ' · config' : ' · ctrl'}
-                                        </span>
-                                      )}
                                       {isActive ? (
                                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-bold border border-emerald-500/30 flex items-center gap-1">
                                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -4955,21 +4607,16 @@ export default function PoolControllerPage() {
                                     </div>
                                   </div>
 
-                                  {/* Actions: compact row under info */}
-                                  <div className="flex items-center gap-1.5 pt-0.5 border-t border-white/5">
+                                  {/* Action Controls: Ativar/Desativar & Excluir */}
+                                  <div className="flex items-center gap-2 shrink-0">
                                     {isActive ? (
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setDeviceId('');
-                                          if (currentUser?.uid && currentUser?.isSupabase) {
-                                            localStorage.removeItem(`mqtt_device:${currentUser.uid}`);
-                                            localStorage.removeItem('mqtt_device');
-                                          } else {
-                                            localStorage.removeItem('mqtt_device');
-                                          }
+                                          localStorage.removeItem('mqtt_device');
                                         }}
-                                        className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                                         title="Desativar equipamento ativo"
                                       >
                                         <PowerOff className="w-3 h-3 text-amber-400" />
@@ -4980,14 +4627,9 @@ export default function PoolControllerPage() {
                                         type="button"
                                         onClick={() => {
                                           setDeviceId(eq.id);
-                                          if (currentUser?.uid && currentUser?.isSupabase) {
-                                            localStorage.setItem(`mqtt_device:${currentUser.uid}`, eq.id);
-                                            localStorage.removeItem('mqtt_device');
-                                          } else {
-                                            localStorage.setItem('mqtt_device', eq.id);
-                                          }
+                                          localStorage.setItem('mqtt_device', eq.id);
                                         }}
-                                        className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                        className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
                                         title="Ativar equipamento para controle"
                                       >
                                         <CheckCircle2 className="w-3 h-3" />
@@ -4995,54 +4637,15 @@ export default function PoolControllerPage() {
                                       </button>
                                     )}
 
-                                    <div className="flex-1" />
-
-                                    {eq.access !== 'shared' && currentUser?.isSupabase && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void openSharePanel(eq.id);
-                                        }}
-                                        className="p-1.5 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 rounded-lg transition-all cursor-pointer"
-                                        title="Compartilhar acesso"
-                                        aria-label="Compartilhar"
-                                      >
-                                        <Share2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-
-                                    {eq.access === 'shared' ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void handleLeaveShared(eq.id);
-                                        }}
-                                        className="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-lg transition-all cursor-pointer"
-                                        title="Sair deste equipamento compartilhado"
-                                        aria-label="Sair"
-                                      >
-                                        <UserMinus className="w-3.5 h-3.5" />
-                                      </button>
-                                    ) : confirmDeleteDeviceId === eq.id ? (
-                                      <div className="flex items-center gap-1 animate-fadeIn">
+                                    {confirmDeleteDeviceId === eq.id ? (
+                                      <div className="flex items-center gap-1.5 animate-fadeIn">
                                         <button
                                           type="button"
                                           onClick={async (e) => {
                                             e.stopPropagation();
-                                            setConfirmDeleteDeviceId(null);
-
-                                            if (isSupabaseConfigured() && currentUser?.isSupabase) {
-                                              const userIdentifier = currentUser?.uid || currentUser?.id;
-                                              await deleteDevice(eq.id, userIdentifier);
-                                              await syncUserDevicesFromSupabase(
-                                                userIdentifier,
-                                                currentUser?.email,
-                                                currentUser?.role
-                                              );
-                                              return;
-                                            }
+                                            const targetRaw = eq.id.toLowerCase();
+                                            const targetClean = cleanDeviceId(eq.id).toLowerCase();
+                                            const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
 
                                             const filtered = registeredEquipments.filter(item => !areDeviceIdsMatching(item.id, eq.id));
                                             setRegisteredEquipments(filtered);
@@ -5050,9 +4653,6 @@ export default function PoolControllerPage() {
 
                                             try {
                                               const existingDeleted: string[] = JSON.parse(localStorage.getItem('deleted_device_ids') || '[]');
-                                              const targetRaw = eq.id.toLowerCase();
-                                              const targetClean = cleanDeviceId(eq.id).toLowerCase();
-                                              const targetNoMlz = targetRaw.startsWith('mlz-') ? targetRaw.substring(4) : targetRaw;
                                               const newDeleted = Array.from(new Set([
                                                 ...existingDeleted,
                                                 targetRaw,
@@ -5062,6 +4662,14 @@ export default function PoolControllerPage() {
                                               ].filter(Boolean)));
                                               localStorage.setItem('deleted_device_ids', JSON.stringify(newDeleted));
                                             } catch (err) {}
+
+                                            setConfirmDeleteDeviceId(null);
+
+                                            if (isSupabaseConfigured()) {
+                                              const userIdentifier = currentUser?.uid || currentUser?.id;
+                                              await deleteDevice(eq.id, userIdentifier);
+                                              await deleteDeviceInSupabase(eq.id, userIdentifier);
+                                            }
 
                                             if (isActive) {
                                               const nextId = filtered.length > 0 ? filtered[0].id : '';
@@ -5073,7 +4681,7 @@ export default function PoolControllerPage() {
                                               }
                                             }
                                           }}
-                                          className="px-2 py-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
+                                          className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
                                           title="Confirmar exclusão deste equipamento"
                                         >
                                           <Trash2 className="w-3 h-3 text-white" />
@@ -5085,7 +4693,7 @@ export default function PoolControllerPage() {
                                             e.stopPropagation();
                                             setConfirmDeleteDeviceId(null);
                                           }}
-                                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                          className="p-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                           title="Cancelar"
                                         >
                                           ✕
@@ -5098,11 +4706,11 @@ export default function PoolControllerPage() {
                                           e.stopPropagation();
                                           setConfirmDeleteDeviceId(eq.id);
                                         }}
-                                        className="p-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all cursor-pointer"
+                                        className="p-1.5 px-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
                                         title="Excluir equipamento"
-                                        aria-label="Excluir"
                                       >
-                                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                        <Trash2 className="w-3 h-3 text-rose-400" />
+                                        <span>Excluir</span>
                                       </button>
                                     )}
                                   </div>
@@ -5114,45 +4722,6 @@ export default function PoolControllerPage() {
                       </div>
                     </div>
                   </div>
-
-                  {/* Firmware updates — only for models the user has registered */}
-                  {operatorFirmwareUpdates.length > 0 && (
-                    <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-amber-400/20 shadow-xl text-left space-y-3">
-                      <div>
-                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                          <RefreshCw className="w-4 h-4 text-amber-400" />
-                          Atualização de Firmware
-                        </h3>
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          O arquivo .bin não é baixado no celular — o comando OTA é enviado ao equipamento via MQTT.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        {operatorFirmwareUpdates.map((fw) => (
-                          <div
-                            key={fw.id}
-                            className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/50 border border-white/10"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-white">
-                                {fw.model} · v{fw.versao}
-                              </p>
-                              <p className="text-[10px] text-slate-400 truncate">{fw.nome}</p>
-                            </div>
-                            <button
-                              type="button"
-                              disabled={firmwareUpdatingModel === fw.model}
-                              onClick={() => handleOperatorFirmwareUpdate(fw)}
-                              className="shrink-0 px-3 py-2 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-[10px] font-bold rounded-xl flex items-center gap-1.5"
-                            >
-                              <Upload className="w-3.5 h-3.5" />
-                              {firmwareUpdatingModel === fw.model ? 'Enviando OTA...' : 'Atualizar'}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {/* Device Sync Info Summary */}
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs backdrop-blur-sm">
@@ -5189,374 +4758,19 @@ export default function PoolControllerPage() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center py-1">
-                      <span className="text-slate-300">Broker</span>
-                      <span className="font-mono text-[10px] text-slate-400">{mqttBroker}</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-3">
-                    <h3 className="text-xs font-extrabold text-[#4398fa] tracking-wider uppercase pb-1 border-b border-white/10 flex items-center justify-between">
-                      <span>SERVIÇOS DE REDE (MQTT)</span>
-                      <SlidersHorizontal className="w-3.5 h-3.5" />
-                    </h3>
-
-                    <div className="space-y-3">
-                      {/* Presets Row */}
-                                     <div className="space-y-1">
-                        <label className="text-[10px] text-slate-300 font-bold block">Broker Host (Endereço)</label>
-                        <input
-                          type="text"
-                          value={mqttBroker}
-                          onChange={(e) => setMqttBroker(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
-                        />
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Porta WebSocket</label>
-                          <input
-                            type="text"
-                            value={mqttPort}
-                            onChange={(e) => setMqttPort(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">ID Dispositivo (Prefixo)</label>
-                          <input
-                            type="text"
-                            value={deviceId}
-                            onChange={(e) => setDeviceId(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Username / Password credentials row */}
-                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Usuário (Opcional)</label>
-                          <input
-                            type="text"
-                            placeholder="sem usuário"
-                            value={mqttUser}
-                            onChange={(e) => setMqttUser(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-300 font-bold block">Senha (Opcional)</label>
-                          <input
-                            type="password"
-                            placeholder="sem senha"
-                            value={mqttPassword}
-                            onChange={(e) => setMqttPassword(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-[#4398fa] focus:bg-white/10 transition-all"
-                          />
-                        </div>
-                      </div>
+                      <span className="text-slate-300">Servidor MQTT</span>
+                      <span className="font-mono text-[10px] text-emerald-400 font-semibold">Servidor Central (Protegido)</span>
                     </div>
                   </div>
 
                   <div className="flex gap-2">
                     <button
                       onClick={handleBackToHome}
-                      className="py-2.5 px-4 bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 text-xs font-semibold rounded-xl transition-all"
+                      className="w-full py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
                     >
-                      Voltar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleResetToDefaultConfig}
-                      className="py-2.5 px-3 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold rounded-xl transition-all"
-                    >
-                      Restaurar Padrão
-                    </button>
-                    <button
-                      onClick={handleSaveDevConfig}
-                      className="flex-1 py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
-                    >
-                      Salvar Tudo
+                      Voltar para o App
                     </button>
                   </div>
-                </motion.div>
-              )}
-
-              {/* Screen: Share equipment */}
-              {activeScreen === 'share' && shareDeviceId && (
-                <motion.div
-                  key="share-screen"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="space-y-4 py-2 text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={closeSharePanel}
-                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
-                      aria-label="Voltar"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <div className="min-w-0">
-                      <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                        <Share2 className="w-4 h-4 text-sky-400 shrink-0" />
-                        Compartilhar
-                      </h2>
-                      <p className="text-[10px] text-slate-400 font-mono truncate">{shareDeviceId}</p>
-                    </div>
-                  </div>
-
-                  {(() => {
-                    const shareEq = registeredEquipments.find((e) => e.id === shareDeviceId);
-                    return shareEq ? (
-                      <div className="p-3 rounded-xl bg-white/10 border border-white/10">
-                        <p className="text-xs font-bold text-white">{shareEq.model}</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Série: <span className="font-mono text-slate-200">{shareEq.serial || shareEq.id}</span>
-                        </p>
-                      </div>
-                    ) : null;
-                  })()}
-
-                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Permissão do convite</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => { setSharePermission('control'); setShareInvite(null); }}
-                        className={`text-left p-3 rounded-xl border transition-all ${
-                          sharePermission === 'control'
-                            ? 'border-sky-500/50 bg-sky-500/10'
-                            : 'border-white/10 bg-white/5'
-                        }`}
-                      >
-                        <p className="text-[11px] font-bold text-white leading-tight">Só controlar</p>
-                        <p className="text-[9px] text-slate-400 mt-1 leading-snug">Motores e LED </p>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setSharePermission('configure'); setShareInvite(null); }}
-                        className={`text-left p-3 rounded-xl border transition-all ${
-                          sharePermission === 'configure'
-                            ? 'border-sky-500/50 bg-sky-500/10'
-                            : 'border-white/10 bg-white/5'
-                        }`}
-                      >
-                        <p className="text-[11px] font-bold text-white leading-tight">Controlar + Configurar</p>
-                        <p className="text-[9px] text-slate-400 mt-1 leading-snug">Editar timers, nomes e configurações</p>
-                      </button>
-                    </div>
-
-                    {!shareInvite ? (
-                      <button
-                        type="button"
-                        disabled={shareBusy}
-                        onClick={() => void handleCreateShareInvite()}
-                        className="w-full py-3 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-xs font-bold disabled:opacity-50"
-                      >
-                        {shareBusy ? 'Gerando...' : 'Gerar link'}
-                      </button>
-                    ) : (
-                      <div className="space-y-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
-                        <p className="text-[11px] text-emerald-200 font-medium">Convite pronto</p>
-                        <p className="text-[10px] text-emerald-200/80">Válido por 24 horas · uso único</p>
-                        <a
-                          href={buildWhatsAppShareUrl(
-                            buildInviteUrl(shareInvite.token),
-                            registeredEquipments.find((e) => e.id === shareDeviceId)?.model || 'MM12TW',
-                            registeredEquipments.find((e) => e.id === shareDeviceId)?.serial || shareDeviceId,
-                            shareInvite.permission
-                          )}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block w-full py-3 rounded-xl bg-[#25D366] active:bg-[#1ebe57] text-white text-xs font-bold text-center"
-                        >
-                          Enviar no WhatsApp
-                        </a>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(buildInviteUrl(shareInvite.token));
-                              showToast('Link copiado', 'Cole onde quiser enviar o convite.', 'success');
-                            } catch {
-                              showToast('Link', buildInviteUrl(shareInvite.token), 'info');
-                            }
-                          }}
-                          className="w-full py-2.5 rounded-xl bg-white/10 active:bg-white/15 border border-white/10 text-white text-xs font-bold flex items-center justify-center gap-1.5"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          Copiar link
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Quem tem acesso</p>
-                    {shareBusy && shareMembers.length === 0 ? (
-                      <p className="text-[11px] text-slate-500">Carregando...</p>
-                    ) : shareMembers.length === 0 ? (
-                      <p className="text-[11px] text-slate-500">Ninguém além de você.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {shareMembers.map((m) => (
-                          <div key={m.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/10">
-                            <div className="min-w-0">
-                              <p className="text-[11px] font-bold text-white truncate">{m.full_name || m.email || m.user_id}</p>
-                              {m.email && m.full_name && (
-                                <p className="text-[10px] text-slate-400 truncate">{m.email}</p>
-                              )}
-                              <p className="text-[9px] text-sky-300 mt-0.5">
-                                {m.permission === 'configure' ? 'Controlar + configurar' : 'Só controlar'}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              disabled={shareBusy}
-                              onClick={() => void handleRevokeMember(m.user_id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-red-500/15 active:bg-red-500/25 border border-red-500/30 text-red-300 text-[10px] font-bold shrink-0"
-                            >
-                              Revogar
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={closeSharePanel}
-                    className="w-full py-2.5 bg-white/5 border border-white/10 text-slate-300 active:bg-white/10 text-xs font-semibold rounded-xl"
-                  >
-                    Voltar
-                  </button>
-                </motion.div>
-              )}
-
-              {/* Screen: Accept shared equipment invite */}
-              {activeScreen === 'invite' && (
-                <motion.div
-                  key="invite-screen"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -12 }}
-                  className="flex flex-col h-full py-4 text-left"
-                >
-                  <div className="flex items-center gap-2 mb-5">
-                    <button
-                      type="button"
-                      onClick={dismissInviteScreen}
-                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
-                      aria-label="Voltar"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <div>
-                      <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                        <Share2 className="w-4 h-4 text-sky-400" />
-                        Convite
-                      </h2>
-                      <p className="text-[10px] text-slate-400">Acesso compartilhado a um equipamento</p>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 flex flex-col gap-4">
-                    {!invitePreview ? (
-                      <div className="p-5 rounded-2xl bg-white/10 border border-white/10 text-center">
-                        <p className="text-xs text-slate-300">Carregando convite...</p>
-                      </div>
-                    ) : invitePreview.status === 'pending' ? (
-                      <>
-                        <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-3">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Equipamento</p>
-                          <p className="text-base font-bold text-white">{invitePreview.model || 'Equipamento'}</p>
-                          <p className="text-[11px] text-slate-300 font-mono break-all">
-                            {invitePreview.serial || invitePreview.device_id}
-                          </p>
-                          <div className="pt-2 border-t border-white/10">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Permissão</p>
-                            <p className="text-xs text-sky-300 font-semibold">
-                              {invitePreview.permission === 'configure'
-                                ? 'Controlar + configurar'
-                                : 'Só controlar'}
-                            </p>
-                            <p className="text-[10px] text-slate-500 mt-1">
-                              {invitePreview.permission === 'configure'
-                                ? 'Você poderá acionar o equipamento e editar nomes.'
-                                : 'Você poderá acionar motores, LED e timers — sem editar nomes.'}
-                            </p>
-                            <p className="text-[10px] text-slate-500 mt-2">Este link expira em 24 horas se não for aceito.</p>
-                          </div>
-                        </div>
-
-                        {currentUser?.isSupabase ? (
-                          <button
-                            type="button"
-                            disabled={inviteAcceptBusy}
-                            onClick={() => void handleAcceptPendingInvite()}
-                            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-sm font-bold disabled:opacity-50 shadow-lg shadow-sky-900/30"
-                          >
-                            {inviteAcceptBusy ? 'Aceitando...' : 'Aceitar convite'}
-                          </button>
-                        ) : (
-                          <div className="space-y-2">
-                            <p className="text-[11px] text-slate-300 text-center px-2">
-                              Entre na sua conta (ou crie uma) para aceitar este convite.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => navigateToScreen('login')}
-                              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 active:scale-[0.98] text-white text-sm font-bold"
-                            >
-                              Entrar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => navigateToScreen('register')}
-                              className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-xs font-bold active:bg-white/10"
-                            >
-                              Criar conta
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/25 space-y-3">
-                        <p className="text-sm font-bold text-amber-100">
-                          {invitePreview.status === 'accepted'
-                            ? 'Este convite já foi usado.'
-                            : invitePreview.status === 'expired'
-                            ? 'Este convite expirou (válido por 24 horas). Peça um novo link ao dono.'
-                            : invitePreview.status === 'revoked'
-                            ? 'Este convite foi revogado.'
-                            : 'Convite inválido ou expirado.'}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={dismissInviteScreen}
-                          className="w-full py-3 rounded-xl bg-white/10 border border-white/10 text-white text-xs font-bold"
-                        >
-                          Continuar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {invitePreview?.status === 'pending' && (
-                    <button
-                      type="button"
-                      onClick={dismissInviteScreen}
-                      className="mt-4 w-full py-2.5 bg-transparent text-slate-400 text-xs font-semibold"
-                    >
-                      Agora não
-                    </button>
-                  )}
                 </motion.div>
               )}
 
@@ -5585,7 +4799,7 @@ export default function PoolControllerPage() {
                       <button
                         onClick={() => {
                           if (adminTab === 'home') {
-                            goBack();
+                            setActiveScreen('home');
                           } else {
                             setAdminTab('home');
                           }
@@ -5645,8 +4859,8 @@ export default function PoolControllerPage() {
                           : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
                       }`}
                     >
-                      <Upload className="w-4 h-4" />
-                      Atualizações de Firmware
+                      <Terminal className="w-4 h-4" />
+                      Telemetria
                     </button>
                     <button
                       onClick={() => setAdminTab('aba3')}
@@ -5703,7 +4917,7 @@ export default function PoolControllerPage() {
                           <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
                             <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Cadastrados</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{devicesForAdminPanel.length}</span>
+                              <span className="text-3xl font-extrabold text-white">{registeredEquipments.length}</span>
                               <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
                             </div>
                             <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos instalados nas residências.</p>
@@ -5747,21 +4961,17 @@ export default function PoolControllerPage() {
                               </div>
                             </button>
 
-                            {/* Card 2 — Firmware .bin */}
+                            {/* Card 2 */}
                             <button
                               onClick={() => setAdminTab('aba2')}
-                              className="p-5 bg-gradient-to-br from-amber-500/15 to-orange-500/5 border border-amber-400/40 hover:border-amber-400 hover:bg-amber-500/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
                             >
-                              <div className="p-3 bg-amber-400 text-black rounded-xl group-hover:scale-110 transition-transform">
-                                <Upload className="w-5 h-5" />
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Terminal className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors font-sans">
-                                  UPLOAD Firmware (.bin)
-                                </h4>
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                  Cadastre ou atualize o arquivo .bin por modelo. Operadores veem o botão Atualizar só nos modelos cadastrados.
-                                </p>
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Simulador de Telemetria</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Injete telemetrias de sensores e simule cenários de erro para testar a robustez do painel.</p>
                               </div>
                             </button>
 
@@ -5802,7 +5012,7 @@ export default function PoolControllerPage() {
                             <p className="text-xs text-slate-400 leading-relaxed">Deseja simular ou testar a interface de uso final (controle de bombas, LED, temporizadores e aquecimento) que o operador vê no celular?</p>
                           </div>
                           <button
-                            onClick={() => navigateToScreen('home', { replace: true, resetStack: true })}
+                            onClick={() => setActiveScreen('home')}
                             className="px-5 py-3 bg-amber-400 hover:bg-amber-500 text-black rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-400/10 whitespace-nowrap font-sans"
                           >
                             <Sliders className="w-4 h-4" />
@@ -5935,7 +5145,7 @@ export default function PoolControllerPage() {
                                                 setAdminSearchEquip('');
                                               } else {
                                                 setSelectedUserForEquip(u.email);
-                                                const associatedEquip = devicesForAdminPanel.find(
+                                                const associatedEquip = registeredEquipments.find(
                                                   eq => (eq.userEmail || '').toLowerCase().trim() === emailLower
                                                 );
                                                 if (associatedEquip) {
@@ -6033,7 +5243,7 @@ export default function PoolControllerPage() {
                           <div className="lg:col-span-5 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                             <div>
                               <h3 className="text-sm font-bold text-white">Equipamentos Disponíveis</h3>
-                              <p className="text-[10px] text-slate-400">Total de {devicesForAdminPanel.length} dispositivos cadastrados neste perfil</p>
+                              <p className="text-[10px] text-slate-400">Total de {registeredEquipments.length} dispositivos cadastrados neste perfil</p>
                             </div>
 
                             <div className="relative">
@@ -6048,7 +5258,7 @@ export default function PoolControllerPage() {
                             </div>
 
                              <div className="space-y-2.5">
-                              {devicesForAdminPanel
+                              {registeredEquipments
                                 .filter(eq => 
                                   eq.id.toLowerCase().includes(adminSearchEquip.toLowerCase()) || 
                                   eq.model.toLowerCase().includes(adminSearchEquip.toLowerCase()) ||
@@ -6092,12 +5302,7 @@ export default function PoolControllerPage() {
                                         <button
                                           onClick={() => {
                                             setDeviceId(eq.id);
-                                            if (currentUser?.uid && currentUser?.isSupabase) {
-                                              localStorage.setItem(`mqtt_device:${currentUser.uid}`, eq.id);
-                                              localStorage.removeItem('mqtt_device');
-                                            } else {
-                                              localStorage.setItem('mqtt_device', eq.id);
-                                            }
+                                            localStorage.setItem('mqtt_device', eq.id);
                                             logUserAction(`Ativou equipamento ID: ${eq.id}`);
                                             showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
                                           }}
@@ -6110,7 +5315,7 @@ export default function PoolControllerPage() {
                                   );
                                 })}
 
-                              {selectedUserForEquip && !devicesForAdminPanel.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
+                              {selectedUserForEquip && !registeredEquipments.some(eq => (eq.userEmail || '').toLowerCase().trim() === selectedUserForEquip.toLowerCase().trim()) && (
                                 <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl text-left space-y-2 mt-2">
                                   <p className="text-xs font-semibold text-rose-300">Este operador ({selectedUserForEquip}) não tem nenhum equipamento instalado na residência.</p>
                                   <div className="flex flex-col gap-1.5 pt-1">
@@ -6126,10 +5331,10 @@ export default function PoolControllerPage() {
                                           return;
                                         }
 
-                                        const updated = devicesForAdminPanel.map(eq => 
+                                        const updated = registeredEquipments.map(eq => 
                                           eq.id === eqId ? { ...eq, userEmail: selectedUserForEquip } : eq
                                         );
-                                        setAdminAllEquipments(updated);
+                                        setRegisteredEquipments(updated);
                                         
                                         if (isSupabaseConfigured()) {
                                           await updateDeviceOwner(eqId, targetUser.uid);
@@ -6141,7 +5346,7 @@ export default function PoolControllerPage() {
                                       className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                     >
                                       <option value="">Selecione um equipamento...</option>
-                                      {devicesForAdminPanel.filter(eq => !eq.userEmail).map(eq => (
+                                      {registeredEquipments.filter(eq => !eq.userEmail).map(eq => (
                                         <option key={eq.id} value={eq.id}>{eq.id} ({eq.model})</option>
                                       ))}
                                     </select>
@@ -6149,6 +5354,658 @@ export default function PoolControllerPage() {
                                 </div>
                               )}
                             </div>
+                          </div>
+
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tab 2: Sensors Simulator / Telemetry Search */}
+                    {adminTab === 'aba2' && !searchedEquip && (
+                      <div className="space-y-6 max-w-xl mx-auto py-8">
+                        <div className="text-center space-y-2">
+                          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/5">
+                            <Compass className="w-8 h-8 text-amber-400" />
+                          </div>
+                          <h3 className="text-lg font-bold text-white mt-4">Consulta de Telemetria por Dispositivo</h3>
+                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                            Insira um Device ID cadastrado para visualizar relatórios individuais de hardware, localização e tempos de uso.
+                          </p>
+                        </div>
+
+                        {/* Search Input Box */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4 shadow-xl">
+                          <div className="relative">
+                            <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
+                            <input
+                              type="text"
+                              placeholder="Insira o ID do Equipamento (Ex: MLZ-MM12TW-EEA39F-000003)"
+                              value={telemetrySearchId}
+                              onChange={(e) => setTelemetrySearchId(e.target.value)}
+                              className="w-full pl-10 pr-4 py-3 bg-black/40 border border-white/10 focus:border-amber-400/50 rounded-xl text-xs font-mono text-white placeholder-slate-500 transition-colors focus:outline-none"
+                            />
+                            {telemetrySearchId && (
+                              <button 
+                                onClick={() => setTelemetrySearchId('')}
+                                className="absolute right-3 top-3.5 text-slate-400 hover:text-white"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                const found = registeredEquipments.find(
+                                  eq => areDeviceIdsMatching(eq.id, telemetrySearchId.trim())
+                                );
+                                if (found) {
+                                  setTelemetrySearchId(found.id);
+                                } else {
+                                  showToast('Dispositivo não encontrado', 'Nenhum dispositivo cadastrado com este ID.', 'warning');
+                                }
+                              }}
+                              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold rounded-xl transition-colors active:scale-95 shadow-lg shadow-amber-500/20"
+                            >
+                              Consultar Telemetria
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Suggestions List */}
+                        <div className="space-y-3">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-center">
+                            Dispositivos Cadastrados (Clique para Consultar)
+                          </span>
+                          <div className="grid grid-cols-1 gap-2.5">
+                            {registeredEquipments.map((eq) => {
+                              const isSelected = areDeviceIdsMatching(telemetrySearchId.trim(), eq.id);
+                              return (
+                                <button
+                                  key={eq.id}
+                                  onClick={() => {
+                                    setTelemetrySearchId(eq.id);
+                                    setDeviceId(eq.id);
+                                    localStorage.setItem('mqtt_device', eq.id);
+                                  }}
+                                  className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                    isSelected
+                                      ? 'bg-amber-500/10 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/5'
+                                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="text-xs font-bold font-mono">{eq.id}</div>
+                                    <div className="text-[10px] opacity-70">Modelo: {eq.model} • Fabricante: MASTERLAZER</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase">Online</span>
+                                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                                  </div>
+                                </button>
+                              );
+                            })}
+                            {registeredEquipments.length === 0 && (
+                              <div className="text-center py-4 text-xs text-slate-500 bg-white/5 border border-dashed border-white/10 rounded-xl">
+                                Nenhum equipamento cadastrado. Adicione um na aba de Usuários e Equipamentos.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Back to main screen button */}
+                        <div className="flex justify-center pt-4">
+                          <button
+                            onClick={() => setAdminTab('home')}
+                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
+                          >
+                            <ChevronRight className="w-4 h-4 rotate-180" />
+                            Voltar para a Tela Inicial
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Validated Telemetry & Simulator View */}
+                    {adminTab === 'aba2' && searchedEquip && telemetry && (
+                      <div className="space-y-6">
+                        {/* Header banner */}
+                        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">
+                          <div className="flex items-center gap-3 text-left">
+                            <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400">
+                              <Compass className="w-5 h-5 animate-spin" style={{ animationDuration: '6s' }} />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-sm font-bold text-white font-mono">{searchedEquip.id}</h3>
+                                <span className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded font-black tracking-wider uppercase">VALIDADO</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                Modelo: <span className="text-slate-200 font-semibold">{searchedEquip.model}</span> • 
+                                Fabricante: <span className="text-slate-200 font-semibold">MASTERLAZER</span> • 
+                                Simulador de hardware sincronizado.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setTelemetrySearchId('')}
+                            className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5"
+                          >
+                            <Search className="w-3.5 h-3.5" />
+                            Consultar Outro ID
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                          
+                          {/* LEFT COLUMN: INDIVIDUAL TELEMETRY DETAILS */}
+                          <div className="lg:col-span-6 space-y-6">
+                            
+                            {/* Most Used LED Program */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Programa de LED Mais Utilizado</h4>
+                                  <p className="text-[10px] text-slate-400">Padrão de iluminação com maior tempo acumulado de ativação no dispositivo.</p>
+                                </div>
+                                <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400">
+                                  <Tv className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
+                                <div className="space-y-1">
+                                  <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Programa Atual de Pico</div>
+                                  <div className="text-sm font-black text-amber-400 flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-rose-500 via-green-500 to-blue-500 animate-pulse"></span>
+                                    {telemetry.mostUsedLedProgram}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-xs font-mono font-bold text-emerald-400">58% das ativações</span>
+                                  <div className="text-[8px] text-slate-500">Total: 184 ativações</div>
+                                </div>
+                              </div>
+
+                              {/* Selector to change simulated most used program */}
+                              <div className="space-y-2">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                                  Alterar Programa de Pico (Simulação)
+                                </label>
+                                <select
+                                  value={telemetry.mostUsedLedProgram}
+                                  onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { mostUsedLedProgram: e.target.value })}
+                                  className="w-full bg-black/40 border border-white/10 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-amber-400"
+                                >
+                                  <option value="Arco-Íris Dinâmico">Arco-Íris Dinâmico</option>
+                                  <option value="Azul Real Fixo">Azul Real Fixo</option>
+                                  <option value="Verde Relax">Verde Relax</option>
+                                  <option value="Cromoterapia Suave">Cromoterapia Suave</option>
+                                  <option value="Festa Estroboscópica">Festa Estroboscópica</option>
+                                  <option value="Lilás Zen">Lilás Zen</option>
+                                </select>
+                              </div>
+
+                              {/* Simulated progress breakdown */}
+                              <div className="space-y-2 pt-1">
+                                <div className="flex justify-between text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                                  <span>Distribuição Histórica</span>
+                                  <span>Tempo de Uso (%)</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>{telemetry.mostUsedLedProgram}</span>
+                                      <span>58%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-amber-400 h-full rounded-full" style={{ width: '58%' }}></div>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>Azul Clássico</span>
+                                      <span>24%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-blue-400 h-full rounded-full" style={{ width: '24%' }}></div>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+                                      <span>Vermelho Festivo</span>
+                                      <span>18%</span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-rose-400 h-full rounded-full" style={{ width: '18%' }}></div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Min and Max Filtration Times */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Configuração de Filtragem Individual</h4>
+                                  <p className="text-[10px] text-slate-400">Tempos limites de segurança e preservação ambiental para este equipamento.</p>
+                                </div>
+                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
+                                  <Droplet className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                {/* Min filtration card */}
+                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
+                                  <span className="text-[9px] text-[#4398fa] font-bold uppercase tracking-wider block">Tempo Mínimo</span>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-mono font-black text-white">{telemetry.minFilteringTime}</span>
+                                    <span className="text-xs text-slate-400">horas/dia</span>
+                                  </div>
+                                  <p className="text-[8px] text-slate-400">Evita estagnação da água e acúmulo de microrganismos.</p>
+                                  
+                                  <div className="flex gap-1.5 pt-1">
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.max(1, telemetry.minFilteringTime - 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      -
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.min(telemetry.maxFilteringTime, telemetry.minFilteringTime + 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { minFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Max filtration card */}
+                                <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl space-y-2">
+                                  <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider block">Tempo Máximo</span>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-mono font-black text-white">{telemetry.maxFilteringTime}</span>
+                                    <span className="text-xs text-slate-400">horas/dia</span>
+                                  </div>
+                                  <p className="text-[8px] text-slate-400">Previsão contra desgaste do motor da bomba por sobrecarga.</p>
+
+                                  <div className="flex gap-1.5 pt-1">
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.max(telemetry.minFilteringTime, telemetry.maxFilteringTime - 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      -
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const nextVal = Math.min(24, telemetry.maxFilteringTime + 1);
+                                        updateDeviceTelemetry(searchedEquip.id, { maxFilteringTime: nextVal });
+                                      }}
+                                      className="flex-1 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white font-mono font-bold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Hydro Massage Timer usage */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Timer de Hidromassagem Recorrente</h4>
+                                  <p className="text-[10px] text-slate-400">Histórico e configuração do temporizador de segurança da hidromassagem.</p>
+                                </div>
+                                <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400">
+                                  <Clock className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
+                                <div className="space-y-1">
+                                  <span className="text-[9px] text-slate-400 uppercase tracking-wider font-semibold block">Duração de Uso por Ciclo</span>
+                                  <div className="text-lg font-black text-emerald-400 font-mono">
+                                    {telemetry.hydroTimerUsageMinutes} minutos
+                                  </div>
+                                  <p className="text-[8px] text-slate-500">O motor desliga sozinho após este intervalo.</p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-1 max-w-[150px]">
+                                  {[15, 30, 45, 60].map((mins) => {
+                                    const isActive = telemetry.hydroTimerUsageMinutes === mins;
+                                    return (
+                                      <button
+                                        key={mins}
+                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { hydroTimerUsageMinutes: mins })}
+                                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-colors ${
+                                          isActive
+                                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                                        }`}
+                                      >
+                                        {mins}m
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="flex justify-between items-center text-[10px] text-slate-400 px-1 pt-1">
+                                <span>Uso Total Acumulado:</span>
+                                <span className="text-slate-200 font-mono font-bold">128 ciclos (64 horas de funcionamento)</span>
+                              </div>
+                            </div>
+
+                            {/* Device Location & Map Coordinates */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 text-left">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <h4 className="text-sm font-bold text-white">Localização Geográfica do Equipamento</h4>
+                                  <p className="text-[10px] text-slate-400">Visualização de coordenadas GPS e rastreamento de instalação ativa.</p>
+                                </div>
+                                <div className="p-2 bg-rose-500/10 rounded-xl text-rose-400">
+                                  <MapPin className="w-4 h-4" />
+                                </div>
+                              </div>
+
+                              {/* Coordinate Inputs */}
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Latitude</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    value={telemetry.latitude}
+                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { latitude: parseFloat(e.target.value) || -23.5505 })}
+                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase block mb-1">Longitude</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    value={telemetry.longitude}
+                                    onChange={(e) => updateDeviceTelemetry(searchedEquip.id, { longitude: parseFloat(e.target.value) || -46.6333 })}
+                                    className="w-full bg-black/40 border border-white/10 text-xs font-mono text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-rose-400"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Quick Teleport buttons */}
+                              <div className="space-y-1.5">
+                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Simular Locais de Instalação:</span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {[
+                                    { name: 'São Paulo - SP', lat: -23.5505, lng: -46.6333 },
+                                    { name: 'Rio de Janeiro - RJ', lat: -22.9068, lng: -43.1729 },
+                                    { name: 'Porto Alegre - RS', lat: -30.0346, lng: -51.2177 },
+                                    { name: 'Belo Horizonte - MG', lat: -19.9173, lng: -43.9345 },
+                                  ].map((loc) => {
+                                    const isActive = Math.abs(telemetry.latitude - loc.lat) < 0.01 && Math.abs(telemetry.longitude - loc.lng) < 0.01;
+                                    return (
+                                      <button
+                                        key={loc.name}
+                                        onClick={() => updateDeviceTelemetry(searchedEquip.id, { latitude: loc.lat, longitude: loc.lng })}
+                                        className={`px-2.5 py-1 text-[9px] rounded-lg border transition-all ${
+                                          isActive
+                                            ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                                            : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        {loc.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Map Embed Frame */}
+                              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40 h-[200px] relative">
+                                <iframe
+                                  title="Google Maps Coordinates"
+                                  width="100%"
+                                  height="200"
+                                  style={{ border: 0, filter: 'grayscale(0.6) invert(0.9) contrast(1.2)' }}
+                                  src={`https://maps.google.com/maps?q=${telemetry.latitude},${telemetry.longitude}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
+                                  allowFullScreen
+                                  referrerPolicy="no-referrer"
+                                />
+                              </div>
+
+                              <div className="flex justify-end pt-1">
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${telemetry.latitude},${telemetry.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                                >
+                                  <Compass className="w-3.5 h-3.5" />
+                                  Ver no Google Maps Real
+                                </a>
+                              </div>
+                            </div>
+
+                          </div>
+
+                          {/* RIGHT COLUMN: HARDWARE SIMULATOR & MQTT LOGS */}
+                          <div className="lg:col-span-6 space-y-6">
+                            
+                            {/* Hardware Simulation Panel */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-6 text-left">
+                              <div>
+                                <h3 className="text-sm font-bold text-white">Central de Simulação de Hardware</h3>
+                                <p className="text-[10px] text-slate-400">Altere os parâmetros abaixo para testar as reações do aplicativo e das proteções em tempo real para este dispositivo.</p>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                
+                                {/* Temp Collector */}
+                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-300">Sensor Coletor Solar</span>
+                                    <span className="text-sm font-mono font-black text-rose-400">{sensorErrorActive ? '---' : `${sensorCollectorTemp}°C`}</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    disabled={sensorErrorActive}
+                                    value={sensorCollectorTemp}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      setSensorCollectorTemp(val);
+                                      publishTopic(`MASTERLAZER/${searchedEquip.id}/telemetry/temp_collector`, String(val));
+                                    }}
+                                    className="w-full accent-rose-500 cursor-pointer disabled:opacity-30"
+                                  />
+                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
+                                    <span>0°C</span>
+                                    <span>50°C</span>
+                                    <span>100°C</span>
+                                  </div>
+                                </div>
+
+                                {/* Temp Pool */}
+                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-300">Sensor Piscina</span>
+                                    <span className="text-sm font-mono font-black text-[#4398fa]">{sensorPoolTemp}°C</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="50"
+                                    value={sensorPoolTemp}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      setSensorPoolTemp(val);
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/temp_pool`, String(val));
+                                    }}
+                                    className="w-full accent-[#4398fa] cursor-pointer"
+                                  />
+                                  <div className="flex justify-between text-[8px] text-slate-500 font-mono">
+                                    <span>0°C</span>
+                                    <span>25°C</span>
+                                    <span>50°C</span>
+                                  </div>
+                                </div>
+
+                              </div>
+
+                              {/* Simulated Delta calculation */}
+                              <div className="p-4 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Delta Diferencial (T1 - T2)</span>
+                                  <div className="text-xs text-slate-300">Diferença de temperatura para circulação solar</div>
+                                </div>
+                                <div className="text-right">
+                                  <span className={`text-xl font-mono font-black ${sensorCollectorTemp - sensorPoolTemp >= 8 ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`}>
+                                    {sensorErrorActive ? 'Erro Sensor' : `${(sensorCollectorTemp - sensorPoolTemp).toFixed(0)}°C`}
+                                  </span>
+                                  <div className="text-[8px] text-slate-400 uppercase tracking-widest mt-1">
+                                    {sensorCollectorTemp - sensorPoolTemp >= 8 ? 'Circulação Ativa' : 'Aguardando Delta'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Fault Injection */}
+                              <div className="space-y-3">
+                                <span className="text-xs font-bold text-slate-300 block">Simulação de Falhas & Diagnósticos</span>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <button
+                                    onClick={() => {
+                                      const newVal = !sensorErrorActive;
+                                      setSensorErrorActive(newVal);
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/sensor_error`, newVal ? '1' : '0');
+                                      logUserAction(`Simulou Erro de Sensor Coletor Solar para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
+                                    }}
+                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                      sensorErrorActive
+                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
+                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs font-bold">Erro no Sensor Coletor</div>
+                                      <div className="text-[9px] opacity-70">Sensor de temperatura aberto</div>
+                                    </div>
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() => {
+                                      const newVal = !flowErrorActive;
+                                      setFlowErrorActive(newVal);
+                                      publishTopic(`MLZ/${searchedEquip.id}/telemetry/flow_error`, newVal ? '1' : '0');
+                                      logUserAction(`Simulou Erro de Fluxo de Água para ${searchedEquip.id}: ${newVal ? 'ATIVADO' : 'DESATIVADO'}`);
+                                    }}
+                                    className={`p-3.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                                      flowErrorActive
+                                        ? 'bg-rose-500/10 border-rose-500 text-rose-400'
+                                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs font-bold">Sem Fluxo de Água</div>
+                                      <div className="text-[9px] opacity-70">Bomba ligada sem vazão</div>
+                                    </div>
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                            </div>
+
+                            {/* Telemetry Log panel */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4 flex flex-col justify-between text-left">
+                              <div className="space-y-4">
+                                <div>
+                                  <h3 className="text-sm font-bold text-white">Central de Logs Mqtt</h3>
+                                  <p className="text-[10px] text-slate-400">Mensagens enviadas em formato bruto para depuração técnica do dispositivo selecionado.</p>
+                                </div>
+
+                                <div className="space-y-2.5 font-mono text-[10px]">
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div className="text-amber-400 font-bold">{"// Tópicos Publicados Recorrentes:"}</div>
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_coll</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{sensorErrorActive ? 'ERR' : sensorCollectorTemp}</span></div>
+                                  </div>
+
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/temp_pool</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{sensorPoolTemp}</span></div>
+                                  </div>
+
+                                  <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1 text-slate-300">
+                                    <div>Topic: <span className="text-[#4398fa]">MLZ/{searchedEquip.id}/flow_state</span></div>
+                                    <div>Payload: <span className="text-emerald-400">{flowErrorActive ? 'FAIL' : 'OK'}</span></div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2 pt-2">
+                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Seeding de Testes</span>
+                                <button
+                                  onClick={() => {
+                                    try {
+                                      const actions = [
+                                        'Ligou Motor 3 (M3)', 'Desligou Motor 3 (M3)', 
+                                        `Alterou LED para ${telemetry.mostUsedLedProgram}`, 
+                                        'Desligou Motor de Filtro (M2)', 'Ligou Motor Hidro (M1)', 
+                                        'Configurou Timer do LED'
+                                      ];
+                                      const emails = [currentUser?.email || 'operador@lazer.com'];
+                                      
+                                      const generated: any[] = [];
+                                      for (let i = 0; i < 5; i++) {
+                                        generated.push({
+                                          id: 'seeded-' + Math.random().toString(36).substr(2, 9),
+                                          timestamp: new Date(Date.now() - (Math.random() * 24 * 60 * 60 * 1000)).toISOString(),
+                                          email: emails[Math.floor(Math.random() * emails.length)],
+                                          action: actions[Math.floor(Math.random() * actions.length)],
+                                          deviceId: searchedEquip.id
+                                        });
+                                      }
+
+                                      const combined = [...generated, ...userLogs].slice(0, 200);
+                                      setUserLogs(combined);
+                                      showToast('Logs de Teste', `5 Logs de teste inseridos para ${searchedEquip.id}!`, 'info');
+                                    } catch (e) {}
+                                  }}
+                                  className="w-full py-2 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors"
+                                >
+                                  Inserir Logs de Uso Fictícios para este Dispositivo
+                                </button>
+                              </div>
+
+                            </div>
+
                           </div>
 
                         </div>
@@ -6636,9 +6493,9 @@ export default function PoolControllerPage() {
                     <div className="space-y-6">
                       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
                         <div>
-                          <h3 className="text-sm font-bold text-white">Catálogo de Dispositivos</h3>
+                          <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider">Gerenciar Catálogo de Modelos</h3>
                           <p className="text-[10px] text-slate-400">
-                            A quantidade cadastrada aqui define quantos motores aparecem para cada modelo.
+                            Configure o nome do equipamento (ex: MM12TW, MM08TW, MM14TW), a quantidade de motores e os acessórios/timers ativos para cada modelo.
                           </p>
                         </div>
 
@@ -6648,35 +6505,91 @@ export default function PoolControllerPage() {
                               event.preventDefault();
                               handleCreateCatalogItem();
                             }}
-                            className="grid grid-cols-1 sm:grid-cols-[1fr_140px_auto] gap-3 items-end"
+                            className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-4"
                           >
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-300">Modelo</label>
-                              <input
-                                value={catalogModel}
-                                onChange={(event) => setCatalogModel(event.target.value.toUpperCase())}
-                                placeholder="Ex.: MM12TW"
-                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white uppercase focus:outline-none focus:border-amber-400"
-                              />
+                            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                              <span className="text-xs font-bold text-amber-300">Cadastrar Novo Modelo</span>
+                              <span className="text-[10px] text-slate-400">Modelos Globais / Catálogo</span>
                             </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-300">Motores (1 a 8)</label>
-                              <input
-                                type="number"
-                                min={1}
-                                max={8}
-                                value={catalogMotorCount}
-                                onChange={(event) => setCatalogMotorCount(event.target.value)}
-                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
-                              />
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Nome do Modelo</label>
+                                <input
+                                  value={catalogModel}
+                                  onChange={(event) => setCatalogModel(event.target.value.toUpperCase())}
+                                  placeholder="Ex.: MM12TW, MM08TW, MM14TW"
+                                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-mono text-white uppercase focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Quantidade de Motores (0 a 8)</label>
+                                <select
+                                  value={catalogMotorCount}
+                                  onChange={(event) => setCatalogMotorCount(event.target.value)}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs font-bold text-white focus:outline-none focus:border-amber-400"
+                                >
+                                  {Array.from({ length: 9 }, (_, i) => String(i)).map(n => (
+                                    <option key={n} value={n}>{n === '0' ? '0 Motores (Sem Motor)' : `${n} ${n === '1' ? 'Motor' : 'Motores'}`}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
+
+                            {/* Timers selection checkboxes */}
+                            <div className="space-y-1.5 pt-1">
+                              <label className="text-[10px] font-bold text-slate-300 block">Acessórios / Timers Habilitados</label>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                                <label className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${catalogHasFilterTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={catalogHasFilterTimer}
+                                    onChange={(e) => setCatalogHasFilterTimer(e.target.checked)}
+                                    className="accent-amber-400 rounded"
+                                  />
+                                  <span className="font-semibold text-[11px]">Timer Filtragem</span>
+                                </label>
+
+                                <label className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${catalogHasLedTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={catalogHasLedTimer}
+                                    onChange={(e) => setCatalogHasLedTimer(e.target.checked)}
+                                    className="accent-amber-400 rounded"
+                                  />
+                                  <span className="font-semibold text-[11px]">Timer Iluminação</span>
+                                </label>
+
+                                <label className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${catalogHasHidroTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={catalogHasHidroTimer}
+                                    onChange={(e) => setCatalogHasHidroTimer(e.target.checked)}
+                                    className="accent-amber-400 rounded"
+                                  />
+                                  <span className="font-semibold text-[11px]">Timer Hidro</span>
+                                </label>
+
+                                <label className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${catalogHasSolarHeating ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={catalogHasSolarHeating}
+                                    onChange={(e) => setCatalogHasSolarHeating(e.target.checked)}
+                                    className="accent-amber-400 rounded"
+                                  />
+                                  <span className="font-semibold text-[11px]">Aquecimento Solar</span>
+                                </label>
+                              </div>
+                            </div>
+
                             <button
                               type="submit"
                               disabled={catalogSaving}
-                              className="px-4 py-2 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center justify-center gap-2"
+                              className="w-full py-2.5 bg-amber-400 hover:bg-amber-500 active:scale-95 disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-400/10 transition-all"
                             >
                               <Plus className="w-4 h-4" />
-                              {catalogSaving ? 'Salvando...' : 'Adicionar'}
+                              {catalogSaving ? 'Salvando...' : 'Cadastrar Modelo no Catálogo'}
                             </button>
                           </form>
                         )}
@@ -6684,8 +6597,8 @@ export default function PoolControllerPage() {
 
                       <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
                         <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
-                          <span className="text-xs font-bold text-white">Modelos cadastrados</span>
-                          <span className="text-[10px] text-slate-400">{deviceCatalog.length} modelos</span>
+                          <span className="text-xs font-bold text-white">Modelos Cadastrados no Catálogo</span>
+                          <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded-full font-mono text-slate-300">{deviceCatalog.length} modelos</span>
                         </div>
 
                         {catalogLoading ? (
@@ -6694,198 +6607,155 @@ export default function PoolControllerPage() {
                           <p className="p-6 text-center text-xs text-slate-400">Nenhum modelo cadastrado.</p>
                         ) : (
                           <div className="divide-y divide-white/5">
-                            {deviceCatalog.map((item) => (
-                              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
-                                <div>
-                                  <p className="text-xs font-bold text-white">{item.model}</p>
-                                  <p className="text-[10px] text-slate-400">
-                                    {item.motor_count} {item.motor_count === 1 ? 'motor' : 'motores'}
-                                  </p>
+                            {deviceCatalog.map((item) => {
+                              const isEditing = editingCatalogItem?.id === item.id;
+                              return (
+                                <div key={item.id} className="p-4 transition-all hover:bg-white/2">
+                                  {isEditing ? (
+                                    <div className="space-y-3 bg-white/5 p-4 rounded-xl border border-amber-400/40">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-xs font-bold text-amber-400">Editando Modelo: {item.model}</span>
+                                        <span className="text-[9px] text-slate-400 font-mono">ID: {item.id}</span>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-bold text-slate-300">Nome do Modelo</label>
+                                          <input
+                                            type="text"
+                                            value={editModelName}
+                                            onChange={(e) => setEditModelName(e.target.value.toUpperCase())}
+                                            className="w-full px-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-xs font-mono text-white uppercase focus:outline-none focus:border-amber-400"
+                                          />
+                                        </div>
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-bold text-slate-300">Qtd. de Motores (0 a 8)</label>
+                                          <select
+                                            value={editMotorCount}
+                                            onChange={(e) => setEditMotorCount(e.target.value)}
+                                            className="w-full px-3 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-xs font-bold text-white focus:outline-none focus:border-amber-400"
+                                          >
+                                            {Array.from({ length: 9 }, (_, i) => String(i)).map(n => (
+                                              <option key={n} value={n}>{n === '0' ? '0 Motores (Sem Motor)' : `${n} ${n === '1' ? 'Motor' : 'Motores'}`}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-1 pt-1">
+                                        <label className="text-[10px] font-bold text-slate-300 block">Acessórios / Timers Habilitados</label>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                                          <label className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-all ${editHasFilterTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                            <input
+                                              type="checkbox"
+                                              checked={editHasFilterTimer}
+                                              onChange={(e) => setEditHasFilterTimer(e.target.checked)}
+                                              className="accent-amber-400 rounded"
+                                            />
+                                            <span className="font-semibold text-[10px]">Timer Filtragem</span>
+                                          </label>
+
+                                          <label className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-all ${editHasLedTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                            <input
+                                              type="checkbox"
+                                              checked={editHasLedTimer}
+                                              onChange={(e) => setEditHasLedTimer(e.target.checked)}
+                                              className="accent-amber-400 rounded"
+                                            />
+                                            <span className="font-semibold text-[10px]">Timer Iluminação</span>
+                                          </label>
+
+                                          <label className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-all ${editHasHidroTimer ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                            <input
+                                              type="checkbox"
+                                              checked={editHasHidroTimer}
+                                              onChange={(e) => setEditHasHidroTimer(e.target.checked)}
+                                              className="accent-amber-400 rounded"
+                                            />
+                                            <span className="font-semibold text-[10px]">Timer Hidro</span>
+                                          </label>
+
+                                          <label className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-all ${editHasSolarHeating ? 'bg-amber-400/10 border-amber-400/40 text-amber-300' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                                            <input
+                                              type="checkbox"
+                                              checked={editHasSolarHeating}
+                                              onChange={(e) => setEditHasSolarHeating(e.target.checked)}
+                                              className="accent-amber-400 rounded"
+                                            />
+                                            <span className="font-semibold text-[10px]">Aquecimento Solar</span>
+                                          </label>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex justify-end gap-2 pt-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingCatalogItem(null)}
+                                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-lg text-xs font-semibold"
+                                        >
+                                          Cancelar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={handleSaveEditCatalogItem}
+                                          disabled={catalogSaving}
+                                          className="px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-black rounded-lg text-xs font-bold shadow-md shadow-amber-400/10"
+                                        >
+                                          {catalogSaving ? 'Salvando...' : 'Salvar Alterações'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-sm font-extrabold text-white font-mono">{item.model}</span>
+                                          <span className="text-[10px] bg-white/10 border border-white/10 px-2 py-0.5 rounded-full text-amber-300 font-bold">
+                                            {item.motor_count === 0 ? '0 Motores (Sem Motor)' : `${item.motor_count} ${item.motor_count === 1 ? 'Motor' : 'Motores'}`}
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_filter_timer !== false ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                            Timer Filtragem
+                                          </span>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_led_timer !== false ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                            Timer Iluminação
+                                          </span>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_hidro_timer !== false ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                            Timer Hidro
+                                          </span>
+                                          <span className={`text-[9px] px-2 py-0.5 rounded-md font-semibold border ${item.has_solar_heating !== false ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-white/5 border-white/10 text-slate-500 line-through'}`}>
+                                            Aquecimento Solar
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {currentUser?.role === 'owner' && (
+                                        <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleStartEditCatalogItem(item)}
+                                            className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-amber-300 hover:text-amber-200 rounded-lg transition-colors text-xs font-semibold flex items-center gap-1"
+                                            title="Editar parâmetros do modelo"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                            <span>Editar</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteCatalogItem(item)}
+                                            className="p-1.5 text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 rounded-lg transition-colors"
+                                            title="Excluir modelo"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                                {currentUser?.role === 'owner' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteCatalogItem(item)}
-                                    className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                                    title="Excluir modelo"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {adminTab === 'aba2' && (
-                    <div className="space-y-6">
-                      <div className="bg-white/5 border border-amber-400/30 rounded-2xl p-5 space-y-4">
-                        <div>
-                          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                            <Upload className="w-4 h-4 text-amber-400" />
-                            Upload Firmware (.bin)
-                          </h3>
-                          <p className="text-[10px] text-slate-400 mt-1">
-                            Cadastre um novo .bin ou atualize uma versão existente. Cada modelo do catálogo tem seu próprio software.
-                          </p>
-                        </div>
-
-                        {(currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'support') ? (
-                          <form
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              handleUploadFirmware();
-                            }}
-                            className="space-y-4"
-                          >
-                            {deviceCatalog.length === 0 && (
-                              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-200">
-                                Cadastre um modelo em <button type="button" className="underline font-bold" onClick={() => setAdminTab('aba5')}>Catálogo de Dispositivos</button> antes de enviar o .bin.
-                              </div>
-                            )}
-
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-300">Modelo do equipamento *</label>
-                                <select
-                                  value={firmwareModel}
-                                  onChange={(event) => setFirmwareModel(event.target.value)}
-                                  disabled={!!firmwareEditingId}
-                                  required
-                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
-                                >
-                                  <option value="" className="bg-slate-900">Selecione o modelo...</option>
-                                  {deviceCatalog.map((item) => (
-                                    <option key={item.id} value={item.model} className="bg-slate-900">
-                                      {item.model}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-300">Nome do firmware *</label>
-                                <input
-                                  value={firmwareNome}
-                                  onChange={(event) => setFirmwareNome(event.target.value)}
-                                  placeholder="Ex.: MM12TW Stable"
-                                  required
-                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-300">Versão *</label>
-                                <input
-                                  value={firmwareVersao}
-                                  onChange={(event) => setFirmwareVersao(event.target.value)}
-                                  placeholder="Ex.: 1.2.0"
-                                  required
-                                  className="w-full px-3 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-slate-300">Arquivo .bin *</label>
-                              <label className="flex flex-col items-center justify-center gap-2 w-full min-h-[110px] px-4 py-5 rounded-2xl border border-dashed border-amber-400/40 bg-amber-400/5 hover:bg-amber-400/10 cursor-pointer transition-colors">
-                                <Upload className="w-6 h-6 text-amber-400" />
-                                <span className="text-xs font-bold text-white">
-                                  {firmwareFile ? firmwareFile.name : 'Clique para selecionar o arquivo .bin'}
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  {firmwareFile
-                                    ? `${(firmwareFile.size / 1024).toFixed(1)} KB`
-                                    : 'Apenas arquivos .bin · até 16 MB'}
-                                </span>
-                                <input
-                                  type="file"
-                                  accept=".bin,application/octet-stream"
-                                  onChange={(event) => setFirmwareFile(event.target.files?.[0] || null)}
-                                  className="hidden"
-                                />
-                              </label>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="submit"
-                                disabled={firmwareSaving || deviceCatalog.length === 0}
-                                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-black text-xs font-extrabold rounded-xl flex items-center gap-2 shadow-lg shadow-amber-400/20"
-                              >
-                                <Upload className="w-4 h-4" />
-                                {firmwareSaving
-                                  ? 'Enviando...'
-                                  : firmwareEditingId
-                                    ? 'Atualizar'
-                                    : 'Publicar'}
-                              </button>
-                              {firmwareEditingId && (
-                                <button
-                                  type="button"
-                                  onClick={resetFirmwareForm}
-                                  className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold rounded-xl"
-                                >
-                                  Cancelar edição
-                                </button>
-                              )}
-                            </div>
-                          </form>
-                        ) : (
-                          <p className="text-xs text-slate-400">Apenas o proprietário pode cadastrar firmware.</p>
-                        )}
-                      </div>
-
-                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
-                          <span className="text-xs font-bold text-white">Firmware publicado</span>
-                          <span className="text-[10px] text-slate-400">
-                            {firmwareList.filter((f) => f.is_active).length} ativo(s)
-                          </span>
-                        </div>
-
-                        {firmwareLoading ? (
-                          <p className="p-6 text-center text-xs text-slate-400">Carregando firmware...</p>
-                        ) : firmwareList.length === 0 ? (
-                          <p className="p-6 text-center text-xs text-slate-400">Nenhum firmware publicado.</p>
-                        ) : (
-                          <div className="divide-y divide-white/5">
-                            {firmwareList.map((item) => (
-                              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="text-xs font-bold text-white">
-                                      {item.model} · v{item.versao}
-                                    </p>
-                                    {item.is_active ? (
-                                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold border border-emerald-500/30">
-                                        Ativo
-                                      </span>
-                                    ) : (
-                                      <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 text-[9px] font-bold">
-                                        Histórico
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-[10px] text-slate-400 truncate">{item.nome}</p>
-                                  <p className="text-[9px] text-slate-500">
-                                    {item.file_size ? `${(item.file_size / 1024).toFixed(1)} KB · ` : ''}
-                                    {new Date(item.data_upload).toLocaleString('pt-BR')}
-                                  </p>
-                                </div>
-                                {currentUser?.role === 'owner' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartEditFirmware(item)}
-                                    className="p-2 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
-                                    title="Editar / substituir .bin"
-                                  >
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
