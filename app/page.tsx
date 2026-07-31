@@ -4448,75 +4448,94 @@ export default function PoolControllerPage() {
                         </div>
                       )}
 
-                      {/* TEMPERATURE GAUGE (Item 1) */}
+                      {/* TEMPERATURE GAUGE (Item 1 - Speedometer Style) */}
                       <div className="p-4 bg-black/25 border border-white/10 rounded-2xl flex flex-col items-center justify-center space-y-1 relative">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                           Temperatura Atual da Piscina
                         </span>
 
-                        {/* Gauge SVG (Style matching reference image with 25°C to 40°C range) */}
+                        {/* Gauge SVG (Speedometer style: 25°C to 40°C) */}
                         {(() => {
                           const minTemp = 25;
                           const maxTemp = 40;
                           const displayTemp = sensorPoolError ? minTemp : Math.max(minTemp, Math.min(maxTemp, sensorPoolTemp));
                           const ratio = (displayTemp - minTemp) / (maxTemp - minTemp);
-                          const needleAngle = 180 - ratio * 180;
-                          const needleRad = (needleAngle * Math.PI) / 180;
-                          const cx = 110;
-                          const cy = 105;
-                          const nx = cx + 80 * Math.cos(needleRad);
-                          const ny = cy - 80 * Math.sin(needleRad);
+                          const needleAngleDeg = 180 - ratio * 180;
+                          const needleRad = (needleAngleDeg * Math.PI) / 180;
+                          const cx = 120;
+                          const cy = 125;
+                          const R_arc = 86;
+                          const R_ticks = 70;
+                          const R_label = 104;
 
-                          // Segment angles for white dividers (10 segments)
-                          const segmentCount = 10;
-                          const dividers = Array.from({ length: segmentCount + 1 }, (_, i) => 180 - (i * (180 / segmentCount)));
+                          // Needle Tapered Path calculation
+                          const needleLength = 72;
+                          const baseWidth = 5;
+                          const tipX = cx + needleLength * Math.cos(needleRad);
+                          const tipY = cy - needleLength * Math.sin(needleRad);
+                          const perpAngle = needleRad + Math.PI / 2;
+                          const b1x = cx + baseWidth * Math.cos(perpAngle);
+                          const b1y = cy - baseWidth * Math.sin(perpAngle);
+                          const b2x = cx - baseWidth * Math.cos(perpAngle);
+                          const b2y = cy + baseWidth * Math.sin(perpAngle);
 
-                          // Values for labels
-                          const ticks = [25, 28, 31, 34, 37, 40];
+                          // Angles for 10 segment dividers
+                          const dividerAngles = Array.from({ length: 11 }, (_, i) => 180 - (i * 18));
+
+                          // Tick marks (31 ticks: 0 to 30)
+                          const tickMarks = Array.from({ length: 31 }, (_, i) => {
+                            const deg = 180 - i * 6;
+                            const isMajor = i % 6 === 0;
+                            return { deg, isMajor };
+                          });
+
+                          // Numeric labels: 25, 28, 31, 34, 37, 40
+                          const labels = [
+                            { val: 25, deg: 180 },
+                            { val: 28, deg: 144 },
+                            { val: 31, deg: 108 },
+                            { val: 34, deg: 72 },
+                            { val: 37, deg: 36 },
+                            { val: 40, deg: 0 },
+                          ];
 
                           return (
                             <div className="relative w-full max-w-[280px] flex flex-col items-center">
-                              <svg viewBox="0 0 220 128" className="w-full overflow-visible">
-                                {/* 1. Outer Grey Segmented Ring */}
+                              <svg viewBox="0 0 240 160" className="w-full overflow-visible">
+                                {/* 1. Segmented Outer Arc (Green 25-34°C, Yellow 34-37°C, Red 37-40°C) */}
+                                {/* Green Arc: 180° to 72° */}
                                 <path
-                                  d={`M ${cx - 86} ${cy} A 86 86 0 0 1 ${cx + 86} ${cy}`}
+                                  d={`M ${cx - R_arc} ${cy} A ${R_arc} ${R_arc} 0 0 1 ${cx + R_arc * Math.cos(72 * Math.PI / 180)} ${cy - R_arc * Math.sin(72 * Math.PI / 180)}`}
                                   fill="none"
-                                  stroke="#94a3b8"
-                                  strokeWidth="12"
+                                  stroke="#22c55e"
+                                  strokeWidth="16"
+                                  strokeLinecap="round"
                                 />
 
-                                {/* 2. Inner Colored Band (Green: 25-30, Yellow: 30-36, Red: 36-40) */}
-                                {/* Green: 180° to 120° (ratio 0 to 5/15) */}
+                                {/* Yellow Arc: 72° to 36° */}
                                 <path
-                                  d={`M ${cx - 72} ${cy} A 72 72 0 0 1 ${cx + 72 * Math.cos(120 * Math.PI / 180)} ${cy - 72 * Math.sin(120 * Math.PI / 180)}`}
+                                  d={`M ${cx + R_arc * Math.cos(72 * Math.PI / 180)} ${cy - R_arc * Math.sin(72 * Math.PI / 180)} A ${R_arc} ${R_arc} 0 0 1 ${cx + R_arc * Math.cos(36 * Math.PI / 180)} ${cy - R_arc * Math.sin(36 * Math.PI / 180)}`}
                                   fill="none"
-                                  stroke="#00b050"
-                                  strokeWidth="12"
+                                  stroke="#eab308"
+                                  strokeWidth="16"
                                 />
 
-                                {/* Yellow: 120° to 48° (ratio 5/15 to 11/15) */}
+                                {/* Red Arc: 36° to 0° */}
                                 <path
-                                  d={`M ${cx + 72 * Math.cos(120 * Math.PI / 180)} ${cy - 72 * Math.sin(120 * Math.PI / 180)} A 72 72 0 0 1 ${cx + 72 * Math.cos(48 * Math.PI / 180)} ${cy - 72 * Math.sin(48 * Math.PI / 180)}`}
+                                  d={`M ${cx + R_arc * Math.cos(36 * Math.PI / 180)} ${cy - R_arc * Math.sin(36 * Math.PI / 180)} A ${R_arc} ${R_arc} 0 0 1 ${cx + R_arc} ${cy}`}
                                   fill="none"
-                                  stroke="#ffc000"
-                                  strokeWidth="12"
+                                  stroke="#ef4444"
+                                  strokeWidth="16"
+                                  strokeLinecap="round"
                                 />
 
-                                {/* Red: 48° to 0° (ratio 11/15 to 1) */}
-                                <path
-                                  d={`M ${cx + 72 * Math.cos(48 * Math.PI / 180)} ${cy - 72 * Math.sin(48 * Math.PI / 180)} A 72 72 0 0 1 ${cx + 72} ${cy}`}
-                                  fill="none"
-                                  stroke="#ff0000"
-                                  strokeWidth="12"
-                                />
-
-                                {/* 3. White Radial Divider Lines across outer and inner arcs */}
-                                {dividers.map((deg) => {
+                                {/* 2. Crisp Divider Gaps cutting through the Arc */}
+                                {dividerAngles.map((deg) => {
                                   const rad = (deg * Math.PI) / 180;
-                                  const x1 = cx + 65 * Math.cos(rad);
-                                  const y1 = cy - 65 * Math.sin(rad);
-                                  const x2 = cx + 93 * Math.cos(rad);
-                                  const y2 = cy - 93 * Math.sin(rad);
+                                  const x1 = cx + (R_arc - 10) * Math.cos(rad);
+                                  const y1 = cy - (R_arc - 10) * Math.sin(rad);
+                                  const x2 = cx + (R_arc + 10) * Math.cos(rad);
+                                  const y2 = cy - (R_arc + 10) * Math.sin(rad);
                                   return (
                                     <line
                                       key={deg}
@@ -4524,24 +4543,44 @@ export default function PoolControllerPage() {
                                       y1={y1}
                                       x2={x2}
                                       y2={y2}
-                                      stroke="#ffffff"
-                                      strokeWidth="2.5"
+                                      stroke="#1e293b"
+                                      strokeWidth="3"
                                     />
                                   );
                                 })}
 
-                                {/* 4. Numeric Tick Labels (25, 28, 31, 34, 37, 40) */}
-                                {ticks.map((val) => {
-                                  const tRatio = (val - minTemp) / (maxTemp - minTemp);
-                                  const tDeg = 180 - tRatio * 180;
-                                  const tRad = (tDeg * Math.PI) / 180;
-                                  const tx = cx + 52 * Math.cos(tRad);
-                                  const ty = cy - 52 * Math.sin(tRad) + 4;
+                                {/* 3. Inner Tick Track (Fine Speedometer Ticks) */}
+                                {tickMarks.map(({ deg, isMajor }) => {
+                                  const rad = (deg * Math.PI) / 180;
+                                  const rInner = isMajor ? R_ticks - 8 : R_ticks - 4;
+                                  const rOuter = R_ticks;
+                                  const x1 = cx + rInner * Math.cos(rad);
+                                  const y1 = cy - rInner * Math.sin(rad);
+                                  const x2 = cx + rOuter * Math.cos(rad);
+                                  const y2 = cy - rOuter * Math.sin(rad);
+                                  return (
+                                    <line
+                                      key={deg}
+                                      x1={x1}
+                                      y1={y1}
+                                      x2={x2}
+                                      y2={y2}
+                                      stroke={isMajor ? '#ffffff' : 'rgba(255, 255, 255, 0.5)'}
+                                      strokeWidth={isMajor ? 1.8 : 1}
+                                    />
+                                  );
+                                })}
+
+                                {/* 4. Outer Numeric Labels (25, 28, 31, 34, 37, 40) */}
+                                {labels.map(({ val, deg }) => {
+                                  const rad = (deg * Math.PI) / 180;
+                                  const lx = cx + R_label * Math.cos(rad);
+                                  const ly = cy - R_label * Math.sin(rad) + 4;
                                   return (
                                     <text
                                       key={val}
-                                      x={tx}
-                                      y={ty}
+                                      x={lx}
+                                      y={ly}
                                       fill="#ffffff"
                                       fontSize="11"
                                       fontWeight="bold"
@@ -4553,59 +4592,51 @@ export default function PoolControllerPage() {
                                   );
                                 })}
 
-                                {/* 5. Orange Needle Line */}
+                                {/* 5. Tapered Needle (Black/Dark with White Accent) */}
                                 {!sensorPoolError && (
-                                  <line
-                                    x1={cx}
-                                    y1={cy}
-                                    x2={nx}
-                                    y2={ny}
-                                    stroke="#ff6600"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                    className="drop-shadow-md"
-                                  />
+                                  <>
+                                    <polygon
+                                      points={`${b1x},${b1y} ${b2x},${b2y} ${tipX},${tipY}`}
+                                      fill="#0f172a"
+                                      stroke="#ffffff"
+                                      strokeWidth="1.5"
+                                      className="drop-shadow-lg"
+                                    />
+                                    {/* Pivot Center Hub */}
+                                    <circle cx={cx} cy={cy} r="9" fill="#0f172a" stroke="#ffffff" strokeWidth="2.5" />
+                                    <circle cx={cx} cy={cy} r="3.5" fill="#ffffff" />
+                                  </>
                                 )}
 
-                                {/* 6. Square Gray Box at Pivot Center (displays numeric value inside, like reference image) */}
-                                <rect
-                                  x={cx - 20}
-                                  y={cy - 16}
-                                  width="40"
-                                  height="30"
-                                  rx="3"
-                                  fill="#6b7280"
-                                  stroke="#ffffff"
-                                  strokeWidth="2"
-                                />
+                                {/* 6. Bottom Digital Readout */}
                                 <text
                                   x={cx}
-                                  y={cy + 5}
+                                  y={cy + 26}
                                   textAnchor="middle"
                                   fill="#ffffff"
-                                  fontSize="16"
+                                  fontSize="20"
                                   fontWeight="900"
-                                  className="font-mono tracking-tight"
+                                  className="font-mono tracking-tight drop-shadow-md"
                                 >
-                                  {sensorPoolError ? 'ERR' : `${sensorPoolTemp}`}
+                                  {sensorPoolError ? 'ERR' : `${sensorPoolTemp} °C`}
                                 </text>
                               </svg>
                             </div>
                           );
                         })()}
 
-                        {/* Min and Max Labels */}
+                        {/* Min and Max Summary Footer */}
                         <div className="w-full flex items-center justify-between pt-1 px-4 text-xs font-bold font-mono">
                           <div className="text-left space-y-0.5">
                             <span className="text-[10px] text-slate-400 block uppercase font-sans">Min</span>
-                            <span className="text-cyan-400 font-extrabold">25ºC</span>
+                            <span className="text-emerald-400 font-extrabold">25ºC</span>
                           </div>
                           <div className="text-center text-[10px] text-slate-400 font-normal">
                             Coletor: <span className="text-amber-300 font-bold font-mono">{sensorCollectorError || sensorErrorActive ? 'ERR' : `${sensorCollectorTemp}°C`}</span>
                           </div>
                           <div className="text-right space-y-0.5">
                             <span className="text-[10px] text-slate-400 block uppercase font-sans">Máx</span>
-                            <span className="text-amber-400 font-extrabold">40ºC</span>
+                            <span className="text-rose-400 font-extrabold">40ºC</span>
                           </div>
                         </div>
                       </div>
