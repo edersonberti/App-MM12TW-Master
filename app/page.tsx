@@ -54,14 +54,17 @@ import {
   Download,
   Filter,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Headset,
+  ImagePlus,
+  MessageCircle
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
-import { fetchAuditEvents, deriveAuditFilterOptions, type AuditEvent } from '../services/auditService';
+import { fetchAuditEvents, deriveAuditFilterOptions, auditEventMatchesSerial, resolveDeviceSerialAliases, type AuditEvent } from '../services/auditService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
   acceptDeviceInvite,
@@ -101,6 +104,8 @@ const DEFAULT_PRESET_MODELS: Record<string, { motor_count: number; has_filter_ti
 };
 
 const AUDIT_EVENT_LABELS: Record<string, string> = {
+  account_created: 'Conta criada',
+  device_registered: 'Equip. cadastrado',
   device_filter_timer_updated: 'Timer filtração',
   device_led_timer_updated: 'Timer LED',
   device_hidro_timer_updated: 'Timer hidro',
@@ -155,6 +160,19 @@ function formatAuditMetadata(
     return names.length ? names.join(', ') : '—';
   }
 
+  if (eventType === 'account_created') {
+    const email = typeof m.email === 'string' ? m.email : '—';
+    const role = m.role ? ` · ${String(m.role)}` : '';
+    return `${email}${role}`;
+  }
+
+  if (eventType === 'device_registered') {
+    const model = m.model ? String(m.model) : '—';
+    const serialPart = m.serial ? ` · ${String(m.serial)}` : '';
+    const owner = m.owner_email ? ` · ${String(m.owner_email)}` : '';
+    return `${model}${serialPart}${owner}`;
+  }
+
   if (eventType === 'operator_soft_deleted' || eventType === 'account_deletion_requested') {
     const email = typeof m.email === 'string' ? m.email : '—';
     const when = m.deleted_at ? ` · ${new Date(String(m.deleted_at)).toLocaleString('pt-BR')}` : '';
@@ -182,7 +200,7 @@ function auditEventBadgeClass(eventType: string): string {
   if (t.includes('delete') || t.includes('revok') || t.includes('hard')) {
     return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
   }
-  if (t.includes('create') || t.includes('insert') || t.includes('accept') || t.includes('register')) {
+  if (t.includes('create') || t.includes('insert') || t.includes('accept') || t.includes('register') || t.includes('account_created')) {
     return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
   }
   if (t.includes('timer') || t.includes('motor_names')) {
@@ -310,16 +328,23 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
 
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'solar' | 'setup' | 'share' | 'invite' | 'admin'>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'solar' | 'setup' | 'share' | 'invite' | 'admin' | 'support'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
 
   // Manual API Configuration states
   const [showManualConfig, setShowManualConfig] = useState(false);
   const [showNavMenu, setShowNavMenu] = useState(false);
+  const [supportSubject, setSupportSubject] = useState('');
+  const [supportDescription, setSupportDescription] = useState('');
+  const [supportScreenshot, setSupportScreenshot] = useState<File | null>(null);
+  const [supportScreenshotPreview, setSupportScreenshotPreview] = useState<string | null>(null);
+  const [supportSending, setSupportSending] = useState(false);
   const [manualUrl, setManualUrl] = useState('');
   const [manualKey, setManualKey] = useState('');
   const [manualSuccessMsg, setManualSuccessMsg] = useState('');
+
+  const SUPPORT_WHATSAPP_NUMBER = '5548996089187';
 
   // Admin & Owner Dashboard states
   const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware'>('home');
@@ -340,6 +365,7 @@ export default function PoolControllerPage() {
   const [auditFilterEntityType, setAuditFilterEntityType] = useState('');
   const [auditFilterEventType, setAuditFilterEventType] = useState('');
   const [auditFilterEntityId, setAuditFilterEntityId] = useState('');
+  const [auditFilterSerial, setAuditFilterSerial] = useState('');
   const [auditFilterDateFrom, setAuditFilterDateFrom] = useState('');
   const [auditFilterDateTo, setAuditFilterDateTo] = useState('');
   const [auditFilterSort, setAuditFilterSort] = useState<'desc' | 'asc'>('desc');
@@ -684,11 +710,23 @@ export default function PoolControllerPage() {
     : [];
 
   // Audit filter options + filtered/paginated view (client-side for instant UX)
-  const auditFilterOptions = deriveAuditFilterOptions(auditEvents);
+  const auditFilterOptions = (() => {
+    const base = deriveAuditFilterOptions(auditEvents);
+    const fromDevices = adminAllDevices
+      .map((d) => (d.serial || d.id || '').trim())
+      .filter(Boolean);
+    const serials = Array.from(new Set([...base.serials, ...fromDevices])).sort((a, b) =>
+      a.localeCompare(b)
+    );
+    return { ...base, serials };
+  })();
   const filteredAuditEvents = (() => {
     const search = auditFilterSearch.trim().toLowerCase();
     const fromTs = auditFilterDateFrom ? new Date(`${auditFilterDateFrom}T00:00:00`).getTime() : null;
     const toTs = auditFilterDateTo ? new Date(`${auditFilterDateTo}T23:59:59.999`).getTime() : null;
+    const serialAliases = auditFilterSerial
+      ? resolveDeviceSerialAliases(auditFilterSerial, adminAllDevices, auditEvents)
+      : [];
 
     let rows = auditEvents.filter((e) => {
       if (auditFilterActor && (e.actor_email || '') !== auditFilterActor) return false;
@@ -698,6 +736,7 @@ export default function PoolControllerPage() {
         const needle = auditFilterEntityId.trim().toLowerCase();
         if (!(e.entity_id || '').toLowerCase().includes(needle)) return false;
       }
+      if (auditFilterSerial && !auditEventMatchesSerial(e, auditFilterSerial, serialAliases)) return false;
       const created = new Date(e.created_at).getTime();
       if (fromTs != null && !Number.isNaN(fromTs) && created < fromTs) return false;
       if (toTs != null && !Number.isNaN(toTs) && created > toTs) return false;
@@ -738,6 +777,7 @@ export default function PoolControllerPage() {
     setAuditFilterEntityType('');
     setAuditFilterEventType('');
     setAuditFilterEntityId('');
+    setAuditFilterSerial('');
     setAuditFilterDateFrom('');
     setAuditFilterDateTo('');
     setAuditFilterSort('desc');
@@ -751,6 +791,7 @@ export default function PoolControllerPage() {
     auditFilterEntityType,
     auditFilterEventType,
     auditFilterEntityId,
+    auditFilterSerial,
     auditFilterDateFrom,
     auditFilterDateTo,
   ].filter(Boolean).length;
@@ -1744,6 +1785,112 @@ export default function PoolControllerPage() {
     setPasswordInput('');
     setActiveScreen('login');
     disconnectMQTT();
+  };
+
+  const resetSupportTicketForm = useCallback(() => {
+    setSupportSubject('');
+    setSupportDescription('');
+    setSupportScreenshot(null);
+    setSupportScreenshotPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setSupportSending(false);
+  }, []);
+
+  const closeSupportTicket = useCallback(() => {
+    resetSupportTicketForm();
+    setActiveScreen('home');
+  }, [resetSupportTicketForm]);
+
+  const handleSupportScreenshotChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    setSupportScreenshotPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return file ? URL.createObjectURL(file) : null;
+    });
+    setSupportScreenshot(file);
+  };
+
+  const clearSupportScreenshot = () => {
+    setSupportScreenshot(null);
+    setSupportScreenshotPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
+
+  const handleSubmitSupportTicket = async () => {
+    const description = supportDescription.trim();
+    if (!description) {
+      showToast('Descreva o problema', 'Informe o que está acontecendo para abrir o chamado.', 'warning');
+      return;
+    }
+
+    setSupportSending(true);
+
+    const activeEq = registeredEquipments.find((eq) => areDeviceIdsMatching(eq.id, deviceId));
+    const lines = [
+      '*Suporte — Master Lazer*',
+      '',
+      `Assunto: ${supportSubject.trim() || 'Problema no aplicativo'}`,
+      `Usuário: ${currentUser?.email || 'não informado'}`,
+      `Equipamento: ${activeEq?.model || deviceModelo || '—'}`,
+      `Serial/ID: ${activeEq?.serial || deviceSerial || deviceId || '—'}`,
+      '',
+      '*Descrição do problema:*',
+      description,
+    ];
+
+    if (supportScreenshot) {
+      lines.push('', `Print anexado no formulário: ${supportScreenshot.name}`);
+      lines.push('_Por favor, envie também o print nesta conversa._');
+    }
+
+    const message = lines.join('\n');
+    const whatsappUrl = `https://wa.me/${SUPPORT_WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+
+    try {
+      // Em dispositivos que suportam share com arquivo, tenta enviar o print junto
+      if (
+        supportScreenshot &&
+        typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function' &&
+        typeof navigator.canShare === 'function'
+      ) {
+        const shareData: ShareData = {
+          files: [supportScreenshot],
+          text: message,
+          title: 'Suporte Master Lazer',
+        };
+        if (navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+          showToast(
+            'Chamado encaminhado',
+            'Selecione o WhatsApp da assistência para enviar o print e a mensagem.',
+            'success'
+          );
+          closeSupportTicket();
+          return;
+        }
+      }
+    } catch (err: any) {
+      // Usuário cancelou o share — não abrir WhatsApp automaticamente
+      if (err?.name === 'AbortError') {
+        setSupportSending(false);
+        return;
+      }
+    }
+
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    showToast(
+      'Abrindo WhatsApp',
+      supportScreenshot
+        ? 'Anexe o print na conversa da assistência após enviar a mensagem.'
+        : 'Seu chamado será enviado para a assistência técnica.',
+      'info'
+    );
+    closeSupportTicket();
   };
 
   // 6. MQTT Client Logic Wrapper
@@ -3910,7 +4057,7 @@ export default function PoolControllerPage() {
         <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup / Share / Invite sheets) */}
-          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && (
+          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && activeScreen !== 'support' && (
             <header className="border-b border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-40">
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
@@ -3982,6 +4129,18 @@ export default function PoolControllerPage() {
                             >
                               <Settings className="w-4 h-4 text-[#4398fa]" />
                               Configurações
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNavMenu(false);
+                                setActiveScreen('support');
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-slate-200 hover:bg-white/10 transition-colors"
+                            >
+                              <Headset className="w-4 h-4 text-emerald-400" />
+                              Ajuda / Suporte
                             </button>
 
                             <button
@@ -5834,7 +5993,7 @@ export default function PoolControllerPage() {
                                             setConfirmDeleteDeviceId(null);
 
                                             if (cloudOk) {
-                                              showToast('Equipamento removido', `${eq.id} foi desativado (soft delete).`, 'success');
+                                              showToast('Equipamento removido', `${eq.id}`, 'success');
                                             }
 
                                             if (isActive) {
@@ -5971,6 +6130,128 @@ export default function PoolControllerPage() {
                       className="w-full py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
                     >
                       Voltar para o App
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Screen: Help / Support ticket */}
+              {activeScreen === 'support' && (
+                <motion.div
+                  key="support-screen"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  className="flex flex-col h-full py-2 text-left space-y-4"
+                >
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={closeSupportTicket}
+                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
+                      aria-label="Voltar"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                        <Headset className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-bold text-white leading-tight">Ajuda / Suporte</h2>
+                        <p className="text-[10px] text-slate-400 truncate">Abra um chamado com a assistência</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed px-0.5">
+                    
+                  </p>Descreva o problema que está enfrentando.
+
+                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Assunto</label>
+                      <input
+                        type="text"
+                        value={supportSubject}
+                        onChange={(e) => setSupportSubject(e.target.value)}
+                        placeholder="Ex.: Timer não liga, LED travado..."
+                        maxLength={80}
+                        className="w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">
+                        Descrição do problema *
+                      </label>
+                      <textarea
+                        value={supportDescription}
+                        onChange={(e) => setSupportDescription(e.target.value)}
+                        placeholder="Conte o que acontece, quando começou e se aparece alguma mensagem de erro..."
+                        rows={5}
+                        maxLength={1200}
+                        className="w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50 resize-none leading-relaxed"
+                      />
+                      <p className="text-[9px] text-slate-500 text-right">{supportDescription.length}/1200</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">
+                        Print / captura de tela
+                      </label>
+
+                      {supportScreenshotPreview ? (
+                        <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={supportScreenshotPreview}
+                            alt="Preview do print"
+                            className="w-full max-h-48 object-contain bg-black/50"
+                          />
+                          <button
+                            type="button"
+                            onClick={clearSupportScreenshot}
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/70 border border-white/15 text-slate-200 hover:text-white"
+                            aria-label="Remover print"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          <p className="px-3 py-2 text-[10px] text-slate-400 truncate border-t border-white/10">
+                            {supportScreenshot?.name}
+                          </p>
+                        </div>
+                      ) : (
+                        <label className="flex flex-col items-center justify-center gap-2 w-full min-h-[96px] px-4 py-4 rounded-2xl border border-dashed border-emerald-400/30 bg-emerald-400/5 hover:bg-emerald-400/10 cursor-pointer transition-colors">
+                          <ImagePlus className="w-5 h-5 text-emerald-400" />
+                          <span className="text-[11px] font-bold text-slate-200">Anexar print do problema</span>
+                          <span className="text-[9px] text-slate-500">JPG, PNG ou WEBP</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleSupportScreenshotChange}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-1 pb-2 mt-auto">
+                    <button
+                      type="button"
+                      onClick={closeSupportTicket}
+                      className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs font-bold active:bg-white/10"
+                    >
+                      Voltar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={supportSending || !supportDescription.trim()}
+                      onClick={() => void handleSubmitSupportTicket()}
+                      className="flex-[1.4] py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-xs font-bold shadow-lg shadow-emerald-900/30 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {supportSending ? 'Abrindo...' : 'Enviar no WhatsApp'}
                     </button>
                   </div>
                 </motion.div>
@@ -7037,6 +7318,26 @@ export default function PoolControllerPage() {
                                   placeholder="UUID / device id..."
                                   className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
                                 />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-300">Serial do equipamento</label>
+                                <input
+                                  type="text"
+                                  list="audit-serial-options"
+                                  value={auditFilterSerial}
+                                  onChange={(e) => { setAuditFilterSerial(e.target.value); setAuditPage(1); }}
+                                  placeholder="Ex: MLZ-MM12TW-..."
+                                  className="w-full px-3 py-2 bg-black/30 border border-white/10 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                                />
+                                <datalist id="audit-serial-options">
+                                  {auditFilterOptions.serials.map((serial) => (
+                                    <option key={serial} value={serial} />
+                                  ))}
+                                </datalist>
+                                <p className="text-[9px] text-slate-500 leading-snug">
+                                  Mostra cadastro, timers, nomes e exclusões desse dispositivo.
+                                </p>
                               </div>
 
                               <div className="space-y-1">
