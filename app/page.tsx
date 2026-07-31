@@ -37,6 +37,7 @@ import {
   Activity,
   Shield,
   Plus,
+  Minus,
   Trash2,
   Search,
   MapPin,
@@ -44,7 +45,8 @@ import {
   Menu,
   CheckCircle2,
   PowerOff,
-  Cpu
+  Cpu,
+  Sun
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
@@ -162,7 +164,7 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
 
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'setup' | 'admin'>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'solar' | 'setup' | 'admin'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
 
@@ -215,6 +217,13 @@ export default function PoolControllerPage() {
   const [sensorPoolTemp, setSensorPoolTemp] = useState<number>(28);
   const [sensorErrorActive, setSensorErrorActive] = useState<boolean>(false);
   const [flowErrorActive, setFlowErrorActive] = useState<boolean>(false);
+
+  // Solar heating controls
+  const [solarWorkMode, setSolarWorkMode] = useState<'off' | 'manual' | 'auto'>('auto');
+  const [solarPoolMax, setSolarPoolMax] = useState<number>(34);
+  const [solarDif, setSolarDif] = useState<number>(4);
+  const [sensorCollectorError, setSensorCollectorError] = useState<boolean>(false);
+  const [sensorPoolError, setSensorPoolError] = useState<boolean>(false);
 
   // Individual telemetry search & data state
   const [telemetrySearchId, setTelemetrySearchId] = useState('');
@@ -3337,59 +3346,72 @@ export default function PoolControllerPage() {
                 </div>
               </div>
 
-              {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS */}
+              {/* Row 2: Navigation Icons HOME, BOMBAS, LED, TIMERS, SOLAR */}
               <div className="px-3.5 pb-3 pt-1">
-                <div className="grid grid-cols-4 gap-1.5 p-1 bg-black/20 rounded-xl border-2 border-white/10">
+                <div className="grid grid-cols-5 gap-1 p-1 bg-black/20 rounded-xl border-2 border-white/10">
                   <button 
                     id="tab-home"
                     onClick={() => setActiveScreen('home')}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
+                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'home' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Tv className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                    <Tv className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                     <span>HOME</span>
                   </button>
 
                   <button 
                     id="tab-aux"
                     onClick={() => setActiveScreen('aux')}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
+                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'aux' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Sliders className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                    <Sliders className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                     <span>BOMBAS</span>
                   </button>
 
                   <button 
                     id="tab-led"
                     onClick={() => setActiveScreen('led')}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
+                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'led' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Flame className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                    <Flame className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                     <span>LED</span>
                   </button>
 
                   <button 
                     id="tab-piscina"
                     onClick={() => setActiveScreen('timers')}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 sm:py-3.5 rounded-lg text-[11px] sm:text-[13.5px] font-extrabold tracking-wider transition-all ${
+                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
                       activeScreen === 'timers' 
                         ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
                         : 'text-slate-400 hover:text-white border border-transparent'
                     }`}
                   >
-                    <Clock className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                    <Clock className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                     <span>TIMERS</span>
+                  </button>
+
+                  <button 
+                    id="tab-solar"
+                    onClick={() => setActiveScreen('solar')}
+                    className={`flex flex-col items-center justify-center gap-1 py-2 sm:py-2.5 rounded-lg text-[10px] sm:text-[12px] font-extrabold tracking-wider transition-all ${
+                      activeScreen === 'solar' 
+                        ? 'text-[#4398fa] bg-white/12 shadow-inner border border-white/10' 
+                        : 'text-slate-400 hover:text-white border border-transparent'
+                    }`}
+                  >
+                    <Sun className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                    <span>AQUEC</span>
                   </button>
                 </div>
               </div>
@@ -4354,6 +4376,411 @@ export default function PoolControllerPage() {
                       </button>
                     </form>
                   </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* Screen: SOLAR (Aquecimento Solar) */}
+              {activeScreen === 'solar' && !hasRegisteredEquipment &&
+                renderNoEquipmentScreen('solar-screen-empty', 'o controle de aquecimento solar')}
+
+              {activeScreen === 'solar' && hasRegisteredEquipment && (
+                <motion.div
+                  key="solar-screen"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-4"
+                >
+                  {!hasSolarHeating ? (
+                    <div className="p-5 bg-white/5 border border-white/10 rounded-2xl text-center space-y-2">
+                      <Sun className="w-8 h-8 text-slate-400 mx-auto" />
+                      <p className="text-xs font-bold text-white">Aquecimento Solar Desabilitado</p>
+                      <p className="text-[10px] text-slate-400">
+                        O modelo <span className="text-[#4398fa] font-bold">{activeModel}</span> não possui o recurso de aquecimento solar habilitado no catálogo de equipamentos.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-4 shadow-lg text-left">
+                      {/* Solar Header */}
+                      <div className="pb-2 border-b border-white/10 flex items-center justify-between">
+                        <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase flex items-center gap-1.5">
+                          <Sun className="w-4 h-4 text-amber-400" /> AQUECIMENTO SOLAR
+                        </h3>
+                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          (sensorCollectorError || sensorPoolError || sensorErrorActive)
+                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-300' 
+                            : solarWorkMode === 'off'
+                              ? 'bg-white/5 border-white/10 text-slate-400'
+                              : (sensorCollectorTemp - sensorPoolTemp >= solarDif)
+                                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300 animate-pulse'
+                                : 'bg-white/5 border-white/10 text-amber-300'
+                        }`}>
+                          {(sensorCollectorError || sensorPoolError || sensorErrorActive)
+                            ? 'ALERTA DE ERRO' 
+                            : solarWorkMode === 'off'
+                              ? 'DESLIGADO'
+                              : (sensorCollectorTemp - sensorPoolTemp >= solarDif)
+                                ? 'CIRCULAÇÃO ATIVA'
+                                : 'EM ESPERA'}
+                        </span>
+                      </div>
+
+                      {/* Sensor Errors Banner (Item 4) */}
+                      {(sensorCollectorError || sensorErrorActive || sensorPoolError) && (
+                        <div className="space-y-2">
+                          {(sensorCollectorError || sensorErrorActive) && (
+                            <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl flex items-center gap-2.5 text-rose-300 animate-pulse">
+                              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+                              <div className="flex-1 text-xs font-bold">
+                                Erro1: Sensor1 Coletor
+                              </div>
+                            </div>
+                          )}
+                          {sensorPoolError && (
+                            <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl flex items-center gap-2.5 text-rose-300 animate-pulse">
+                              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+                              <div className="flex-1 text-xs font-bold">
+                                Erro2: Sensor2 Piscina
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* TEMPERATURE GAUGE (Item 1) */}
+                      <div className="p-4 bg-black/25 border border-white/10 rounded-2xl flex flex-col items-center justify-center space-y-1 relative">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                          Temperatura Atual da Piscina
+                        </span>
+
+                        {/* Gauge SVG (Style matching reference image with 25°C to 40°C range) */}
+                        {(() => {
+                          const minTemp = 25;
+                          const maxTemp = 40;
+                          const displayTemp = sensorPoolError ? minTemp : Math.max(minTemp, Math.min(maxTemp, sensorPoolTemp));
+                          const ratio = (displayTemp - minTemp) / (maxTemp - minTemp);
+                          const needleAngle = 180 - ratio * 180;
+                          const needleRad = (needleAngle * Math.PI) / 180;
+                          const cx = 110;
+                          const cy = 105;
+                          const nx = cx + 80 * Math.cos(needleRad);
+                          const ny = cy - 80 * Math.sin(needleRad);
+
+                          // Segment angles for white dividers (10 segments)
+                          const segmentCount = 10;
+                          const dividers = Array.from({ length: segmentCount + 1 }, (_, i) => 180 - (i * (180 / segmentCount)));
+
+                          // Values for labels
+                          const ticks = [25, 28, 31, 34, 37, 40];
+
+                          return (
+                            <div className="relative w-full max-w-[280px] flex flex-col items-center">
+                              <svg viewBox="0 0 220 128" className="w-full overflow-visible">
+                                {/* 1. Outer Grey Segmented Ring */}
+                                <path
+                                  d={`M ${cx - 86} ${cy} A 86 86 0 0 1 ${cx + 86} ${cy}`}
+                                  fill="none"
+                                  stroke="#94a3b8"
+                                  strokeWidth="12"
+                                />
+
+                                {/* 2. Inner Colored Band (Green: 25-30, Yellow: 30-36, Red: 36-40) */}
+                                {/* Green: 180° to 120° (ratio 0 to 5/15) */}
+                                <path
+                                  d={`M ${cx - 72} ${cy} A 72 72 0 0 1 ${cx + 72 * Math.cos(120 * Math.PI / 180)} ${cy - 72 * Math.sin(120 * Math.PI / 180)}`}
+                                  fill="none"
+                                  stroke="#00b050"
+                                  strokeWidth="12"
+                                />
+
+                                {/* Yellow: 120° to 48° (ratio 5/15 to 11/15) */}
+                                <path
+                                  d={`M ${cx + 72 * Math.cos(120 * Math.PI / 180)} ${cy - 72 * Math.sin(120 * Math.PI / 180)} A 72 72 0 0 1 ${cx + 72 * Math.cos(48 * Math.PI / 180)} ${cy - 72 * Math.sin(48 * Math.PI / 180)}`}
+                                  fill="none"
+                                  stroke="#ffc000"
+                                  strokeWidth="12"
+                                />
+
+                                {/* Red: 48° to 0° (ratio 11/15 to 1) */}
+                                <path
+                                  d={`M ${cx + 72 * Math.cos(48 * Math.PI / 180)} ${cy - 72 * Math.sin(48 * Math.PI / 180)} A 72 72 0 0 1 ${cx + 72} ${cy}`}
+                                  fill="none"
+                                  stroke="#ff0000"
+                                  strokeWidth="12"
+                                />
+
+                                {/* 3. White Radial Divider Lines across outer and inner arcs */}
+                                {dividers.map((deg) => {
+                                  const rad = (deg * Math.PI) / 180;
+                                  const x1 = cx + 65 * Math.cos(rad);
+                                  const y1 = cy - 65 * Math.sin(rad);
+                                  const x2 = cx + 93 * Math.cos(rad);
+                                  const y2 = cy - 93 * Math.sin(rad);
+                                  return (
+                                    <line
+                                      key={deg}
+                                      x1={x1}
+                                      y1={y1}
+                                      x2={x2}
+                                      y2={y2}
+                                      stroke="#ffffff"
+                                      strokeWidth="2.5"
+                                    />
+                                  );
+                                })}
+
+                                {/* 4. Numeric Tick Labels (25, 28, 31, 34, 37, 40) */}
+                                {ticks.map((val) => {
+                                  const tRatio = (val - minTemp) / (maxTemp - minTemp);
+                                  const tDeg = 180 - tRatio * 180;
+                                  const tRad = (tDeg * Math.PI) / 180;
+                                  const tx = cx + 52 * Math.cos(tRad);
+                                  const ty = cy - 52 * Math.sin(tRad) + 4;
+                                  return (
+                                    <text
+                                      key={val}
+                                      x={tx}
+                                      y={ty}
+                                      fill="#ffffff"
+                                      fontSize="11"
+                                      fontWeight="bold"
+                                      textAnchor="middle"
+                                      className="font-mono drop-shadow-sm select-none"
+                                    >
+                                      {val}
+                                    </text>
+                                  );
+                                })}
+
+                                {/* 5. Orange Needle Line */}
+                                {!sensorPoolError && (
+                                  <line
+                                    x1={cx}
+                                    y1={cy}
+                                    x2={nx}
+                                    y2={ny}
+                                    stroke="#ff6600"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                    className="drop-shadow-md"
+                                  />
+                                )}
+
+                                {/* 6. Square Gray Box at Pivot Center (displays numeric value inside, like reference image) */}
+                                <rect
+                                  x={cx - 20}
+                                  y={cy - 16}
+                                  width="40"
+                                  height="30"
+                                  rx="3"
+                                  fill="#6b7280"
+                                  stroke="#ffffff"
+                                  strokeWidth="2"
+                                />
+                                <text
+                                  x={cx}
+                                  y={cy + 5}
+                                  textAnchor="middle"
+                                  fill="#ffffff"
+                                  fontSize="16"
+                                  fontWeight="900"
+                                  className="font-mono tracking-tight"
+                                >
+                                  {sensorPoolError ? 'ERR' : `${sensorPoolTemp}`}
+                                </text>
+                              </svg>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Min and Max Labels */}
+                        <div className="w-full flex items-center justify-between pt-1 px-4 text-xs font-bold font-mono">
+                          <div className="text-left space-y-0.5">
+                            <span className="text-[10px] text-slate-400 block uppercase font-sans">Min</span>
+                            <span className="text-cyan-400 font-extrabold">25ºC</span>
+                          </div>
+                          <div className="text-center text-[10px] text-slate-400 font-normal">
+                            Coletor: <span className="text-amber-300 font-bold font-mono">{sensorCollectorError || sensorErrorActive ? 'ERR' : `${sensorCollectorTemp}°C`}</span>
+                          </div>
+                          <div className="text-right space-y-0.5">
+                            <span className="text-[10px] text-slate-400 block uppercase font-sans">Máx</span>
+                            <span className="text-amber-400 font-extrabold">40ºC</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* MODO DE TRABALHO (Item 2) */}
+                      <div className="p-3.5 bg-white/5 border border-white/10 rounded-xl space-y-2">
+                        <label className="text-[11px] font-bold text-slate-300 block uppercase tracking-wider">
+                          Modo de trabalho
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSolarWorkMode('off');
+                              showToast('Modo de Trabalho', 'Aquecimento Solar Desligado.', 'info');
+                            }}
+                            className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
+                              solarWorkMode === 'off'
+                                ? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-md'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            }`}
+                          >
+                            <PowerOff className="w-4 h-4" />
+                            <span>Desligado</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSolarWorkMode('manual');
+                              showToast('Modo de Trabalho', 'Aquecimento Solar em Modo Manual.', 'info');
+                            }}
+                            className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
+                              solarWorkMode === 'manual'
+                                ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-md'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            }`}
+                          >
+                            <Sliders className="w-4 h-4" />
+                            <span>Manual</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSolarWorkMode('auto');
+                              showToast('Modo de Trabalho', 'Aquecimento Solar em Modo Automático.', 'success');
+                            }}
+                            className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
+                              solarWorkMode === 'auto'
+                                ? 'bg-[#4398fa]/20 border-[#4398fa] text-[#4398fa] shadow-md'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                            }`}
+                          >
+                            <Cpu className="w-4 h-4" />
+                            <span>Automático</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* PARÂMETROS DE CONFIGURAÇÃO (Item 3) */}
+                      <div className="p-3.5 bg-white/5 border border-white/10 rounded-xl space-y-3">
+                        <label className="text-[11px] font-bold text-slate-300 block uppercase tracking-wider">
+                          Parâmetros de configuração
+                        </label>
+
+                        {/* Parameter 1: Piscina MAX (25 a 40°C, default 34°C) */}
+                        <div className="p-3 bg-black/20 border border-white/10 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-white">Piscina MAX</span>
+                            <span className="text-sm font-mono font-black text-amber-400">{solarPoolMax}°C</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSolarPoolMax(prev => Math.max(25, prev - 1))}
+                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <input
+                              type="range"
+                              min="25"
+                              max="40"
+                              value={solarPoolMax}
+                              onChange={(e) => setSolarPoolMax(parseInt(e.target.value))}
+                              className="flex-1 accent-amber-400 cursor-pointer"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSolarPoolMax(prev => Math.min(40, prev + 1))}
+                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Parameter 2: DIF (2 a 20°C, default 4°C) */}
+                        <div className="p-3 bg-black/20 border border-white/10 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-white">DIF (Diferencial de Temperatura)</span>
+                            <span className="text-sm font-mono font-black text-[#4398fa]">{solarDif}°C</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSolarDif(prev => Math.max(2, prev - 1))}
+                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <input
+                              type="range"
+                              min="2"
+                              max="20"
+                              value={solarDif}
+                              onChange={(e) => setSolarDif(parseInt(e.target.value))}
+                              className="flex-1 accent-[#4398fa] cursor-pointer"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setSolarDif(prev => Math.min(20, prev + 1))}
+                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* DIAGNÓSTICO E TESTE DE ERROS DE SENSORES */}
+                      <div className="p-3.5 bg-white/5 border border-white/10 rounded-xl space-y-2">
+                        <label className="text-[11px] font-bold text-slate-300 block uppercase tracking-wider">
+                          Simulação / Diagnóstico de Erros
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextState = !sensorCollectorError;
+                              setSensorCollectorError(nextState);
+                              setSensorErrorActive(nextState);
+                              showToast('Diagnóstico', nextState ? 'Erro1: Sensor1 Coletor Simulado!' : 'Erro1 Limpo.', nextState ? 'warning' : 'info');
+                            }}
+                            className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-all text-left flex items-center justify-between ${
+                              sensorCollectorError || sensorErrorActive
+                                ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <span>Simular Erro1 (Coletor)</span>
+                            <span className="text-[10px] uppercase font-mono">{sensorCollectorError || sensorErrorActive ? 'ON' : 'OFF'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextState = !sensorPoolError;
+                              setSensorPoolError(nextState);
+                              showToast('Diagnóstico', nextState ? 'Erro2: Sensor2 Piscina Simulado!' : 'Erro2 Limpo.', nextState ? 'warning' : 'info');
+                            }}
+                            className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-all text-left flex items-center justify-between ${
+                              sensorPoolError
+                                ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <span>Simular Erro2 (Piscina)</span>
+                            <span className="text-[10px] uppercase font-mono">{sensorPoolError ? 'ON' : 'OFF'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
                   )}
                 </motion.div>
               )}
