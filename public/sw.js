@@ -91,9 +91,14 @@ self.addEventListener('fetch', (event) => {
 
           return response;
         })
-        .catch(() => {
-          // Fallback if offline
-          console.log('[SW] Fetch failed, device might be offline.');
+        .catch((err) => {
+          // Fallback if offline - return valid Response to avoid ServiceWorker NetworkError
+          console.log('[SW] Fetch failed, device might be offline:', err);
+          return new Response('Network error or offline', {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: { 'Content-Type': 'text/plain' }
+          });
         });
     })
   );
