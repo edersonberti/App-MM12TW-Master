@@ -45,6 +45,8 @@ import {
   PowerOff,
   Cpu,
   Sun,
+  Thermometer,
+  Zap,
   Upload,
   RefreshCw,
   Share2,
@@ -424,6 +426,7 @@ export default function PoolControllerPage() {
 
   // Solar heating controls
   const [solarWorkMode, setSolarWorkMode] = useState<'off' | 'manual' | 'auto'>('auto');
+  const [heatingType, setHeatingType] = useState<'solar' | 'eletrico'>('solar');
   const [solarPoolMax, setSolarPoolMax] = useState<number>(34);
   const [solarDif, setSolarDif] = useState<number>(4);
   const [sensorCollectorError, setSensorCollectorError] = useState<boolean>(false);
@@ -5225,7 +5228,7 @@ export default function PoolControllerPage() {
                       {/* Solar Header */}
                       <div className="pb-2 border-b border-white/10 flex items-center justify-between">
                         <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase flex items-center gap-1.5">
-                          <Sun className="w-4 h-4 text-amber-400" /> AQUECIMENTO SOLAR
+                          <Thermometer className="w-4 h-4 text-amber-400" /> SISTEMA DE AQUECIMENTO 
                         </h3>
                         <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                           (sensorCollectorError || sensorPoolError || sensorErrorActive)
@@ -5267,6 +5270,68 @@ export default function PoolControllerPage() {
                           )}
                         </div>
                       )}
+
+                      {/* Seleção do Tipo de Sistema de Aquecimento (Solar / Elétrico) */}
+                      <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-2">
+                        <label className="text-[11px] font-bold text-slate-300 block uppercase tracking-wider">
+                          Tipo de Sistema de Aquecimento
+                        </label>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <label 
+                            onClick={() => setHeatingType('solar')}
+                            className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all select-none ${
+                              heatingType === 'solar'
+                                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 shadow-sm'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/10'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="heatingType"
+                              value="solar"
+                              checked={heatingType === 'solar'}
+                              onChange={() => setHeatingType('solar')}
+                              className="sr-only"
+                            />
+                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
+                              heatingType === 'solar' ? 'border-amber-400 bg-amber-400/20 shadow-[0_0_8px_rgba(251,191,36,0.3)]' : 'border-white/30 bg-transparent'
+                            }`}>
+                              {heatingType === 'solar' && <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs font-bold truncate">
+                              <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span>Solar</span>
+                            </div>
+                          </label>
+
+                          <label 
+                            onClick={() => setHeatingType('eletrico')}
+                            className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all select-none ${
+                              heatingType === 'eletrico'
+                                ? 'bg-[#4398fa]/15 border-[#4398fa]/50 text-[#4398fa] shadow-sm'
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/10'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="heatingType"
+                              value="eletrico"
+                              checked={heatingType === 'eletrico'}
+                              onChange={() => setHeatingType('eletrico')}
+                              className="sr-only"
+                            />
+                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
+                              heatingType === 'eletrico' ? 'border-[#4398fa] bg-[#4398fa]/20 shadow-[0_0_8px_rgba(67,152,250,0.3)]' : 'border-white/30 bg-transparent'
+                            }`}>
+                              {heatingType === 'eletrico' && <div className="w-1.5 h-1.5 rounded-full bg-[#4398fa]" />}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs font-bold truncate">
+                              <Zap className="w-3.5 h-3.5 text-[#4398fa] shrink-0" />
+                              <span>Elétrico</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
 
                       {/* TEMPERATURE GAUGE (Item 1 - Speedometer Style) */}
                       <div className="p-4 bg-black/25 border border-white/10 rounded-2xl flex flex-col items-center justify-center space-y-1 relative">
@@ -5451,9 +5516,11 @@ export default function PoolControllerPage() {
                             <span className="text-[10px] text-slate-400 block uppercase font-sans">Min</span>
                             <span className="text-emerald-400 font-extrabold">25ºC</span>
                           </div>
-                          <div className="text-center text-[10px] text-slate-400 font-normal">
-                            Coletor: <span className="text-amber-300 font-bold font-mono">{sensorCollectorError || sensorErrorActive ? 'ERR' : `${sensorCollectorTemp}°C`}</span>
-                          </div>
+                          {heatingType === 'solar' && (
+                            <div className="text-center text-[10px] text-slate-400 font-normal">
+                              Coletor: <span className="text-amber-300 font-bold font-mono">{sensorCollectorError || sensorErrorActive ? 'ERR' : `${sensorCollectorTemp}°C`}</span>
+                            </div>
+                          )}
                           <div className="text-right space-y-0.5">
                             <span className="text-[10px] text-slate-400 block uppercase font-sans">Máx</span>
                             <span className="text-rose-400 font-extrabold">40ºC</span>
@@ -5555,37 +5622,39 @@ export default function PoolControllerPage() {
                           </div>
                         </div>
 
-                        {/* Parameter 2: DIF (2 a 20°C, default 4°C) */}
-                        <div className="p-3 bg-black/20 border border-white/10 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-white">DIF (Diferencial de Temperatura)</span>
-                            <span className="text-sm font-mono font-black text-[#4398fa]">{solarDif}°C</span>
+                        {/* Parameter 2: DIF (2 a 20°C, default 4°C) - Only for Solar */}
+                        {heatingType === 'solar' && (
+                          <div className="p-3 bg-black/20 border border-white/10 rounded-xl space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-white">DIF (Diferencial de Temperatura)</span>
+                              <span className="text-sm font-mono font-black text-[#4398fa]">{solarDif}°C</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSolarDif(prev => Math.max(2, prev - 1))}
+                                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                              >
+                                <Minus className="w-4 h-4" />
+                              </button>
+                              <input
+                                type="range"
+                                min="2"
+                                max="20"
+                                value={solarDif}
+                                onChange={(e) => setSolarDif(parseInt(e.target.value))}
+                                className="flex-1 accent-[#4398fa] cursor-pointer"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setSolarDif(prev => Math.min(20, prev + 1))}
+                                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setSolarDif(prev => Math.max(2, prev - 1))}
-                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
-                            >
-                              <Minus className="w-4 h-4" />
-                            </button>
-                            <input
-                              type="range"
-                              min="2"
-                              max="20"
-                              value={solarDif}
-                              onChange={(e) => setSolarDif(parseInt(e.target.value))}
-                              className="flex-1 accent-[#4398fa] cursor-pointer"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setSolarDif(prev => Math.min(20, prev + 1))}
-                              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
+                        )}
                       </div>
 
                       {/* DIAGNÓSTICO E TESTE DE ERROS DE SENSORES */}
