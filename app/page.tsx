@@ -57,13 +57,24 @@ import {
   ChevronUp,
   Headset,
   ImagePlus,
-  MessageCircle
+  MessageCircle,
+  Factory
 } from 'lucide-react';
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
 import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
 import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
+import {
+  fetchProductionDevices,
+  fetchProductionStatsByModel,
+  getUnrecognizedDeviceMessage,
+  parseProductionQrPayload,
+  registerProductionDeviceFromQr,
+  setProductionDeviceStatus,
+  type ProductionDevice,
+  type ProductionModelStats,
+} from '../services/productionDeviceService';
 import { fetchAuditEvents, deriveAuditFilterOptions, auditEventMatchesSerial, resolveDeviceSerialAliases, type AuditEvent } from '../services/auditService';
 import { ensureDeviceSettings, fetchDeviceSettings, saveDeviceSettings } from '../services/settingsService';
 import {
@@ -347,8 +358,15 @@ export default function PoolControllerPage() {
   const SUPPORT_WHATSAPP_NUMBER = '5548996089187';
 
   // Admin & Owner Dashboard states
-  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware'>('home');
+  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware' | 'production'>('home');
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
+  const [productionDevices, setProductionDevices] = useState<ProductionDevice[]>([]);
+  const [productionStats, setProductionStats] = useState<ProductionModelStats[]>([]);
+  const [productionLoading, setProductionLoading] = useState(false);
+  const [isScanningProductionQr, setIsScanningProductionQr] = useState(false);
+  const [productionQrError, setProductionQrError] = useState<string | null>(null);
+  const [productionSearch, setProductionSearch] = useState('');
+  const productionQrScannerRef = useRef<any>(null);
   // All devices registered system-wide (owner/admin visibility), with owner email attached
   const [adminAllDevices, setAdminAllDevices] = useState<{
     id: string;
@@ -1299,26 +1317,6 @@ export default function PoolControllerPage() {
       }
     }
 
-    // Auto-seed default equipment if user has 0 devices and default equipment hasn't been deleted
-    const defaultId = 'MLZ-MM12TW-EEA39F-000003';
-    if (combined.length === 0 && !isDeleted(defaultId)) {
-      const defaultDevice = {
-        id: defaultId,
-        model: 'MM12TW',
-        serial: defaultId,
-        manufacturer: 'MASTERLAZER',
-        userEmail: userEmail || ''
-      };
-
-      try {
-        await registerDevice(defaultId, 'MM12TW', userId, defaultId);
-      } catch (e) {
-        console.warn('[Supabase] Auto-seed device error:', e);
-      }
-
-      combined.push(defaultDevice);
-    }
-
     setRegisteredEquipments(combined);
     localStorage.setItem('registered_equipments', JSON.stringify(combined));
 
@@ -1555,6 +1553,21 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen, iroLoaded]);
 
+  const loadProductionData = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+    setProductionLoading(true);
+    try {
+      const [rows, stats] = await Promise.all([
+        fetchProductionDevices(),
+        fetchProductionStatsByModel(),
+      ]);
+      setProductionDevices(rows);
+      setProductionStats(stats);
+    } finally {
+      setProductionLoading(false);
+    }
+  }, []);
+
   // 3b. Load all synced user profiles, devices and audit events live from Supabase when administrative tab opens
   useEffect(() => {
     if (activeScreen === 'admin' && isSupabaseConfigured()) {
@@ -1570,9 +1583,16 @@ export default function PoolControllerPage() {
       loadProfiles();
       loadAdminAllDevices();
       loadAuditEvents();
+      loadProductionData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScreen]);
+
+  useEffect(() => {
+    if (activeScreen === 'admin' && adminTab === 'production' && isSupabaseConfigured()) {
+      loadProductionData();
+    }
+  }, [activeScreen, adminTab, loadProductionData]);
 
   // 4. Color HSV to RGB Converter Math helper helper
   function hsvToRgb(h: number, s: number, v: number) {
@@ -3517,6 +3537,140 @@ export default function PoolControllerPage() {
     setIsScanningQr(false);
   };
 
+  const stopProductionQrScanner = async () => {
+    if (productionQrScannerRef.current) {
+      try {
+        await productionQrScannerRef.current.stop();
+      } catch (e) {
+        console.warn('Erro ao parar o scanner de produção:', e);
+      }
+      productionQrScannerRef.current = null;
+    }
+    setIsScanningProductionQr(false);
+  };
+
+  const handleProductionQrScanned = async (text: string) => {
+    const payload = parseProductionQrPayload(text);
+    if (!payload) {
+      setProductionQrError('QR inválido. Esperado JSON com serial, provision e model.');
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(100);
+    }
+
+    await stopProductionQrScanner();
+    setProductionQrError(null);
+
+    const result = await registerProductionDeviceFromQr(payload);
+    if (!result.ok) {
+      const msg =
+        result.error === 'unknown_model'
+          ? `Modelo ${result.model || payload.model} não existe no catálogo. Cadastre-o em devices_catalog.`
+          : result.error === 'forbidden'
+            ? 'Sem permissão para cadastrar produção (owner/admin/factory).'
+            : result.error === 'unauthenticated'
+              ? 'Sessão expirada. Faça login novamente.'
+              : `Falha ao cadastrar: ${result.error}`;
+      setProductionQrError(msg);
+      showToast('Produção', msg, 'error');
+      return;
+    }
+
+    showToast(
+      'Produção',
+      `${result.serial} (${result.model}) registrado — status: ${result.status}`,
+      'success'
+    );
+    await loadProductionData();
+  };
+
+  const startProductionQrScanner = async () => {
+    setProductionQrError(null);
+    setIsScanningProductionQr(true);
+
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const scannerElement = document.getElementById('qr-reader-production');
+      if (!scannerElement) {
+        setProductionQrError('Elemento de visualização da câmera não encontrado.');
+        setIsScanningProductionQr(false);
+        return;
+      }
+
+      if (productionQrScannerRef.current) {
+        try {
+          await productionQrScannerRef.current.stop();
+        } catch {
+          // ignore
+        }
+        productionQrScannerRef.current = null;
+      }
+
+      let cameras: Array<{ id: string; label: string }> = [];
+      try {
+        cameras = await Html5Qrcode.getCameras();
+      } catch {
+        cameras = [];
+      }
+
+      if (!cameras || cameras.length === 0) {
+        setProductionQrError('Nenhuma câmera encontrada neste dispositivo.');
+        setIsScanningProductionQr(false);
+        return;
+      }
+
+      const preferred =
+        cameras.find((cam) => /back|rear|traseira|environment|posterior/i.test(cam.label)) ||
+        cameras[cameras.length - 1] ||
+        cameras[0];
+
+      const html5QrCode = new Html5Qrcode('qr-reader-production');
+      productionQrScannerRef.current = html5QrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: (width: number, height: number) => {
+          const size = Math.min(width, height) * 0.7;
+          return { width: size, height: size };
+        },
+        aspectRatio: 1.0,
+      };
+
+      const onSuccess = (decodedText: string) => {
+        handleProductionQrScanned(decodedText);
+      };
+
+      try {
+        await html5QrCode.start(preferred.id, config, onSuccess, () => {});
+      } catch (primaryErr) {
+        let started = false;
+        for (const cameraConfig of [{ facingMode: 'environment' }, { facingMode: 'user' }, cameras[0].id] as const) {
+          try {
+            await html5QrCode.start(cameraConfig as any, config, onSuccess, () => {});
+            started = true;
+            break;
+          } catch {
+            // try next
+          }
+        }
+        if (!started) throw primaryErr;
+      }
+    } catch (err) {
+      const errText = String(err);
+      let userFriendlyMsg = 'Erro ao acessar a câmera. Verifique as permissões do navegador.';
+      if (errText.includes('NotAllowedError') || errText.includes('Permission')) {
+        userFriendlyMsg = 'Permissão de câmera negada.';
+      }
+      setProductionQrError(userFriendlyMsg);
+      setIsScanningProductionQr(false);
+      productionQrScannerRef.current = null;
+    }
+  };
+
   // Handle scanned text
   const handleQrCodeScanned = (text: string) => {
     try {
@@ -3530,21 +3684,28 @@ export default function PoolControllerPage() {
           delete parsed.local;
         }
 
-        // Map token to pairing_token if present
+        // Map token/provision to pairing_token if present
         if (parsed.token && !parsed.pairing_token) {
           parsed.pairing_token = parsed.token;
+        }
+        if (parsed.provision && !parsed.pairing_token) {
+          parsed.pairing_token = parsed.provision;
         }
 
         if (parsed.serial && !parsed.deviceId) {
           // Use serial as the deviceId internally
           parsed.deviceId = parsed.serial;
           
-          // Extract model from the serial (e.g. MLZ-MM12TW-3F296847-0005 -> MM12TW)
-          const modelMatch = parsed.serial.match(/(MM\d+T?S?W?)/i);
-          if (modelMatch) {
-            parsed.model = modelMatch[1].toUpperCase();
+          // Prefer explicit model from production QR; else extract from serial
+          if (parsed.model) {
+            parsed.model = String(parsed.model).toUpperCase();
           } else {
-            parsed.model = 'MM12TW';
+            const modelMatch = parsed.serial.match(/(MM\d+T?S?W?)/i);
+            if (modelMatch) {
+              parsed.model = modelMatch[1].toUpperCase();
+            } else {
+              parsed.model = 'MM12TW';
+            }
           }
           
           if (!parsed.manufacturer) {
@@ -3600,7 +3761,7 @@ export default function PoolControllerPage() {
         finalModel, 
         parsed.serial || '', 
         parsed.manufacturer || 'MASTERLAZER',
-        parsed.pairing_token || ''
+        parsed.pairing_token || parsed.provision || parsed.token || ''
       );
 
       stopQrScanner();
@@ -3609,26 +3770,9 @@ export default function PoolControllerPage() {
       
       const matchedModel = text.match(/(MM\d+T?S?W?)/i);
       if (matchedModel && text.length >= 5) {
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate(100);
-        }
-        let finalModel = matchedModel[1].toUpperCase();
-
-        const simulatedJson = {
-          deviceId: text.trim(),
-          model: finalModel,
-          serial: text.trim(),
-          manufacturer: 'MASTERLAZER'
-        };
-        setScannedData(simulatedJson);
-        setBleDeviceId(simulatedJson.deviceId);
-        setSelectedEquipmentModel(simulatedJson.model);
-        setEquipmentSerial(simulatedJson.serial);
-        setEquipmentManufacturer(simulatedJson.manufacturer);
-
-        // Automatically save and activate the device immediately
-        handleSaveEquipment(simulatedJson.deviceId, simulatedJson.model, simulatedJson.serial, simulatedJson.manufacturer);
-
+        // Plain serial without factory provision cannot be claimed
+        setQrScannerError(getUnrecognizedDeviceMessage());
+        showToast('Erro', getUnrecognizedDeviceMessage(), 'error');
         stopQrScanner();
       } else {
         setQrScannerError('Formato inválido. O QR Code deve conter o JSON de cadastro do equipamento ou serial válido.');
@@ -3641,6 +3785,9 @@ export default function PoolControllerPage() {
     return () => {
       if (qrScannerRef.current) {
         qrScannerRef.current.stop().catch(() => {});
+      }
+      if (productionQrScannerRef.current) {
+        productionQrScannerRef.current.stop().catch(() => {});
       }
     };
   }, []);
@@ -3833,8 +3980,42 @@ export default function PoolControllerPage() {
         );
         return;
       }
+
+      const provision =
+        (pairingTokenOverride || '').trim() ||
+        (typeof scannedData?.pairing_token === 'string' ? scannedData.pairing_token.trim() : '') ||
+        (typeof scannedData?.provision === 'string' ? scannedData.provision.trim() : '') ||
+        (typeof scannedData?.token === 'string' ? scannedData.token.trim() : '');
+
+      if (!provision) {
+        const msg = getUnrecognizedDeviceMessage();
+        setQrScannerError(msg);
+        showToast('Erro', msg, 'error');
+        return;
+      }
+
+      const registeredDevice = await registerDevice(
+        trimmedId,
+        normalizedModel as any,
+        currentUser.uid,
+        finalSerial || trimmedId,
+        provision
+      );
+
+      if (!registeredDevice) {
+        const msg = getUnrecognizedDeviceMessage();
+        setQrScannerError(msg);
+        showToast('Erro', msg, 'error');
+        return;
+      }
+
+      await ensureDeviceSettings(trimmedId);
+
+      // Wait for Supabase confirmation before declaring the device registered.
+      // Previously this ran in the background, so the empty state could remain visible
+      // (or a later auth refresh could overwrite the optimistic local list).
     }
-    
+
     // Retrieve currently logged-in user's email
     const userEmail = currentUser?.email || '';
     
@@ -3846,28 +4027,6 @@ export default function PoolControllerPage() {
       manufacturer: finalManufacturer,
       userEmail
     };
-
-    // Wait for Supabase confirmation before declaring the device registered.
-    // Previously this ran in the background, so the empty state could remain visible
-    // (or a later auth refresh could overwrite the optimistic local list).
-    if (isSupabaseConfigured() && currentUser?.isSupabase) {
-      const registeredDevice = await registerDevice(
-        trimmedId,
-        normalizedModel as any,
-        currentUser.uid,
-        finalSerial,
-        pairingTokenOverride
-      );
-
-      if (!registeredDevice) {
-        setQrScannerError(
-          'Não foi possível associar este equipamento à sua conta. Verifique o QR Code ou tente novamente.'
-        );
-        return;
-      }
-
-      await ensureDeviceSettings(trimmedId);
-    }
 
     // Functional update always uses the latest list and immediately removes the
     // "Nenhum equipamento cadastrado" state.
@@ -4080,7 +4239,7 @@ export default function PoolControllerPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support') && (
+                  {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'support' || currentUser.role === 'factory') && (
                     <button
                       type="button"
                       onClick={() => setActiveScreen('admin')}
@@ -5794,7 +5953,13 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              handleSaveEquipment(scannedData.deviceId, scannedData.model, scannedData.serial, scannedData.manufacturer, scannedData.pairing_token || scannedData.token);
+                              handleSaveEquipment(
+                                scannedData.deviceId,
+                                scannedData.model,
+                                scannedData.serial,
+                                scannedData.manufacturer,
+                                scannedData.pairing_token || scannedData.provision || scannedData.token
+                              );
                               setScannedData(null);
                             }}
                             className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -6647,6 +6812,17 @@ export default function PoolControllerPage() {
                       <SlidersHorizontal className="w-4 h-4" />
                       Catálogo de Dispositivos
                     </button>
+                    <button
+                      onClick={() => setAdminTab('production')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'production'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Factory className="w-4 h-4" />
+                      Produção
+                    </button>
                   </div>
 
                   {/* Tab Body Contents */}
@@ -6752,6 +6928,22 @@ export default function PoolControllerPage() {
                               <div className="space-y-1">
                                 <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Catálogo de Dispositivos</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Gerencie os modelos disponíveis e suas capacidades (motores, timers, aquecimento solar).</p>
+                              </div>
+                            </button>
+
+                            {/* Card production */}
+                            <button
+                              onClick={() => setAdminTab('production')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Factory className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Produção (Whitelist)</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                  Cadastre aparelhos fabricados via QR e veja quantos usuários têm cada modelo instalado.
+                                </p>
                               </div>
                             </button>
 
@@ -8041,6 +8233,209 @@ export default function PoolControllerPage() {
                             })}
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tab: Produção / whitelist de fábrica */}
+                  {adminTab === 'production' && (
+                    <div className="space-y-6">
+                      <div className="bg-white/5 border border-amber-400/30 rounded-2xl p-5 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                              <Factory className="w-4 h-4 text-amber-400" />
+                              Cadastro de Produção via QR
+                            </h3>
+                            <p className="text-[10px] text-slate-400 mt-1 max-w-xl">
+                              Escaneie o QR de fábrica (serial, provision, model, hw, fw, date). O aparelho só poderá ser vinculado por usuários depois de entrar nesta whitelist.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => loadProductionData()}
+                            className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl text-[10px] font-bold flex items-center gap-1.5"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${productionLoading ? 'animate-spin' : ''}`} />
+                            Atualizar
+                          </button>
+                        </div>
+
+                        {!isScanningProductionQr ? (
+                          <button
+                            type="button"
+                            onClick={startProductionQrScanner}
+                            className="w-full sm:w-auto px-4 py-3 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-xl flex items-center justify-center gap-2 active:scale-[0.99]"
+                          >
+                            <QrCode className="w-4 h-4" />
+                            Escanear QR de Produção
+                          </button>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <Camera className="w-3.5 h-3.5 animate-pulse" />
+                                Aponte para o QR de fábrica
+                              </span>
+                              <button
+                                type="button"
+                                onClick={stopProductionQrScanner}
+                                className="px-3 py-1.5 bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10px] font-bold rounded-lg"
+                              >
+                                Parar
+                              </button>
+                            </div>
+                            <div className="rounded-xl overflow-hidden border border-white/10 bg-black aspect-square max-w-sm mx-auto">
+                              <div id="qr-reader-production" className="w-full h-full overflow-hidden [&_video]:object-cover" />
+                            </div>
+                          </div>
+                        )}
+
+                        {productionQrError && (
+                          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-200">
+                            {productionQrError}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Stats by model */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {productionStats.map((stat) => (
+                          <div
+                            key={stat.model}
+                            className="p-4 bg-gradient-to-br from-emerald-500/10 to-teal-600/5 border border-emerald-500/20 rounded-2xl"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-extrabold text-white font-mono">{stat.model}</span>
+                              <Cpu className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                              <div>
+                                <span className="text-slate-400 block">Produzidos</span>
+                                <span className="text-white font-bold text-lg">{stat.produced}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Usuários c/ modelo</span>
+                                <span className="text-emerald-300 font-bold text-lg">{stat.unique_users}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Instalados</span>
+                                <span className="text-cyan-300 font-semibold">{stat.claimed}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Disponíveis</span>
+                                <span className="text-amber-300 font-semibold">{stat.available}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {productionStats.length === 0 && !productionLoading && (
+                          <div className="sm:col-span-2 lg:col-span-3 p-6 text-center text-xs text-slate-500 border border-dashed border-white/10 rounded-2xl">
+                            Nenhum aparelho na whitelist ainda. Escaneie o primeiro QR de produção.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* List */}
+                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                        <div className="px-5 py-3 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <span className="text-xs font-bold text-white">
+                            Aparelhos em production_devices ({productionDevices.length})
+                          </span>
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                              value={productionSearch}
+                              onChange={(e) => setProductionSearch(e.target.value)}
+                              placeholder="Buscar serial / modelo / e-mail..."
+                              className="pl-8 pr-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-[11px] text-white w-full sm:w-64 focus:outline-none focus:border-amber-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="divide-y divide-white/5 max-h-[420px] overflow-y-auto">
+                          {productionDevices
+                            .filter((row) => {
+                              const q = productionSearch.trim().toLowerCase();
+                              if (!q) return true;
+                              return (
+                                row.serial.toLowerCase().includes(q) ||
+                                row.model.toLowerCase().includes(q) ||
+                                (row.owner_email || '').toLowerCase().includes(q)
+                              );
+                            })
+                            .map((row) => (
+                              <div
+                                key={row.serial}
+                                className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                              >
+                                <div className="min-w-0 space-y-1">
+                                  <p className="font-mono text-cyan-200 font-semibold truncate">{row.serial}</p>
+                                  <p className="text-[10px] text-slate-400">
+                                    {row.model}
+                                    {row.hw ? ` · hw ${row.hw}` : ''}
+                                    {row.fw ? ` · fw ${row.fw}` : ''}
+                                    {row.owner_email ? ` · ${row.owner_email}` : ''}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span
+                                    className={`px-2 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider ${
+                                      row.status === 'claimed'
+                                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
+                                        : row.status === 'available'
+                                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/20'
+                                          : 'bg-slate-500/15 text-slate-300 border border-slate-500/20'
+                                    }`}
+                                  >
+                                    {row.status === 'claimed'
+                                      ? 'Instalado'
+                                      : row.status === 'available'
+                                        ? 'Disponível'
+                                        : 'Desativado'}
+                                  </span>
+                                  {row.status !== 'disabled' && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const ok = await setProductionDeviceStatus(row.serial, 'disabled');
+                                        if (ok) {
+                                          showToast('Produção', `${row.serial} desativado.`, 'info');
+                                          loadProductionData();
+                                        } else {
+                                          showToast('Produção', 'Não foi possível desativar.', 'error');
+                                        }
+                                      }}
+                                      className="px-2 py-1 text-[9px] font-bold text-rose-300 border border-rose-500/20 rounded-lg hover:bg-rose-500/10"
+                                    >
+                                      Desativar
+                                    </button>
+                                  )}
+                                  {row.status === 'disabled' && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const ok = await setProductionDeviceStatus(row.serial, 'available');
+                                        if (ok) {
+                                          showToast('Produção', `${row.serial} reativado.`, 'success');
+                                          loadProductionData();
+                                        }
+                                      }}
+                                      className="px-2 py-1 text-[9px] font-bold text-emerald-300 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/10"
+                                    >
+                                      Reativar
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          {productionLoading && (
+                            <p className="py-8 text-center text-xs text-slate-500">Carregando produção...</p>
+                          )}
+                          {!productionLoading && productionDevices.length === 0 && (
+                            <p className="py-8 text-center text-xs text-slate-500">Lista vazia.</p>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}

@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { SharePermission } from './shareService';
+import { claimProductionDevice } from './productionDeviceService';
 
 export interface SupabaseDevice {
   id: string;
@@ -104,6 +105,11 @@ export async function fetchAllActiveDevices(): Promise<SupabaseDeviceWithOwner[]
   }
 }
 
+/**
+ * Registers a device for the current user by claiming it from the production whitelist.
+ * Requires a valid factory `provision` matching `production_devices`.
+ * Returns null on unrecognized / already claimed by another user (generic client error).
+ */
 export async function registerDevice(
   deviceId: string,
   model: string,
@@ -112,79 +118,34 @@ export async function registerDevice(
   pairingToken: string = ''
 ): Promise<SupabaseDevice | null> {
   try {
-    const { data, error } = await supabase
-      .from('devices')
-      .upsert({
-        id: deviceId,
-        model: model,
-        pairing_token: pairingToken || 'TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
-        serial: serial || null,
-        user_id: userId,
-      })
-      .select()
-      .single();
+    const claimSerial = (serial || deviceId || '').trim();
+    const provision = (pairingToken || '').trim();
 
-    if (!error && data) {
-      return data;
+    if (!claimSerial || !provision) {
+      console.warn('[DeviceService] registerDevice refused: missing serial or provision');
+      return null;
     }
 
-    console.warn('[DeviceService] Direct upsert warning, trying fallback update:', error?.message);
+    const result = await claimProductionDevice(claimSerial, provision, model);
 
-    // Fallback 1: Try updating the user_id for existing device record
-    const { data: updateData, error: updateError } = await supabase
-      .from('devices')
-      .update({
-        user_id: userId,
-        model: model,
-        ...(serial ? { serial } : {}),
-        ...(pairingToken ? { pairing_token: pairingToken } : {})
-      })
-      .eq('id', deviceId)
-      .select()
-      .single();
-
-    if (!updateError && updateData) {
-      return updateData;
+    if (!result.ok) {
+      console.warn('[DeviceService] claim_production_device failed:', result.error);
+      return null;
     }
 
-    // Fallback 2: Check if device exists under MLZ- prefix or cleaned ID
-    const alternateId = deviceId.toLowerCase().startsWith('mlz-')
-      ? deviceId.substring(4)
-      : `MLZ-${deviceId}`;
-
-    const { data: altData, error: altError } = await supabase
-      .from('devices')
-      .update({
-        user_id: userId,
-        model: model,
-        ...(serial ? { serial } : {}),
-        ...(pairingToken ? { pairing_token: pairingToken } : {})
-      })
-      .eq('id', alternateId)
-      .select()
-      .single();
-
-    if (!altError && altData) {
-      return altData;
+    // Ensure user_id matches the caller session (RPC already binds auth.uid())
+    if (result.device.user_id && result.device.user_id !== userId) {
+      console.warn('[DeviceService] claim returned unexpected user_id');
     }
 
-    // Fallback 3: Guarantee non-null return for local session state
     return {
-      id: deviceId,
-      model: model,
-      serial: serial || undefined,
-      pairing_token: pairingToken || undefined,
-      user_id: userId,
+      ...result.device,
+      access: 'owner' as const,
+      permission: 'owner' as const,
     };
   } catch (err) {
-    console.warn('[DeviceService] Register device exception, fallback to local instance:', err);
-    return {
-      id: deviceId,
-      model: model,
-      serial: serial || undefined,
-      pairing_token: pairingToken || undefined,
-      user_id: userId,
-    };
+    console.error('[DeviceService] Register device exception:', err);
+    return null;
   }
 }
 
