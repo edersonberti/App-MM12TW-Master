@@ -32,19 +32,33 @@ export type DeviceSettingsUpdate = Partial<
   Omit<SupabaseDeviceSettings, 'device_id'>
 >;
 
-async function assertManagedDevice(deviceId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('id')
-    .eq('id', deviceId)
-    .maybeSingle();
+/** True when the current user may INSERT/UPDATE device_settings (RLS WITH CHECK). */
+async function assertCanManageSettings(deviceId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('can_manage_device_settings', {
+    p_device_id: deviceId,
+  });
 
   if (error) {
-    console.error('[SettingsService] Device ownership check failed:', error.message);
-    return false;
+    // Fallback: active device the user can still see (owner / configure / elevated).
+    console.warn(
+      '[SettingsService] can_manage_device_settings RPC failed, falling back to devices lookup:',
+      error.message
+    );
+    const { data: device, error: deviceError } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('id', deviceId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (deviceError) {
+      console.error('[SettingsService] Device ownership check failed:', deviceError.message);
+      return false;
+    }
+    return !!device;
   }
 
-  return !!data;
+  return data === true;
 }
 
 export async function fetchDeviceSettings(deviceId: string): Promise<SupabaseDeviceSettings | null> {
@@ -70,12 +84,12 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
   const existing = await fetchDeviceSettings(deviceId);
   if (existing) return existing;
 
-  // Never create settings for a device the user cannot see in `devices`
-  // (deleted, unassigned, or another user's equipment) — that triggers RLS 42501.
-  const canManage = await assertManagedDevice(deviceId);
+  // Soft-deleted / control-only / foreign devices: SELECT on devices may still
+  // succeed, but INSERT into device_settings is blocked by RLS (status=active + configure).
+  const canManage = await assertCanManageSettings(deviceId);
   if (!canManage) {
     console.warn(
-      '[SettingsService] Skipping settings create: device not found or not accessible for current user:',
+      '[SettingsService] Skipping settings create: no configure access or device not active:',
       deviceId
     );
     return null;
@@ -92,6 +106,11 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
       if (error.message?.includes('duplicate key') || error.code === '23505') {
         return await fetchDeviceSettings(deviceId);
       }
+      // 42501 = RLS — expected for races / permission changes; do not alarm.
+      if (error.code === '42501' || /row-level security/i.test(error.message || '')) {
+        console.warn('[SettingsService] Settings create blocked by RLS:', deviceId);
+        return await fetchDeviceSettings(deviceId);
+      }
       console.error('[SettingsService] Error creating default settings:', error.message);
       return null;
     }
@@ -106,10 +125,10 @@ export async function saveDeviceSettings(
   deviceId: string,
   settings: DeviceSettingsUpdate
 ): Promise<SupabaseDeviceSettings | null> {
-  const canManage = await assertManagedDevice(deviceId);
+  const canManage = await assertCanManageSettings(deviceId);
   if (!canManage) {
     console.error(
-      '[SettingsService] Cannot save settings: device missing or not owned/accessible:',
+      '[SettingsService] Cannot save settings: device missing, deleted, or not configurable:',
       deviceId
     );
     return null;

@@ -1096,7 +1096,10 @@ export default function PoolControllerPage() {
     if (isSupabaseConfigured() && currentUser?.isSupabase && deviceId && deviceIsRegistered) {
       const loadDbSettings = async () => {
         try {
-          const settings = await ensureDeviceSettings(deviceId);
+          // control-only / soft-deleted: fetch only — ensure INSERT is blocked by RLS
+          const settings = canConfigureActiveDevice
+            ? await ensureDeviceSettings(deviceId)
+            : await fetchDeviceSettings(deviceId);
           if (settings) {
             setMotor1Name(settings.motor1_name ?? 'Motor 01');
             setMotor2Name(settings.motor2_name ?? 'Motor 02');
@@ -1164,7 +1167,7 @@ export default function PoolControllerPage() {
       };
       loadDbSettings();
     }
-  }, [deviceId, currentUser, registeredEquipments]);
+  }, [deviceId, currentUser, registeredEquipments, canConfigureActiveDevice]);
 
   useEffect(() => {
     return () => {
@@ -1280,20 +1283,6 @@ export default function PoolControllerPage() {
       }
     }
 
-    const isDeleted = (id: string) => {
-      if (!id) return false;
-      const idLower = id.toLowerCase();
-      const cleanLower = cleanDeviceId(id).toLowerCase();
-      return deletedIds.some(del => del === idLower || del === cleanLower || areDeviceIdsMatching(del, id));
-    };
-
-    let rawLocal: any[] = [];
-    try {
-      rawLocal = JSON.parse(localStorage.getItem('registered_equipments') || '[]');
-    } catch (e) {
-      rawLocal = [];
-    }
-
     // Prefer Supabase rows; never hide an active cloud device behind localStorage blacklist
     const mappedDb = (dbDevices || []).map((d: any) => ({
       id: d.id,
@@ -1309,16 +1298,10 @@ export default function PoolControllerPage() {
           : ('owner' as const),
     }));
 
-    const validLocal = (Array.isArray(rawLocal) ? rawLocal : []).filter((eq: any) => eq?.id && !isDeleted(eq.id));
-
-    // Combine DB devices and valid local devices avoiding duplicates
+    // Cloud is source of truth for Supabase users. Soft-deleted devices still pass
+    // devices SELECT RLS but are excluded from fetchUserDevices — keeping them in
+    // localStorage caused ensureDeviceSettings → RLS 42501 spam.
     const combined: any[] = [...mappedDb];
-    for (const item of validLocal) {
-      const exists = combined.some(existing => areDeviceIdsMatching(existing.id, item.id));
-      if (!exists) {
-        combined.push(item);
-      }
-    }
 
     setRegisteredEquipments(combined);
     localStorage.setItem('registered_equipments', JSON.stringify(combined));

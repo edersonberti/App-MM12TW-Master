@@ -235,18 +235,32 @@ export async function fetchDeviceSettings(deviceId: string): Promise<SupabaseDev
   }
 }
 
-async function assertManagedDevice(deviceId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('id')
-    .eq('id', deviceId)
-    .maybeSingle();
+/** Matches device_settings INSERT/UPDATE RLS (active + configure permission). */
+async function assertCanManageSettings(deviceId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('can_manage_device_settings', {
+    p_device_id: deviceId,
+  });
 
   if (error) {
-    console.warn('[Supabase Sync] Device access check failed:', error.message);
-    return false;
+    console.warn(
+      '[Supabase Sync] can_manage_device_settings RPC failed, falling back:',
+      error.message
+    );
+    const { data: device, error: deviceError } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('id', deviceId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (deviceError) {
+      console.warn('[Supabase Sync] Device access check failed:', deviceError.message);
+      return false;
+    }
+    return !!device;
   }
-  return !!data;
+
+  return data === true;
 }
 
 /**
@@ -258,9 +272,12 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
   const existing = await fetchDeviceSettings(deviceId);
   if (existing) return existing;
 
-  const canManage = await assertManagedDevice(deviceId);
+  const canManage = await assertCanManageSettings(deviceId);
   if (!canManage) {
-    console.warn('[Supabase Sync] Skipping settings create for inaccessible device:', deviceId);
+    console.warn(
+      '[Supabase Sync] Skipping settings create: no configure access or device not active:',
+      deviceId
+    );
     return null;
   }
 
@@ -273,6 +290,10 @@ export async function ensureDeviceSettings(deviceId: string): Promise<SupabaseDe
 
     if (error) {
       if (error.message?.includes('duplicate key') || error.code === '23505') {
+        return await fetchDeviceSettings(deviceId);
+      }
+      if (error.code === '42501' || /row-level security/i.test(error.message || '')) {
+        console.warn('[Supabase Sync] Settings create blocked by RLS:', deviceId);
         return await fetchDeviceSettings(deviceId);
       }
       console.warn('[Supabase Sync] Error creating default device settings:', error.message);
@@ -294,7 +315,7 @@ export async function saveDeviceSettings(
 ): Promise<SupabaseDeviceSettings | null> {
   if (!isSupabaseConfigured()) return null;
 
-  const canManage = await assertManagedDevice(deviceId);
+  const canManage = await assertCanManageSettings(deviceId);
   if (!canManage) {
     console.warn('[Supabase Sync] Cannot save settings for inaccessible device:', deviceId);
     return null;
