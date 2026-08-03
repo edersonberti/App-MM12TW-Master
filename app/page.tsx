@@ -5298,9 +5298,8 @@ export default function PoolControllerPage() {
                             }`}>
                               {heatingType === 'solar' && <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs font-bold truncate">
-                              <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              <span>Solar</span>
+                            <div className="flex items-center text-xs font-bold truncate">
+                              <span>Aquec. Solar</span>
                             </div>
                           </label>
 
@@ -5325,9 +5324,8 @@ export default function PoolControllerPage() {
                             }`}>
                               {heatingType === 'eletrico' && <div className="w-1.5 h-1.5 rounded-full bg-[#4398fa]" />}
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs font-bold truncate">
-                              <Zap className="w-3.5 h-3.5 text-[#4398fa] shrink-0" />
-                              <span>Elétrico</span>
+                            <div className="flex items-center text-xs font-bold truncate">
+                              <span>Trocador/Elétrico</span>
                             </div>
                           </label>
                         </div>
