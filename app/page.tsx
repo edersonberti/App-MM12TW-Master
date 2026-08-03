@@ -360,7 +360,7 @@ export default function PoolControllerPage() {
   const SUPPORT_WHATSAPP_NUMBER = '5548996089187';
 
   // Admin & Owner Dashboard states
-  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware' | 'production'>('home');
+  const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware' | 'production' | 'brand'>('home');
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
   const [productionDevices, setProductionDevices] = useState<ProductionDevice[]>([]);
   const [productionStats, setProductionStats] = useState<ProductionModelStats[]>([]);
@@ -449,6 +449,45 @@ export default function PoolControllerPage() {
   const [solarDif, setSolarDif] = useState<number>(4);
   const [sensorCollectorError, setSensorCollectorError] = useState<boolean>(false);
   const [sensorPoolError, setSensorPoolError] = useState<boolean>(false);
+
+  // Custom Manufacturer Logo State & Handlers
+  const [manufacturerLogo, setManufacturerLogo] = useState<string>('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedLogo = localStorage.getItem('custom_manufacturer_logo');
+      if (savedLogo) {
+        setManufacturerLogo(savedLogo);
+      }
+    }
+  }, []);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Arquivo Muito Grande', 'O tamanho máximo recomendado para a imagem é de 2 MB.', 'warning');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setManufacturerLogo(result);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('custom_manufacturer_logo', result);
+      }
+      showToast('Logo Atualizado', 'O logo do fabricante foi alterado com sucesso!', 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleResetLogo = () => {
+    setManufacturerLogo('');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('custom_manufacturer_logo');
+    }
+    showToast('Logo Restaurado', 'O logo padrão do fabricante foi redefinido.', 'info');
+  };
 
   // Auth inputs
   const [emailInput, setEmailInput] = useState('');
@@ -4207,14 +4246,10 @@ export default function PoolControllerPage() {
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Image 
-                    src="https://www.masterlazer.com.br/images/icon.jpg" 
+                  <img 
+                    src={manufacturerLogo || "https://www.masterlazer.com.br/images/icon.jpg"} 
                     alt="Master Lazer Logo" 
-                    width={28}
-                    height={28}
-                    className="object-contain rounded-md" 
-                    referrerPolicy="no-referrer"
-                    priority
+                    className="w-7 h-7 object-contain rounded-md" 
                   />
                   <div>
                     <h1 className="text-xs font-bold tracking-tight text-[#4398fa] m-1 leading-none">MASTER LAZER</h1>
@@ -4728,10 +4763,10 @@ export default function PoolControllerPage() {
                       >
                         <div className="flex items-center justify-between w-full">
                           <div className="flex items-center gap-1.5">
-                            <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-[#4398fa]' : 'text-slate-500'}`} />
+                            <Flame className={`w-3.5 h-3.5 ${currentProgram !== '---' ? 'text-emerald-400' : 'text-rose-500'}`} />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">LED</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${currentProgram !== '---' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -4739,7 +4774,7 @@ export default function PoolControllerPage() {
                             {currentProgram !== '---' ? `Prog: ${currentProgram}` : 'Sem Programa'}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium">
-                            Status: <span className={currentProgram !== '---' ? 'text-[#4398fa] font-bold' : 'text-slate-500 font-bold'}>
+                            Status: <span className={currentProgram !== '---' ? 'text-emerald-400 font-bold' : 'text-rose-500 font-bold'}>
                               {currentProgram !== '---' ? 'LIGADO' : 'DESLIGADO'}
                             </span>
                           </p>
@@ -4758,7 +4793,7 @@ export default function PoolControllerPage() {
                             <Clock className="w-3.5 h-3.5 text-cyan-400" />
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TIMERS</span>
                           </div>
-                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' || (hidroTimerHours !== 'D' && hidroTimerHours !== 'off') ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full ${filterInit1 !== 'D' || filterInit2 !== 'D' || ledDuration !== '0' || (hidroTimerHours !== 'D' && hidroTimerHours !== 'off') ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
                         </div>
                         
                         <div className="mt-1">
@@ -4771,12 +4806,12 @@ export default function PoolControllerPage() {
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium truncate flex items-center gap-1.5">
                             {hasLedTimer && (
-                              <span>LED: <span className={ledDuration !== '0' ? 'text-cyan-400 font-bold' : 'text-slate-500 font-bold'}>{ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}</span></span>
+                              <span>LED: <span className={ledDuration !== '0' ? 'text-emerald-400 font-bold' : 'text-rose-500 font-bold'}>{ledDuration !== '0' ? `${ledStartHour}h (${ledDuration}h)` : 'Inativo'}</span></span>
                             )}
                             {hasHidroTimer && hidroTimerHours !== 'D' && hidroTimerHours !== 'off' && (
                               <>
                                 {hasLedTimer && <span>•</span>}
-                                <span className="truncate">{motor1Name}: <span className="text-cyan-400 font-bold">{hidroTimerHours}h</span></span>
+                                <span className="truncate">{motor1Name}: <span className="text-emerald-400 font-bold">{hidroTimerHours}h</span></span>
                               </>
                             )}
                           </p>
@@ -4796,10 +4831,10 @@ export default function PoolControllerPage() {
                       >
                         <div className="flex items-center justify-between w-full">
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{name}</span>
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
                         </div>
                         <div className="mt-1">
-                            <p className={`text-xs font-bold ${on ? 'text-[#4398fa]' : 'text-slate-500'}`}>
+                            <p className={`text-xs font-bold ${on ? 'text-emerald-400' : 'text-rose-500'}`}>
                               {on ? 'LIGADO' : 'DESLIGADO'}
                           </p>
                         </div>
@@ -5104,7 +5139,7 @@ export default function PoolControllerPage() {
                       <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-extrabold text-[#4398fa] uppercase tracking-wider">Timer 1</span>
-                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${filterInit1 !== 'D' ? 'bg-[#4398fa]/20 text-[#4398fa]' : 'bg-slate-500/20 text-slate-400'}`}>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold border ${filterInit1 !== 'D' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-500 border-rose-500/30'}`}>
                             {filterInit1 !== 'D' ? 'Ativo' : 'Inativo'}
                           </span>
                         </div>
@@ -5142,7 +5177,7 @@ export default function PoolControllerPage() {
                       <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-extrabold text-[#4398fa] uppercase tracking-wider">Timer 2</span>
-                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${filterInit2 !== 'D' ? 'bg-[#4398fa]/20 text-[#4398fa]' : 'bg-slate-500/20 text-slate-400'}`}>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold border ${filterInit2 !== 'D' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-500 border-rose-500/30'}`}>
                             {filterInit2 !== 'D' ? 'Ativo' : 'Inativo'}
                           </span>
                         </div>
@@ -6873,6 +6908,17 @@ export default function PoolControllerPage() {
                       <Factory className="w-4 h-4" />
                       Produção
                     </button>
+                    <button
+                      onClick={() => setAdminTab('brand')}
+                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+                        adminTab === 'brand'
+                          ? 'border-amber-400 text-amber-400 bg-white/5'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
+                      }`}
+                    >
+                      <Upload className="w-4 h-4" />
+                      Logo do Fabricante
+                    </button>
                   </div>
 
                   {/* Tab Body Contents */}
@@ -7000,7 +7046,7 @@ export default function PoolControllerPage() {
                             {/* Card 5 */}
                             <button
                               onClick={() => setAdminTab('aba4')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] sm:col-span-2"
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
                             >
                               <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
                                 <Database className="w-5 h-5" />
@@ -7008,6 +7054,20 @@ export default function PoolControllerPage() {
                               <div className="space-y-1">
                                 <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Configurações de Conexão MQTT</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Configure endereços do broker, portas, tópicos customizados, credenciais e info técnica.</p>
+                              </div>
+                            </button>
+
+                            {/* Card 6 */}
+                            <button
+                              onClick={() => setAdminTab('brand')}
+                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                            >
+                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                                <Upload className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Logo do Fabricante & Identidade</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">Personalize a logomarca do fabricante exibida no cabeçalho principal do aplicativo.</p>
                               </div>
                             </button>
                           </div>
@@ -8658,6 +8718,85 @@ export default function PoolControllerPage() {
                             ))}
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tab: Logo do Fabricante / Identidade Visual */}
+                  {adminTab === 'brand' && (
+                    <div className="p-6 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md space-y-6 text-left">
+                      <div className="flex items-center justify-between pb-4 border-b border-white/10">
+                        <div>
+                          <h3 className="text-base font-bold text-white flex items-center gap-2">
+                            <Upload className="w-5 h-5 text-amber-400" />
+                            Logo do Fabricante (Área Administrativa)
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-1">
+                            Configure a logomarca do fabricante exibida no cabeçalho principal de todos os usuários.
+                          </p>
+                        </div>
+                        {manufacturerLogo && (
+                          <button
+                            type="button"
+                            onClick={handleResetLogo}
+                            className="px-3.5 py-2 text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-xl transition-colors flex items-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            Restaurar Logo Padrão
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                        {/* Seção de Upload & Preview */}
+                        <div className="p-5 bg-black/30 border border-white/10 rounded-2xl space-y-4">
+                          <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">
+                            Visualização Atual do Logo:
+                          </span>
+                          <div className="w-full h-24 rounded-xl bg-slate-900 border border-white/15 flex items-center justify-center p-3 overflow-hidden shadow-inner relative group">
+                            <img
+                              src={manufacturerLogo || "https://www.masterlazer.com.br/images/icon.jpg"}
+                              alt="Logo Fabricante"
+                              className="max-h-full max-w-full object-contain"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-300">
+                              Selecione uma imagem do computador para alterar:
+                            </label>
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              onChange={handleLogoUpload}
+                              className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500/20 file:text-amber-300 hover:file:bg-amber-500/30 file:cursor-pointer cursor-pointer border border-white/10 rounded-xl p-2 bg-black/20"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Informações e Especificações Recomendadas */}
+                        <div className="p-5 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-xs text-slate-300 space-y-3">
+                          <p className="font-bold text-amber-300 text-sm flex items-center gap-1.5">
+                            <Info className="w-4 h-4 text-amber-400 shrink-0" />
+                            Especificações Recomendadas para o Logo
+                          </p>
+                          <p className="text-slate-300 text-xs leading-relaxed">
+                            Para garantir a melhor qualidade e proporção visual na barra superior do aplicativo:
+                          </p>
+                          <ul className="list-disc list-inside space-y-2 pl-1 text-slate-200 text-xs">
+                            <li>
+                              <strong className="text-white">Proporção e Tamanho ideal:</strong> 200 × 60 pixels (altura entre 30px e 60px).
+                            </li>
+                            <li>
+                              <strong className="text-white">Formatos/Extensões aceitas:</strong> PNG (com fundo transparente), SVG, WEBP ou JPG.
+                            </li>
+                            <li>
+                              <strong className="text-white">Fundo Transparente:</strong> Formatos PNG ou SVG com transparência são altamente recomendados.
+                            </li>
+                            <li>
+                              <strong className="text-white">Tamanho Máximo do Arquivo:</strong> Até 2 MB.
+                            </li>
+                          </ul>
+                        </div>
                       </div>
                     </div>
                   )}
