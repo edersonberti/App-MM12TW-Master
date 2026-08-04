@@ -949,13 +949,12 @@ export default function PoolControllerPage() {
       const configVersion = localStorage.getItem('app_config_version');
       let storedBroker = localStorage.getItem('mqtt_broker');
       let storedPort = localStorage.getItem('mqtt_port');
+      // Any non-default broker (legacy emqx/hivemq failover, wrong port, stale config) → reset
       const needsMosquitto8081 =
         !configVersion ||
         configVersion !== '2026_08_04_v3_mosquitto_8081' ||
         storedBroker !== DEFAULT_MQTT_BROKER ||
-        storedPort !== DEFAULT_MQTT_PORT ||
-        storedBroker === 'broker.emqx.io' ||
-        storedBroker === 'broker.hivemq.com';
+        storedPort !== DEFAULT_MQTT_PORT;
 
       if (needsMosquitto8081) {
         storedBroker = DEFAULT_MQTT_BROKER;
