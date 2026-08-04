@@ -36,6 +36,10 @@ export interface SupabaseDeviceSettings {
   led_program?: string | null;
   hidro_timer_enabled?: boolean | null;
   hidro_timer_hours?: string | null;
+  solar_work_mode?: 'off' | 'manual' | 'auto' | null;
+  solar_heating_type?: 'solar' | 'eletrico' | null;
+  solar_pool_max?: number | null;
+  solar_dif?: number | null;
   updated_at?: string;
 }
 

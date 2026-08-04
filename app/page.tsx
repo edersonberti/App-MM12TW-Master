@@ -165,7 +165,7 @@ function formatAuditMetadata(
 
   if (eventType === 'device_hidro_timer_updated') {
     const enabled = m.hidro_timer_enabled === true;
-    return enabled ? `Ativo (${m.hidro_timer_hours ?? '?'}h)` : 'Desligado';
+    return enabled ? `Ativo (${m.hidro_timer_hours ?? '?'}h)` : '';
   }
 
   if (eventType === 'device_motor_names_updated') {
@@ -638,8 +638,10 @@ export default function PoolControllerPage() {
   const [motor8Name, setMotor8Name] = useState('Motor 08');
   const [motorSettingsSaveState, setMotorSettingsSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const motorNameSaveTimersRef = useRef<Partial<Record<MotorNumber, ReturnType<typeof setTimeout>>>>({});
+  const solarSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editingMotorNum, setEditingMotorNum] = useState<MotorNumber | null>(null);
   const [solarErrorBanner, setSolarErrorBanner] = useState<string | null>(null);
+  const [solarSettingsSaveState, setSolarSettingsSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // LED States
   const [ledHue, setLedHueState] = useState(0);
@@ -1310,6 +1312,20 @@ export default function PoolControllerPage() {
               localStorage.setItem('hidro_timer_enabled', String(hidroEnabled));
               localStorage.setItem('hidro_timer_hours', hidroEnabled ? hidroHours : 'D');
             }
+
+            // Solar / heating config from device_settings
+            if (settings.solar_work_mode === 'off' || settings.solar_work_mode === 'manual' || settings.solar_work_mode === 'auto') {
+              setSolarWorkMode(settings.solar_work_mode);
+            }
+            if (settings.solar_heating_type === 'solar' || settings.solar_heating_type === 'eletrico') {
+              setHeatingType(settings.solar_heating_type);
+            }
+            if (typeof settings.solar_pool_max === 'number' && settings.solar_pool_max >= 25 && settings.solar_pool_max <= 40) {
+              setSolarPoolMax(settings.solar_pool_max);
+            }
+            if (typeof settings.solar_dif === 'number' && settings.solar_dif >= 2 && settings.solar_dif <= 20) {
+              setSolarDif(settings.solar_dif);
+            }
           }
         } catch (err) {
           console.warn("Error loading device settings from Supabase:", err);
@@ -1325,6 +1341,10 @@ export default function PoolControllerPage() {
         if (timer) clearTimeout(timer);
       });
       motorNameSaveTimersRef.current = {};
+      if (solarSaveTimerRef.current) {
+        clearTimeout(solarSaveTimerRef.current);
+        solarSaveTimerRef.current = null;
+      }
     };
   }, [deviceId]);
 
@@ -2426,6 +2446,58 @@ export default function PoolControllerPage() {
           return;
         }
 
+        if (lowerRelative === 'solar/cfg') {
+          try {
+            const solarCfg = JSON.parse(payload);
+            if (solarCfg.mode === 'off' || solarCfg.mode === 'manual' || solarCfg.mode === 'auto') {
+              setSolarWorkMode(solarCfg.mode);
+            } else if (solarCfg.work_mode === 'off' || solarCfg.work_mode === 'manual' || solarCfg.work_mode === 'auto') {
+              setSolarWorkMode(solarCfg.work_mode);
+            }
+            if (solarCfg.type === 'solar' || solarCfg.type === 'eletrico') {
+              setHeatingType(solarCfg.type);
+            } else if (solarCfg.heating_type === 'solar' || solarCfg.heating_type === 'eletrico') {
+              setHeatingType(solarCfg.heating_type);
+            }
+            const poolMax = Number(solarCfg.pool_max ?? solarCfg.poolMax ?? solarCfg.max);
+            if (Number.isFinite(poolMax) && poolMax >= 25 && poolMax <= 40) {
+              setSolarPoolMax(Math.round(poolMax));
+            }
+            const dif = Number(solarCfg.dif ?? solarCfg.diff ?? solarCfg.delta);
+            if (Number.isFinite(dif) && dif >= 2 && dif <= 20) {
+              setSolarDif(Math.round(dif));
+            }
+          } catch (err) {
+            console.warn('Erro ao decodificar solar/cfg JSON:', err);
+          }
+          return;
+        }
+
+        if (lowerRelative === 'solar/mode') {
+          const mode = payload.toLowerCase();
+          if (mode === 'off' || mode === 'manual' || mode === 'auto') {
+            setSolarWorkMode(mode);
+          }
+          return;
+        }
+        if (lowerRelative === 'solar/type') {
+          const type = payload.toLowerCase();
+          if (type === 'solar' || type === 'eletrico') {
+            setHeatingType(type);
+          }
+          return;
+        }
+        if (lowerRelative === 'solar/pool_max' || lowerRelative === 'solar/max') {
+          const n = parseInt(payload, 10);
+          if (!isNaN(n) && n >= 25 && n <= 40) setSolarPoolMax(n);
+          return;
+        }
+        if (lowerRelative === 'solar/dif' || lowerRelative === 'solar/diff') {
+          const n = parseInt(payload, 10);
+          if (!isNaN(n) && n >= 2 && n <= 20) setSolarDif(n);
+          return;
+        }
+
         // Motor 1 / Hidro
         if (lowerRelative === 'mt1' || lowerRelative === 'mt1/state') {
           setMotorHidro(
@@ -2586,6 +2658,11 @@ export default function PoolControllerPage() {
             'pwm/g',
             'pwm/b',
             'solar/erro',
+            'solar/cfg',
+            'solar/mode',
+            'solar/type',
+            'solar/pool_max',
+            'solar/dif',
             'state',
             'ft/cfg',
             'led/tmr/cfg',
@@ -3578,6 +3655,82 @@ export default function PoolControllerPage() {
     publishTopic(`MLZ/${cleanId}/mt1/timer/hours`, String(data.hours));
 
     logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
+  };
+
+  type SolarSettingsPatch = {
+    mode?: 'off' | 'manual' | 'auto';
+    type?: 'solar' | 'eletrico';
+    poolMax?: number;
+    dif?: number;
+  };
+
+  /** Persist solar config: Front → API → Supabase + MQTT to ESP */
+  const saveSolarSettings = (patch: SolarSettingsPatch = {}, opts?: { debounceMs?: number }) => {
+    const nextMode = patch.mode ?? solarWorkMode;
+    const nextType = patch.type ?? heatingType;
+    const nextPoolMax = Math.max(25, Math.min(40, patch.poolMax ?? solarPoolMax));
+    const nextDif = Math.max(2, Math.min(20, patch.dif ?? solarDif));
+
+    if (patch.mode) setSolarWorkMode(patch.mode);
+    if (patch.type) setHeatingType(patch.type);
+    if (patch.poolMax != null) setSolarPoolMax(nextPoolMax);
+    if (patch.dif != null) setSolarDif(nextDif);
+
+    const run = async () => {
+      setSolarSettingsSaveState('saving');
+
+      const activeRaw = (activeDeviceIdRef.current || deviceId || '').trim();
+      const cleanId = cleanDeviceId(activeRaw).trim() || activeRaw;
+
+      if (isSupabaseConfigured() && currentUser?.isSupabase && activeRaw && canConfigureActiveDevice) {
+        const saved = await saveDeviceSettings(activeRaw, {
+          solar_work_mode: nextMode,
+          solar_heating_type: nextType,
+          solar_pool_max: nextPoolMax,
+          solar_dif: nextDif,
+        });
+        setSolarSettingsSaveState(saved ? 'saved' : 'error');
+      } else {
+        setSolarSettingsSaveState(canConfigureActiveDevice ? 'idle' : 'error');
+      }
+
+      if (cleanId) {
+        const cfg = {
+          mode: nextMode,
+          work_mode: nextMode,
+          type: nextType,
+          heating_type: nextType,
+          pool_max: nextPoolMax,
+          dif: nextDif,
+        };
+        const jsonStr = JSON.stringify(cfg);
+        const mqttOpts = { qos: 1 as const, retained: true };
+        publishTopic(`MLZ/${cleanId}/solar/cfg`, jsonStr, mqttOpts);
+        publishTopic(`MLZ/${cleanId}/solar/mode`, nextMode, mqttOpts);
+        publishTopic(`MLZ/${cleanId}/solar/type`, nextType, mqttOpts);
+        publishTopic(`MLZ/${cleanId}/solar/pool_max`, String(nextPoolMax), mqttOpts);
+        publishTopic(`MLZ/${cleanId}/solar/dif`, String(nextDif), mqttOpts);
+      }
+
+      logUserAction(
+        `Configurou aquecimento: ${nextType}, modo ${nextMode}, máx ${nextPoolMax}°C, dif ${nextDif}°C`
+      );
+    };
+
+    if (solarSaveTimerRef.current) {
+      clearTimeout(solarSaveTimerRef.current);
+      solarSaveTimerRef.current = null;
+    }
+
+    const delay = opts?.debounceMs ?? 0;
+    if (delay > 0) {
+      solarSaveTimerRef.current = setTimeout(() => {
+        solarSaveTimerRef.current = null;
+        void run();
+      }, delay);
+    } else {
+      void run();
+    }
   };
 
   // Start the QR Code Scanner camera
@@ -4916,7 +5069,7 @@ export default function PoolControllerPage() {
                             {currentProgram !== '---' ? `Prog: ${currentProgram}` : 'Sem Programa'}
                           </p>
                           <p className="text-[9px] text-slate-400 font-medium">
-                            Status: <span className={currentProgram !== '---' ? 'text-emerald-400 font-bold' : 'text-rose-500 font-bold'}>
+                            Status: <span className={currentProgram !== '---' ? 'text-emerald-400 font-bold' : 'text-red-700 font-bold'}>
                               {currentProgram !== '---' ? 'LIGADO' : 'DESLIGADO'}
                             </span>
                           </p>
@@ -4973,10 +5126,10 @@ export default function PoolControllerPage() {
                       >
                         <div className="flex items-center justify-between w-full">
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[80%]">{name}</span>
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'}`} />
                         </div>
                         <div className="mt-1">
-                            <p className={`text-xs font-bold ${on ? 'text-emerald-400' : 'text-rose-500'}`}>
+                            <p className={`text-xs font-bold ${on ? 'text-emerald-400' : 'text-red-500'}`}>
                               {on ? 'LIGADO' : 'DESLIGADO'}
                           </p>
                         </div>
@@ -5545,11 +5698,21 @@ export default function PoolControllerPage() {
                   ) : (
                     <div className="p-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl space-y-4 shadow-lg text-left">
                       {/* Solar Header */}
-                      <div className="pb-2 border-b border-white/10 flex items-center justify-between">
+                      <div className="pb-2 border-b border-white/10 flex items-center justify-between gap-2">
                         <h3 className="text-xs font-bold text-[#4398fa] tracking-wider uppercase flex items-center gap-1.5">
                           <Thermometer className="w-4 h-4 text-amber-400" /> SISTEMA DE AQUECIMENTO 
                         </h3>
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                        <div className="flex items-center gap-2 shrink-0">
+                          {solarSettingsSaveState === 'saving' && (
+                            <span className="text-[9px] text-slate-400 uppercase tracking-wider">Salvando…</span>
+                          )}
+                          {solarSettingsSaveState === 'saved' && (
+                            <span className="text-[9px] text-emerald-400 uppercase tracking-wider">Salvo</span>
+                          )}
+                          {solarSettingsSaveState === 'error' && (
+                            <span className="text-[9px] text-rose-400 uppercase tracking-wider">Erro ao salvar</span>
+                          )}
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                           (sensorCollectorError || sensorPoolError || sensorErrorActive)
                             ? 'bg-rose-500/10 border-rose-500/20 text-rose-300' 
                             : solarWorkMode === 'off'
@@ -5566,6 +5729,7 @@ export default function PoolControllerPage() {
                                 ? 'CIRCULAÇÃO ATIVA'
                                 : 'EM ESPERA'}
                         </span>
+                        </div>
                       </div>
 
                       {/* Sensor Errors Banner (Item 4) */}
@@ -5597,7 +5761,7 @@ export default function PoolControllerPage() {
                         </label>
                         <div className="grid grid-cols-2 gap-2.5">
                           <label 
-                            onClick={() => setHeatingType('solar')}
+                            onClick={() => saveSolarSettings({ type: 'solar' })}
                             className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all select-none ${
                               heatingType === 'solar'
                                 ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 shadow-sm'
@@ -5609,7 +5773,7 @@ export default function PoolControllerPage() {
                               name="heatingType"
                               value="solar"
                               checked={heatingType === 'solar'}
-                              onChange={() => setHeatingType('solar')}
+                              onChange={() => saveSolarSettings({ type: 'solar' })}
                               className="sr-only"
                             />
                             <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
@@ -5623,7 +5787,7 @@ export default function PoolControllerPage() {
                           </label>
 
                           <label 
-                            onClick={() => setHeatingType('eletrico')}
+                            onClick={() => saveSolarSettings({ type: 'eletrico' })}
                             className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all select-none ${
                               heatingType === 'eletrico'
                                 ? 'bg-[#4398fa]/15 border-[#4398fa]/50 text-[#4398fa] shadow-sm'
@@ -5635,7 +5799,7 @@ export default function PoolControllerPage() {
                               name="heatingType"
                               value="eletrico"
                               checked={heatingType === 'eletrico'}
-                              onChange={() => setHeatingType('eletrico')}
+                              onChange={() => saveSolarSettings({ type: 'eletrico' })}
                               className="sr-only"
                             />
                             <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
@@ -5854,7 +6018,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setSolarWorkMode('off');
+                              saveSolarSettings({ mode: 'off' });
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'off'
@@ -5869,7 +6033,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setSolarWorkMode('manual');
+                              saveSolarSettings({ mode: 'manual' });
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'manual'
@@ -5884,7 +6048,7 @@ export default function PoolControllerPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setSolarWorkMode('auto');
+                              saveSolarSettings({ mode: 'auto' });
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'auto'
@@ -5913,7 +6077,7 @@ export default function PoolControllerPage() {
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => setSolarPoolMax(prev => Math.max(25, prev - 1))}
+                              onClick={() => saveSolarSettings({ poolMax: Math.max(25, solarPoolMax - 1) })}
                               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
                             >
                               <Minus className="w-4 h-4" />
@@ -5923,12 +6087,16 @@ export default function PoolControllerPage() {
                               min="25"
                               max="40"
                               value={solarPoolMax}
-                              onChange={(e) => setSolarPoolMax(parseInt(e.target.value))}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value, 10);
+                                setSolarPoolMax(v);
+                                saveSolarSettings({ poolMax: v }, { debounceMs: 400 });
+                              }}
                               className="flex-1 accent-amber-400 cursor-pointer"
                             />
                             <button
                               type="button"
-                              onClick={() => setSolarPoolMax(prev => Math.min(40, prev + 1))}
+                              onClick={() => saveSolarSettings({ poolMax: Math.min(40, solarPoolMax + 1) })}
                               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
                             >
                               <Plus className="w-4 h-4" />
@@ -5946,7 +6114,7 @@ export default function PoolControllerPage() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setSolarDif(prev => Math.max(2, prev - 1))}
+                                onClick={() => saveSolarSettings({ dif: Math.max(2, solarDif - 1) })}
                                 className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
                               >
                                 <Minus className="w-4 h-4" />
@@ -5956,12 +6124,16 @@ export default function PoolControllerPage() {
                                 min="2"
                                 max="20"
                                 value={solarDif}
-                                onChange={(e) => setSolarDif(parseInt(e.target.value))}
+                                onChange={(e) => {
+                                  const v = parseInt(e.target.value, 10);
+                                  setSolarDif(v);
+                                  saveSolarSettings({ dif: v }, { debounceMs: 400 });
+                                }}
                                 className="flex-1 accent-[#4398fa] cursor-pointer"
                               />
                               <button
                                 type="button"
-                                onClick={() => setSolarDif(prev => Math.min(20, prev + 1))}
+                                onClick={() => saveSolarSettings({ dif: Math.min(20, solarDif + 1) })}
                                 className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center transition-all active:scale-95"
                               >
                                 <Plus className="w-4 h-4" />
