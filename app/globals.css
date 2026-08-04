@@ -265,6 +265,64 @@ html[data-theme="light"] #pool-controller-app .hover\:text-white:hover {
   height: 1rem;
 }
 
+/* LED / range tracks — bg-white/10 becomes white on elevated cards in light */
+#pool-controller-app input[type="range"] {
+  accent-color: var(--app-accent);
+}
+
+#pool-controller-app input[type="range"].appearance-none {
+  height: 6px;
+  border-radius: 999px;
+}
+
+html[data-theme="light"] #pool-controller-app input[type="range"].bg-white\/10,
+html[data-theme="light"] #pool-controller-app input[type="range"].appearance-none {
+  background-color: rgba(60, 60, 67, 0.28) !important;
+}
+
+html[data-theme="dark"] #pool-controller-app input[type="range"].bg-white\/10,
+html[data-theme="dark"] #pool-controller-app input[type="range"].appearance-none {
+  background-color: rgba(120, 120, 128, 0.45) !important;
+}
+
+#pool-controller-app input[type="range"].appearance-none::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--app-accent);
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+#pool-controller-app input[type="range"].appearance-none::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+}
+
+#pool-controller-app input[type="range"].appearance-none::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--app-accent);
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+#pool-controller-app input[type="range"].appearance-none::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(60, 60, 67, 0.28);
+}
+
+html[data-theme="dark"] #pool-controller-app input[type="range"].appearance-none::-moz-range-track {
+  background: rgba(120, 120, 128, 0.45);
+}
+
 /* Day / radio-style selected dots */
 #pool-controller-app .bg-\[\#4398fa\]\/20 {
   background-color: var(--app-accent-soft) !important;
@@ -517,6 +575,29 @@ html[data-theme="light"] #pool-controller-app .app-btn-secondary {
 html[data-theme="light"] #pool-controller-app .app-btn-secondary:active,
 html[data-theme="light"] #pool-controller-app .app-btn-secondary:hover {
   background-color: #d4dae4 !important;
+}
+
+/* Pool temperature gauge — dark labels/ticks on light card */
+html[data-theme="light"] #pool-controller-app .gauge-temp-label,
+html[data-theme="light"] #pool-controller-app .gauge-temp-readout {
+  fill: #1c1c1e !important;
+}
+
+html[data-theme="light"] #pool-controller-app .gauge-tick-major,
+html[data-theme="light"] #pool-controller-app .gauge-tick-minor {
+  color: #1c1c1e !important;
+  stroke: #1c1c1e !important;
+}
+
+html[data-theme="dark"] #pool-controller-app .gauge-temp-label,
+html[data-theme="dark"] #pool-controller-app .gauge-temp-readout {
+  fill: #ffffff !important;
+}
+
+html[data-theme="dark"] #pool-controller-app .gauge-tick-major,
+html[data-theme="dark"] #pool-controller-app .gauge-tick-minor {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
 }
 
 /* Inputs / black fills in light — readable gray wells */

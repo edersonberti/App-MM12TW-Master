@@ -326,12 +326,19 @@ function escapeRegExp(str: string): string {
 }
 
 const APP_LOGO_PATH = encodeURI('/logo(512 x 512 px).png');
+const APP_LOGO_LIGHT_PATH = encodeURI('/logoazul.jpg');
 
-// Official Master Lazer logo (public/logo(512 x 512 px).png)
-const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: string }) => (
+// Official Master Lazer logo — light theme uses blue mark for contrast on light shell
+const MasterLazerLogo = ({
+  className = 'w-[192px] h-[192px]',
+  theme = 'dark',
+}: {
+  className?: string;
+  theme?: AppTheme;
+}) => (
   <div className={`relative ${className}`}>
     <Image
-      src={APP_LOGO_PATH}
+      src={theme === 'light' ? APP_LOGO_LIGHT_PATH : APP_LOGO_PATH}
       alt="Master Lazer Logo"
       fill
       sizes="192px"
@@ -522,7 +529,6 @@ export default function PoolControllerPage() {
       if (typeof window !== 'undefined') {
         localStorage.setItem('custom_manufacturer_logo', result);
       }
-      showToast('Logo Atualizado', 'O logo do fabricante foi alterado com sucesso!', 'success');
     };
     reader.readAsDataURL(file);
   };
@@ -532,7 +538,6 @@ export default function PoolControllerPage() {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('custom_manufacturer_logo');
     }
-    showToast('Logo Restaurado', 'O logo padrão do fabricante foi redefinido.', 'info');
   };
 
   // Auth inputs
@@ -1841,7 +1846,6 @@ export default function PoolControllerPage() {
         const { data, error } = await signUp(cleanEmail, cleanPassword, cleanEmail.split('@')[0], 'operator');
         if (error) throw error;
         if (data?.user) {
-          showToast('Conta cadastrada com sucesso!', 'Verifique seu e-mail para confirmação se necessário.', 'success');
           setActiveScreen('login');
         }
       }
@@ -1866,7 +1870,6 @@ export default function PoolControllerPage() {
         redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
       });
       if (error) throw error;
-      showToast('Redefinição de Senha', `Instruções de redefinição de senha enviadas para: ${emailInput}`, 'info');
     } catch (err: any) {
       showToast('Erro Supabase', err.message, 'error');
     }
@@ -1980,11 +1983,6 @@ export default function PoolControllerPage() {
         };
         if (navigator.canShare(shareData)) {
           await navigator.share(shareData);
-          showToast(
-            'Chamado encaminhado',
-            'Selecione o WhatsApp da assistência para enviar o print e a mensagem.',
-            'success'
-          );
           closeSupportTicket();
           return;
         }
@@ -1998,13 +1996,6 @@ export default function PoolControllerPage() {
     }
 
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-    showToast(
-      'Abrindo WhatsApp',
-      supportScreenshot
-        ? 'Anexe o print na conversa da assistência após enviar a mensagem.'
-        : 'Seu chamado será enviado para a assistência técnica.',
-      'info'
-    );
     closeSupportTicket();
   };
 
@@ -2853,7 +2844,6 @@ export default function PoolControllerPage() {
       setUserFormPassword('');
       setUserFormRole('operator');
       setUserModalOpen(null);
-      showToast('Perfil Atualizado', 'Nível de acesso atualizado com sucesso!', 'success');
     } catch (err: any) {
       showToast('Erro ao atualizar perfil', err.message, 'error');
     }
@@ -2901,7 +2891,6 @@ export default function PoolControllerPage() {
       await loadAuditEvents();
 
       logUserAction(`Desativou conta (soft delete): ${targetUser.email}`);
-      showToast('Conta desativada', `${targetUser.email} foi desativada e registrada na auditoria.`, 'success');
     } catch (err: any) {
       showToast('Erro ao remover usuário', err.message, 'error');
     }
@@ -2939,7 +2928,7 @@ export default function PoolControllerPage() {
     setCatalogSaving(true);
     try {
       console.info('[Catalog] Calling createDeviceCatalogItem...');
-      const created = await createDeviceCatalogItem(
+      await createDeviceCatalogItem(
         model,
         motorCount,
         catalogHasFilterTimer,
@@ -2957,11 +2946,6 @@ export default function PoolControllerPage() {
       setCatalogHasHidroTimer(true);
       setCatalogHasSolarHeating(true);
 
-      showToast(
-        'Salvo no Supabase',
-        `${created.model} • ${created.motor_count} motor(es) • Filtro:${created.has_filter_timer ? 'sim' : 'não'} LED:${created.has_led_timer ? 'sim' : 'não'} Hidro:${created.has_hidro_timer ? 'sim' : 'não'} Solar:${created.has_solar_heating ? 'sim' : 'não'}`,
-        'success'
-      );
     } catch (err: any) {
       console.error('[Catalog] create failed:', err);
       showToast(
@@ -3004,7 +2988,7 @@ export default function PoolControllerPage() {
 
     setCatalogSaving(true);
     try {
-      const updated = await updateDeviceCatalogItem(
+      await updateDeviceCatalogItem(
         editingCatalogItem.id,
         model,
         motorCount,
@@ -3016,11 +3000,6 @@ export default function PoolControllerPage() {
 
       await loadDeviceCatalogFromSupabase();
       setEditingCatalogItem(null);
-      showToast(
-        'Atualizado no Supabase',
-        `${updated.model} • ${updated.motor_count} motor(es) • Filtro:${updated.has_filter_timer ? 'sim' : 'não'} LED:${updated.has_led_timer ? 'sim' : 'não'} Hidro:${updated.has_hidro_timer ? 'sim' : 'não'} Solar:${updated.has_solar_heating ? 'sim' : 'não'}`,
-        'success'
-      );
     } catch (err: any) {
       console.error('[Catalog] update failed:', err);
       showToast(
@@ -3044,7 +3023,6 @@ export default function PoolControllerPage() {
     try {
       await deleteDeviceCatalogItem(item.id);
       await loadDeviceCatalogFromSupabase();
-      showToast('Modelo Removido', `Modelo ${item.model} removido de devices_catalog.`, 'info');
     } catch (err: any) {
       showToast(
         'Erro ao Remover Modelo',
@@ -3107,7 +3085,6 @@ export default function PoolControllerPage() {
           file: firmwareFile || undefined,
           uploadedBy: currentUser?.uid,
         });
-        showToast('Firmware Atualizado', `Versão ${firmwareVersao} do modelo ${model} atualizada.`, 'success');
       } else {
         if (!firmwareFile) return;
         await uploadFirmware({
@@ -3117,7 +3094,6 @@ export default function PoolControllerPage() {
           file: firmwareFile,
           uploadedBy: currentUser?.uid,
         });
-        showToast('Firmware Publicado', `Nova atualização ${firmwareVersao} disponível para ${model}.`, 'success');
       }
       resetFirmwareForm();
       await refreshFirmwareList();
@@ -3177,11 +3153,6 @@ export default function PoolControllerPage() {
       }
 
       logUserAction(`OTA ${item.model} v${item.versao}`);
-      showToast(
-        'OTA enviado via MQTT',
-        `Tópico MLZ/${primaryId}/cmd (+ ota). Confira o Serial do ESP. URL: …/ota/…`,
-        'success'
-      );
     } catch (err: any) {
       showToast('Erro na Atualização', err?.message || 'Não foi possível iniciar o OTA.', 'error');
     } finally {
@@ -3686,11 +3657,6 @@ export default function PoolControllerPage() {
       return;
     }
 
-    showToast(
-      'Produção',
-      `${result.serial} (${result.model}) registrado — status: ${result.status}`,
-      'success'
-    );
     await loadProductionData();
   };
 
@@ -3961,7 +3927,6 @@ export default function PoolControllerPage() {
       await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email);
       setDeviceId(result.device_id);
       localStorage.setItem('mqtt_device', result.device_id);
-      showToast('Acesso concedido', 'Você agora pode controlar este equipamento.', 'success');
       setActiveScreen('aux');
     } finally {
       setInviteAcceptBusy(false);
@@ -4022,7 +3987,6 @@ export default function PoolControllerPage() {
         return;
       }
       setShareInvite(invite);
-      showToast('Convite criado', 'Link válido por 24 horas — uso único.', 'success');
     } finally {
       setShareBusy(false);
     }
@@ -4038,7 +4002,6 @@ export default function PoolControllerPage() {
         return;
       }
       setShareMembers((prev) => prev.filter((m) => m.user_id !== memberUserId));
-      showToast('Acesso revogado', 'O usuário não controla mais este equipamento.', 'success');
     } finally {
       setShareBusy(false);
     }
@@ -4054,7 +4017,6 @@ export default function PoolControllerPage() {
         return;
       }
       await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email);
-      showToast('Acesso removido', 'Você saiu deste equipamento compartilhado.', 'success');
     } finally {
       setShareBusy(false);
     }
@@ -4177,8 +4139,6 @@ export default function PoolControllerPage() {
       `[REGISTRO] Associado ao Usuário: ${userEmail || 'Nenhum'}`,
       `[REGISTRO] Equipamento configurado como ATIVO no broker MQTT.`
     ]);
-    
-    showToast('Equipamento Salvo!', `Modelo ${normalizedModel} (${trimmedId}) associado com sucesso.`, 'success');
   };
 
   // Save Advanced Developer Config
@@ -4190,7 +4150,6 @@ export default function PoolControllerPage() {
     localStorage.setItem('mqtt_pass', mqttPassword);
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
 
-    showToast('Configurações Salvas', 'Servidor MQTT atualizado e salvo no painel de administração!', 'success');
     if (userWantsMqtt) {
       forceReconnectMQTT();
     }
@@ -4206,8 +4165,6 @@ export default function PoolControllerPage() {
     localStorage.removeItem('mqtt_user');
     localStorage.removeItem('mqtt_pass');
     localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
-
-    showToast('Configuração Redefinida', `Parâmetros padrão restaurados (${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT})!`, 'info');
   };
 
   const isCurrentlyAdmin = activeScreen === 'admin';
@@ -4553,7 +4510,14 @@ export default function PoolControllerPage() {
                 >
                   <div className="text-center mt-6 flex flex-col items-center">
                     <div className="mb-4">
-                      <MasterLazerLogo className="w-[192px] h-[192px] hover:scale-105 transition-all duration-300 drop-shadow-[0_8px_24px_rgba(0,0,0,0.45)]" />
+                      <MasterLazerLogo
+                        theme={appTheme}
+                        className={`w-[192px] h-[192px] hover:scale-105 transition-all duration-300 ${
+                          appTheme === 'light'
+                            ? 'drop-shadow-[0_6px_18px_rgba(0,0,0,0.22)]'
+                            : 'drop-shadow-[0_8px_24px_rgba(0,0,0,0.45)]'
+                        }`}
+                      />
                     </div>
                     <h2 className="text-xl font-bold tracking-tight text-white mb-1">Acesso Master</h2>
                     
@@ -5699,8 +5663,10 @@ export default function PoolControllerPage() {
                                       y1={y1}
                                       x2={x2}
                                       y2={y2}
-                                      stroke={isMajor ? '#ffffff' : 'rgba(255, 255, 255, 0.5)'}
+                                      stroke="currentColor"
                                       strokeWidth={isMajor ? 1.8 : 1}
+                                      className={isMajor ? 'gauge-tick-major' : 'gauge-tick-minor'}
+                                      opacity={isMajor ? 1 : 0.55}
                                     />
                                   );
                                 })}
@@ -5715,11 +5681,10 @@ export default function PoolControllerPage() {
                                       key={val}
                                       x={lx}
                                       y={ly}
-                                      fill="#ffffff"
                                       fontSize="11"
                                       fontWeight="bold"
                                       textAnchor="middle"
-                                      className="font-mono drop-shadow-sm select-none"
+                                      className="gauge-temp-label font-mono drop-shadow-sm select-none"
                                     >
                                       {val}
                                     </text>
@@ -5747,10 +5712,9 @@ export default function PoolControllerPage() {
                                   x={cx}
                                   y={cy + 26}
                                   textAnchor="middle"
-                                  fill="#ffffff"
                                   fontSize="20"
                                   fontWeight="900"
-                                  className="font-mono tracking-tight drop-shadow-md"
+                                  className="gauge-temp-readout font-mono tracking-tight drop-shadow-md"
                                 >
                                   {sensorPoolError ? 'ERR' : `${sensorPoolTemp} °C`}
                                 </text>
@@ -5915,7 +5879,6 @@ export default function PoolControllerPage() {
                               const nextState = !sensorCollectorError;
                               setSensorCollectorError(nextState);
                               setSensorErrorActive(nextState);
-                              showToast('Diagnóstico', nextState ? 'Erro1: Sensor1 Coletor Simulado!' : 'Erro1 Limpo.', nextState ? 'warning' : 'info');
                             }}
                             className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-all text-left flex items-center justify-between ${
                               sensorCollectorError || sensorErrorActive
@@ -5932,7 +5895,6 @@ export default function PoolControllerPage() {
                             onClick={() => {
                               const nextState = !sensorPoolError;
                               setSensorPoolError(nextState);
-                              showToast('Diagnóstico', nextState ? 'Erro2: Sensor2 Piscina Simulado!' : 'Erro2 Limpo.', nextState ? 'warning' : 'info');
                             }}
                             className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-all text-left flex items-center justify-between ${
                               sensorPoolError
@@ -6312,10 +6274,6 @@ export default function PoolControllerPage() {
                                             } catch (err) {}
 
                                             setConfirmDeleteDeviceId(null);
-
-                                            if (cloudOk) {
-                                              showToast('Equipamento removido', `${eq.id}`, 'success');
-                                            }
 
                                             if (isActive) {
                                               const nextId = filtered.length > 0 ? filtered[0].id : '';
@@ -6776,7 +6734,6 @@ export default function PoolControllerPage() {
                           onClick={async () => {
                             try {
                               await navigator.clipboard.writeText(buildInviteUrl(shareInvite.token));
-                              showToast('Link copiado', 'Cole onde quiser enviar o convite.', 'success');
                             } catch {
                               showToast('Link', buildInviteUrl(shareInvite.token), 'info');
                             }
@@ -7577,7 +7534,6 @@ export default function PoolControllerPage() {
                                                 setDeviceId(eq.id);
                                                 localStorage.setItem('mqtt_device', eq.id);
                                                 logUserAction(`Ativou equipamento ID: ${eq.id}`);
-                                                showToast('Dispositivo Ativado', `Dispositivo ${eq.id} ativado com sucesso!`, 'success');
                                               }}
                                               className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 hover:text-white rounded-lg text-[10px] font-bold text-slate-300 transition-all"
                                             >
@@ -7609,8 +7565,6 @@ export default function PoolControllerPage() {
                                               await updateDeviceOwner(eqId, targetUser.uid);
                                               await loadAdminAllDevices();
                                             }
-
-                                            showToast('Equipamento Vinculado', `Equipamento ${eqId} vinculado ao usuário ${selectedUserForEquip}!`, 'success');
                                           }}
                                           className="w-full px-2 py-1.5 bg-black border border-white/10 rounded text-xs text-white focus:outline-none focus:border-amber-400"
                                         >
@@ -8348,7 +8302,6 @@ export default function PoolControllerPage() {
                                 setCatalogLoading(true);
                                 try {
                                   await loadDeviceCatalogFromSupabase();
-                                  showToast('Catálogo', 'Lista atualizada do Supabase.', 'success');
                                 } catch (err: any) {
                                   showToast('Catálogo', err?.message || 'Falha ao atualizar do Supabase.', 'error');
                                 } finally {
@@ -8688,7 +8641,6 @@ export default function PoolControllerPage() {
                                       onClick={async () => {
                                         const ok = await setProductionDeviceStatus(row.serial, 'disabled');
                                         if (ok) {
-                                          showToast('Produção', `${row.serial} desativado.`, 'info');
                                           loadProductionData();
                                         } else {
                                           showToast('Produção', 'Não foi possível desativar.', 'error');
@@ -8705,7 +8657,6 @@ export default function PoolControllerPage() {
                                       onClick={async () => {
                                         const ok = await setProductionDeviceStatus(row.serial, 'available');
                                         if (ok) {
-                                          showToast('Produção', `${row.serial} reativado.`, 'success');
                                           loadProductionData();
                                         }
                                       }}
