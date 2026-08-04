@@ -16,7 +16,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="pt-BR" className="w-full min-h-[100dvh] sm:min-h-screen overflow-x-hidden overflow-y-auto overscroll-behavior-none select-none">
+    <html
+      lang="pt-BR"
+      data-theme="dark"
+      suppressHydrationWarning
+      className="w-full min-h-[100dvh] sm:min-h-screen overflow-x-hidden overflow-y-auto overscroll-behavior-none select-none"
+    >
       <head>
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#000000" />

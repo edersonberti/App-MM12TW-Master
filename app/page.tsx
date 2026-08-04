@@ -213,18 +213,18 @@ function formatAuditMetadata(
 function auditEventBadgeClass(eventType: string): string {
   const t = (eventType || '').toLowerCase();
   if (t.includes('delete') || t.includes('revok') || t.includes('hard')) {
-    return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+    return 'bg-rose-500/15 text-rose-700 border-rose-500/30';
   }
   if (t.includes('create') || t.includes('insert') || t.includes('accept') || t.includes('register') || t.includes('account_created')) {
-    return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+    return 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30';
   }
   if (t.includes('timer') || t.includes('motor_names')) {
-    return 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30';
+    return 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30';
   }
   if (t.includes('update') || t.includes('soft') || t.includes('change')) {
-    return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+    return 'bg-amber-500/15 text-amber-800 border-amber-500/30';
   }
-  return 'bg-[#4398fa]/15 text-[#4398fa] border-[#4398fa]/30';
+  return 'bg-[#4398fa]/15 text-blue-700 border-[#4398fa]/30';
 }
 
 function exportAuditEventsCsv(events: AuditEvent[]) {
@@ -368,6 +368,7 @@ export default function PoolControllerPage() {
 
   // Admin & Owner Dashboard states
   const [adminTab, setAdminTab] = useState<'home' | 'aba1' | 'aba3' | 'aba4' | 'aba5' | 'firmware' | 'production' | 'brand'>('home');
+  const [adminSidebarOpen, setAdminSidebarOpen] = useState(false);
   const [selectedUserForEquip, setSelectedUserForEquip] = useState<string | null>(null);
   const [productionDevices, setProductionDevices] = useState<ProductionDevice[]>([]);
   const [productionStats, setProductionStats] = useState<ProductionModelStats[]>([]);
@@ -461,18 +462,19 @@ export default function PoolControllerPage() {
     }
   }, [applyAppTheme]);
 
-  // Painel admin permanece sempre em dark, sem alterar a preferência salva do usuário
+  // Painel admin permanece sempre em light, sem alterar a preferência salva do usuário
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
     if (activeScreen === 'admin') {
-      document.documentElement.setAttribute('data-theme', 'dark');
+      document.documentElement.setAttribute('data-theme', 'light');
       document.documentElement.setAttribute('data-admin-panel', 'true');
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', '#000000');
+      if (meta) meta.setAttribute('content', '#d5dae3');
       return;
     }
 
+    setAdminSidebarOpen(false);
     document.documentElement.removeAttribute('data-admin-panel');
     applyAppTheme(appTheme);
   }, [activeScreen, appTheme, applyAppTheme]);
@@ -4427,6 +4429,25 @@ export default function PoolControllerPage() {
   const isCurrentlyAdmin = activeScreen === 'admin';
   const hasRegisteredEquipment = registeredEquipments.length > 0;
 
+  const adminPageMeta: Record<typeof adminTab, { title: string; subtitle: string }> = {
+    home: { title: 'Dashboard', subtitle: 'Visao geral do painel administrativo' },
+    aba1: { title: 'Usuarios & Equipamentos', subtitle: 'Cadastro e vinculo de dispositivos' },
+    firmware: { title: 'Firmware', subtitle: 'Publicacao OTA por modelo' },
+    aba3: { title: 'Logs & Auditoria', subtitle: 'Trilha audit_events' },
+    aba4: { title: 'MQTT & Info Tecnica', subtitle: 'Broker e persistencia' },
+    aba5: { title: 'Catalogo de Dispositivos', subtitle: 'Modelos e capacidades' },
+    production: { title: 'Producao', subtitle: 'Whitelist de fabrica via QR' },
+    brand: { title: 'Logo do Fabricante', subtitle: 'Identidade visual do app' },
+  };
+  const adminMeta = adminPageMeta[adminTab];
+
+  const adminNavBtn = (tab: typeof adminTab, active: boolean) =>
+    `w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[12px] font-bold transition-colors ${
+      active
+        ? 'bg-white text-[#1d4ed8] shadow-md shadow-black/15'
+        : 'text-white/90 hover:bg-white/15 hover:text-white'
+    }`;
+
   // Shared empty-state shown on HOME/BOMBAS/LED/TIMERS when no equipment is registered
   const renderNoEquipmentScreen = (key: string, featureLabel: string) => (
     <motion.div
@@ -4472,7 +4493,7 @@ export default function PoolControllerPage() {
 
   return (
     <div
-      className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-full min-h-0 sm:h-auto sm:min-h-0'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}
+      className={`relative w-full ${isCurrentlyAdmin ? 'max-w-none w-full min-h-[100dvh] h-auto p-0' : 'max-w-[440px] p-0 sm:p-4 h-full min-h-0 sm:h-auto sm:min-h-0'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}
       id="pool-controller-app"
       data-admin={isCurrentlyAdmin ? 'true' : 'false'}
     >
@@ -4495,7 +4516,7 @@ export default function PoolControllerPage() {
 
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
-      <div className={`app-shell w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-full min-h-0 sm:h-[820px] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
+      <div className={`app-shell w-full ${isCurrentlyAdmin ? 'bg-[#d5dae3] border-0 rounded-none min-h-[100dvh] h-auto p-0 shadow-none overflow-visible' : 'bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 rounded-none sm:rounded-[32px] h-full min-h-0 sm:h-[820px] sm:max-h-[92vh] shadow-2xl overflow-hidden'} flex flex-col relative z-20`}>
         
         {/* Notch & Status Indicators */}
         {!isCurrentlyAdmin && (
@@ -6403,20 +6424,20 @@ export default function PoolControllerPage() {
                             <p className="text-[10px] text-slate-500">Escaneie o QR Code acima para vincular e gerenciar seu equipamento.</p>
                           </div>
                         ) : (
-                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                             {registeredEquipments.map((eq) => {
                               const isActive = areDeviceIdsMatching(eq.id, deviceId);
 
                               return (
                                 <div 
                                   key={eq.id} 
-                                  className={`app-device-card flex items-center justify-between p-3 rounded-xl transition-all border ${
+                                  className={`app-device-card flex flex-col gap-3 p-3 rounded-xl transition-all border ${
                                     isActive 
                                       ? 'app-device-card--active bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
                                       : 'app-device-card--idle bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
                                   }`}
                                 >
-                                  <div className="min-w-0 flex-1 pr-2">
+                                  <div className="min-w-0 w-full">
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-mono text-xs font-extrabold text-white break-all select-all">{eq.id}</span>
                                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[9px] font-extrabold text-cyan-300 border border-cyan-500/30">{eq.model}</span>
@@ -6442,15 +6463,16 @@ export default function PoolControllerPage() {
                                         Série: <span className="font-mono text-white font-bold select-all">{eq.serial || eq.id}</span> • Fab: <span className="text-slate-200">{eq.manufacturer || 'MASTERLAZER'}</span>
                                       </p>
                                       {eq.userEmail && (
-                                        <p className="text-[9px] text-cyan-400/90 font-medium flex items-center gap-1">
-                                          Usuário: <span className="font-mono text-cyan-300">{eq.userEmail}</span>
+                                        <p className="text-[9px] text-cyan-400/90 font-medium flex items-center gap-1 min-w-0">
+                                          <span className="shrink-0">Usuário:</span>
+                                          <span className="font-mono text-cyan-300 break-all">{eq.userEmail}</span>
                                         </p>
                                       )}
                                     </div>
                                   </div>
 
-                                  {/* Action Controls: Ativar/Desativar, Compartilhar & Excluir */}
-                                  <div className="flex items-center gap-2 shrink-0">
+                                  {/* Action Controls: below info so mobile layout stays readable */}
+                                  <div className="flex flex-wrap items-center gap-2 w-full pt-2 border-t border-white/10">
                                     {eq.access !== 'shared' && currentUser?.isSupabase && (
                                       <button
                                         type="button"
@@ -6458,11 +6480,12 @@ export default function PoolControllerPage() {
                                           e.stopPropagation();
                                           void openSharePanel(eq.id);
                                         }}
-                                        className="p-1.5 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 rounded-lg transition-all cursor-pointer"
+                                        className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                         title="Compartilhar acesso"
                                         aria-label="Compartilhar"
                                       >
-                                        <Share2 className="w-3.5 h-3.5" />
+                                        <Share2 className="w-3.5 h-3.5 shrink-0" />
+                                        <span>Compartilhar</span>
                                       </button>
                                     )}
                                     {isActive ? (
@@ -6473,10 +6496,10 @@ export default function PoolControllerPage() {
                                           activeDeviceIdRef.current = '';
                                           localStorage.removeItem('mqtt_device');
                                         }}
-                                        className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                         title="Desativar equipamento ativo"
                                       >
-                                        <PowerOff className="w-3 h-3 text-amber-400" />
+                                        <PowerOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                                         <span>Desativar</span>
                                       </button>
                                     ) : (
@@ -6487,10 +6510,10 @@ export default function PoolControllerPage() {
                                           activeDeviceIdRef.current = eq.id;
                                           localStorage.setItem('mqtt_device', eq.id);
                                         }}
-                                        className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                        className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all cursor-pointer"
                                         title="Ativar equipamento para controle"
                                       >
-                                        <CheckCircle2 className="w-3 h-3" />
+                                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                                         <span>Ativar</span>
                                       </button>
                                     )}
@@ -6502,15 +6525,15 @@ export default function PoolControllerPage() {
                                           e.stopPropagation();
                                           void handleLeaveShared(eq.id);
                                         }}
-                                        className="p-1.5 px-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                         title="Sair deste equipamento compartilhado"
                                         aria-label="Sair"
                                       >
-                                        <UserMinus className="w-3.5 h-3.5" />
+                                        <UserMinus className="w-3.5 h-3.5 shrink-0" />
                                         <span>Sair</span>
                                       </button>
                                     ) : confirmDeleteDeviceId === eq.id ? (
-                                      <div className="flex items-center gap-1.5 animate-fadeIn">
+                                      <div className="flex flex-wrap items-center gap-2 animate-fadeIn">
                                         <button
                                           type="button"
                                           onClick={async (e) => {
@@ -6564,10 +6587,10 @@ export default function PoolControllerPage() {
                                               }
                                             }
                                           }}
-                                          className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
+                                          className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-lg text-[10px] font-bold shadow-md transition-all cursor-pointer animate-pulse"
                                           title="Confirmar exclusão deste equipamento"
                                         >
-                                          <Trash2 className="w-3 h-3 text-white" />
+                                          <Trash2 className="w-3.5 h-3.5 text-white shrink-0" />
                                           <span>Confirmar?</span>
                                         </button>
                                         <button
@@ -6576,7 +6599,7 @@ export default function PoolControllerPage() {
                                             e.stopPropagation();
                                             setConfirmDeleteDeviceId(null);
                                           }}
-                                          className="p-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                          className="inline-flex items-center justify-center min-h-[36px] px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                           title="Cancelar"
                                         >
                                           ✕
@@ -6589,10 +6612,10 @@ export default function PoolControllerPage() {
                                           e.stopPropagation();
                                           setConfirmDeleteDeviceId(eq.id);
                                         }}
-                                        className="p-1.5 px-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                                        className="inline-flex items-center justify-center gap-1 min-h-[36px] px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded-lg transition-all text-[10px] font-bold cursor-pointer"
                                         title="Excluir equipamento"
                                       >
-                                        <Trash2 className="w-3 h-3 text-rose-400" />
+                                        <Trash2 className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                                         <span>Excluir</span>
                                       </button>
                                     )}
@@ -7194,207 +7217,213 @@ export default function PoolControllerPage() {
               {activeScreen === 'admin' && (
                 <motion.div
                   key="admin-screen"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  className="flex-1 flex flex-col space-y-6 text-left"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="admin-layout flex w-full min-h-[100dvh] text-left relative"
                 >
-                  {/* Dashboard Header Panel */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400">
-                        <Shield className="w-6 h-6" />
+                  {adminSidebarOpen && (
+                    <button
+                      type="button"
+                      aria-label="Fechar menu"
+                      className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[1px] lg:hidden"
+                      onClick={() => setAdminSidebarOpen(false)}
+                    />
+                  )}
+
+                  <aside
+                    className={`admin-sidebar fixed top-0 left-0 z-50 h-[100dvh] w-[260px] flex flex-col border-r border-blue-700/30 transition-transform duration-200 ease-out lg:translate-x-0 ${
+                      adminSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                    }`}
+                    style={{ background: 'linear-gradient(234deg,#205ed7,#2687e9 39%,#00aff0)' }}
+                  >
+                    <div className="px-4 py-5 border-b border-white/20 flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
+                        <img
+                          src={manufacturerLogo || '512x512.png'}
+                          alt="Master Lazer"
+                          className="w-full h-full object-contain p-1"
+                        />
                       </div>
-                      <div>
-                        <h2 className="text-lg font-bold text-white tracking-tight">Painel Administrativo do Proprietário</h2>
-                        <p className="text-xs text-slate-400">Acesso restrito para gerenciamento de usuários e equipamentos.</p>
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-extrabold tracking-wide text-white uppercase leading-tight">MasterLazer</p>
+                        <p className="text-[10px] text-white/80 font-semibold uppercase tracking-wider leading-tight mt-0.5">Painel Admin</p>
                       </div>
+                      <button
+                        type="button"
+                        className="lg:hidden ml-auto p-1.5 text-white/80 hover:text-white"
+                        onClick={() => setAdminSidebarOpen(false)}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+                      <div>
+                        <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-widest text-white/60">Principal</p>
+                        <div className="space-y-0.5">
+                          <button type="button" onClick={() => { setAdminTab('home'); setAdminSidebarOpen(false); }} className={adminNavBtn('home', adminTab === 'home')}>
+                            <Home className="w-4 h-4 shrink-0" />
+                            Dashboard
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('aba1'); setAdminSidebarOpen(false); }} className={adminNavBtn('aba1', adminTab === 'aba1')}>
+                            <Users className="w-4 h-4 shrink-0" />
+                            Usuarios & Equipes
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('production'); setAdminSidebarOpen(false); }} className={adminNavBtn('production', adminTab === 'production')}>
+                            <Factory className="w-4 h-4 shrink-0" />
+                            Producao QR
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('aba3'); setAdminSidebarOpen(false); }} className={adminNavBtn('aba3', adminTab === 'aba3')}>
+                            <Activity className="w-4 h-4 shrink-0" />
+                            Auditoria
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-widest text-white/60">Sistema</p>
+                        <div className="space-y-0.5">
+                          <button type="button" onClick={() => { setAdminTab('firmware'); setAdminSidebarOpen(false); }} className={adminNavBtn('firmware', adminTab === 'firmware')}>
+                            <Upload className="w-4 h-4 shrink-0" />
+                            Firmware
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('aba5'); setAdminSidebarOpen(false); }} className={adminNavBtn('aba5', adminTab === 'aba5')}>
+                            <SlidersHorizontal className="w-4 h-4 shrink-0" />
+                            Catalogo
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('aba4'); setAdminSidebarOpen(false); }} className={adminNavBtn('aba4', adminTab === 'aba4')}>
+                            <Database className="w-4 h-4 shrink-0" />
+                            MQTT
+                          </button>
+                          <button type="button" onClick={() => { setAdminTab('brand'); setAdminSidebarOpen(false); }} className={adminNavBtn('brand', adminTab === 'brand')}>
+                            <ImagePlus className="w-4 h-4 shrink-0" />
+                            Logo
+                          </button>
+                        </div>
+                      </div>
+                    </nav>
+
+                    <div className="mt-auto border-t border-white/20 p-3 space-y-1">
                       <button
-                        onClick={() => {
-                          if (adminTab === 'home') {
-                            setActiveScreen('home');
-                          } else {
-                            setAdminTab('home');
-                          }
-                        }}
-                        className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/5"
+                        type="button"
+                        onClick={() => { setAdminSidebarOpen(false); setActiveScreen('home'); }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[12px] font-bold text-white/95 hover:bg-white/15"
                       >
-                        {adminTab === 'home' ? (
-                          <>
-                            <Sliders className="w-4 h-4" />
-                            Voltar para o App
-                          </>
-                        ) : (
-                          <>
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para Home Admin
-                          </>
-                        )}
+                        <Sliders className="w-4 h-4 text-white" />
+                        Voltar para o App
                       </button>
                       <button
+                        type="button"
                         onClick={handleLogout}
-                        className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/20 text-rose-400 rounded-xl text-xs font-bold transition-all active:scale-95"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[12px] font-bold text-rose-100 hover:bg-rose-500/25"
                       >
+                        <LogOut className="w-4 h-4" />
                         Sair do App
                       </button>
+                      <div className="flex items-center gap-2 px-3 py-2 text-[11px] font-semibold text-white/85">
+                        <span className="w-2 h-2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.8)]" />
+                        Sistema Online
+                      </div>
                     </div>
-                  </div>
+                  </aside>
 
-                  {/* Tab Selector bar */}
-                  <div className="flex border-b border-white/10 overflow-x-auto pb-px gap-1">
-                    <button
-                      onClick={() => setAdminTab('home')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'home'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Home className="w-4 h-4" />
-                      Home Admin
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('aba1')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'aba1'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Users className="w-4 h-4" />
-                      Usuários & Equipamentos
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('firmware')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'firmware'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Upload className="w-4 h-4" />
-                      Atualizações de Firmware
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('aba3')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'aba3'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Activity className="w-4 h-4" />
-                      Logs & Auditoria
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('aba4')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'aba4'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Database className="w-4 h-4" />
-                      Info Técnica & MQTT
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('aba5')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'aba5'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <SlidersHorizontal className="w-4 h-4" />
-                      Catálogo de Dispositivos
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('production')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'production'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Factory className="w-4 h-4" />
-                      Produção
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('brand')}
-                      className={`px-5 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-                        adminTab === 'brand'
-                          ? 'border-amber-400 text-amber-400 bg-white/5'
-                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/2'
-                      }`}
-                    >
-                      <Upload className="w-4 h-4" />
-                      Logo do Fabricante
-                    </button>
-                  </div>
+                  <div className="admin-main flex-1 flex flex-col min-w-0 min-h-[100dvh] bg-[#d5dae3]">
+                    <header className="sticky top-0 z-30 h-14 bg-[#f1f3f7] border-b border-slate-300 px-3 sm:px-6 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <button
+                          type="button"
+                          className="lg:hidden p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+                          onClick={() => setAdminSidebarOpen(true)}
+                          aria-label="Abrir menu"
+                        >
+                          <Menu className="w-5 h-5" />
+                        </button>
+                        <p className="hidden sm:block text-[11px] text-slate-400 font-medium truncate">
+                          Inicio / {adminMeta.title}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right hidden sm:block min-w-0">
+                          <p className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[200px]">
+                            {currentUser?.email || 'Admin'}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-medium capitalize">
+                            {currentUser?.role || 'owner'}
+                          </p>
+                        </div>
+                        <div className="w-9 h-9 rounded-full bg-blue-700 text-white text-xs font-bold flex items-center justify-center uppercase shrink-0">
+                          {(currentUser?.email || 'AD').slice(0, 2)}
+                        </div>
+                      </div>
+                    </header>
+
+                    <main className="flex-1 p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl w-full mx-auto">
+                      <div>
+                        <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">{adminMeta.title}</h1>
+                        <p className="text-xs text-slate-500 mt-1">{adminMeta.subtitle}</p>
+                      </div>
 
                   {/* Tab Body Contents */}
-                  <div className="flex-1 min-h-[400px]">
+                  <div className="flex-1 min-w-0">
                     
                     {/* Tab Home: Admin Panel Hub */}
                     {adminTab === 'home' && (
                       <div className="space-y-6">
                         {/* Welcome banner & Stats Overview */}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                          <div className="p-5 bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div className="p-5 bg-white border border-amber-300 rounded-2xl flex flex-col justify-between shadow-sm">
+                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{simUsers.filter(u => u.role === 'operator').length}</span>
-                              <span className="text-xs text-amber-400 font-semibold">Ativos</span>
+                              <span className="text-3xl font-extrabold text-slate-900">{simUsers.filter(u => u.role === 'operator').length}</span>
+                              <span className="text-xs text-amber-700 font-semibold">Ativos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
+                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
                           </div>
 
-                          <div className="p-5 bg-gradient-to-br from-[#007AFF]/10 to-[#4398fa]/5 border border-[#007AFF]/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Equipamentos Totais</span>
+                          <div className="p-5 bg-white border border-blue-300 rounded-2xl flex flex-col justify-between shadow-sm">
+                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Equipamentos Totais</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{adminAllDevices.length}</span>
-                              <span className="text-xs text-[#4398fa] font-semibold">Dispositivos</span>
+                              <span className="text-3xl font-extrabold text-slate-900">{adminAllDevices.length}</span>
+                              <span className="text-xs text-blue-700 font-semibold">Dispositivos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Equipamentos cadastrados em todo o sistema.</p>
+                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Equipamentos cadastrados em todo o sistema.</p>
                           </div>
 
-                          <div className="p-5 bg-gradient-to-br from-purple-500/10 to-pink-500/5 border border-purple-500/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Eventos de Auditoria</span>
+                          <div className="p-5 bg-white border border-purple-300 rounded-2xl flex flex-col justify-between shadow-sm">
+                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Eventos de Auditoria</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{auditEvents.length}</span>
-                              <span className="text-xs text-purple-400 font-semibold">Registros</span>
+                              <span className="text-3xl font-extrabold text-slate-900">{auditEvents.length}</span>
+                              <span className="text-xs text-purple-700 font-semibold">Registros</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Eventos gravados em audit_events (Supabase).</p>
+                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Eventos gravados em audit_events (Supabase).</p>
                           </div>
 
-                          <div className="p-5 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl flex flex-col justify-between">
-                            <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Modelos no Catálogo</span>
+                          <div className="p-5 bg-white border border-emerald-300 rounded-2xl flex flex-col justify-between shadow-sm">
+                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Modelos no Catalogo</span>
                             <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-white">{deviceCatalog.length}</span>
-                              <span className="text-xs text-emerald-400 font-semibold">Modelos</span>
+                              <span className="text-3xl font-extrabold text-slate-900">{deviceCatalog.length}</span>
+                              <span className="text-xs text-emerald-700 font-semibold">Modelos</span>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Modelos de equipamento cadastrados no catálogo.</p>
+                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Modelos de equipamento cadastrados no catalogo.</p>
                           </div>
                         </div>
 
                         {/* Quick Access Grid */}
                         <div className="space-y-4">
-                          <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest text-left">Navegação Administrativa</h3>
+                          <h3 className="text-xs font-bold text-blue-600 uppercase tracking-widest text-left">Navegacao Administrativa</h3>
                           
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {/* Card 1 */}
                             <button
                               onClick={() => setAdminTab('aba1')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Users className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Usuários & Equipamentos</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Usuários & Equipamentos</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Cadastre e edite operadores, vincule e gerencie equipamentos residenciais em tempo real.</p>
                               </div>
                             </button>
@@ -7402,13 +7431,13 @@ export default function PoolControllerPage() {
                             {/* Card 2 */}
                             <button
                               onClick={() => setAdminTab('aba3')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Activity className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Logs & Auditoria</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Logs & Auditoria</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Monitore os eventos registrados em audit_events, com KPIs e histórico detalhado.</p>
                               </div>
                             </button>
@@ -7416,13 +7445,13 @@ export default function PoolControllerPage() {
                             {/* Card 3 */}
                             <button
                               onClick={() => setAdminTab('firmware')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Upload className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Atualizações de Firmware</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Atualizações de Firmware</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Publique e gerencie versões de firmware OTA por modelo de equipamento.</p>
                               </div>
                             </button>
@@ -7430,13 +7459,13 @@ export default function PoolControllerPage() {
                             {/* Card 4 */}
                             <button
                               onClick={() => setAdminTab('aba5')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <SlidersHorizontal className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Catálogo de Dispositivos</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Catálogo de Dispositivos</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Gerencie os modelos disponíveis e suas capacidades (motores, timers, aquecimento solar).</p>
                               </div>
                             </button>
@@ -7444,13 +7473,13 @@ export default function PoolControllerPage() {
                             {/* Card production */}
                             <button
                               onClick={() => setAdminTab('production')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Factory className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Produção (Whitelist)</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Produção (Whitelist)</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">
                                   Cadastre aparelhos fabricados via QR e veja quantos usuários têm cada modelo instalado.
                                 </p>
@@ -7460,13 +7489,13 @@ export default function PoolControllerPage() {
                             {/* Card 5 */}
                             <button
                               onClick={() => setAdminTab('aba4')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Database className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Configurações de Conexão MQTT</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Configurações de Conexão MQTT</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Configure endereços do broker, portas, tópicos customizados, credenciais e info técnica.</p>
                               </div>
                             </button>
@@ -7474,13 +7503,13 @@ export default function PoolControllerPage() {
                             {/* Card 6 */}
                             <button
                               onClick={() => setAdminTab('brand')}
-                              className="p-5 bg-white/5 border border-white/10 hover:border-amber-400/50 hover:bg-white/10 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99]"
+                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
                             >
-                              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:scale-110 transition-transform">
+                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                                 <Upload className="w-5 h-5" />
                               </div>
                               <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors font-sans">Logo do Fabricante & Identidade</h4>
+                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Logo do Fabricante & Identidade</h4>
                                 <p className="text-xs text-slate-400 leading-relaxed">Personalize a logomarca do fabricante exibida no cabeçalho principal do aplicativo.</p>
                               </div>
                             </button>
@@ -7489,7 +7518,7 @@ export default function PoolControllerPage() {
 
                         {/* Últimos eventos preview */}
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-                          <div className="flex items-center justify-between">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div>
                               <h3 className="text-sm font-bold text-white">Últimos Eventos</h3>
                               <p className="text-[10px] text-slate-400">5 eventos mais recentes de audit_events</p>
@@ -7505,7 +7534,7 @@ export default function PoolControllerPage() {
 
                           <div className="divide-y divide-white/5">
                             {auditEvents.slice(0, 5).map((event) => (
-                              <div key={event.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                              <div key={event.id} className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                                 <div className="min-w-0 flex-1">
                                   <p className="text-white font-semibold truncate">{formatAuditEventType(event.event_type)}</p>
                                   <p className="text-[10px] text-slate-400 truncate">
@@ -7527,16 +7556,6 @@ export default function PoolControllerPage() {
                           </div>
                         </div>
 
-                        {/* Back to App */}
-                        <div className="flex justify-center pt-2">
-                          <button
-                            onClick={() => setActiveScreen('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <Sliders className="w-4 h-4" />
-                            Voltar ao App
-                          </button>
-                        </div>
                       </div>
                     )}
                     
@@ -7547,7 +7566,7 @@ export default function PoolControllerPage() {
                           
                           {/* Users panel */}
                           <div className="lg:col-span-7 bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                               <div>
                                 <h3 className="text-sm font-bold text-white">Usuários Cadastrados</h3>
                                 <p className="text-[10px] text-slate-400">Total de {simUsers.length} usuários registrados neste navegador</p>
@@ -7635,7 +7654,7 @@ export default function PoolControllerPage() {
                             </div>
 
                             {/* Users List Data Table */}
-                            <div className="overflow-x-auto rounded-xl border border-white/10">
+                            <div className="hidden md:block overflow-x-auto rounded-xl border border-white/10">
                               <table className="w-full text-xs">
                                 <thead>
                                   <tr className="bg-black/20 text-slate-400 border-b border-white/10 text-left">
@@ -7741,6 +7760,107 @@ export default function PoolControllerPage() {
                                 </tbody>
                               </table>
                             </div>
+
+                            <div className="md:hidden space-y-2">
+                              {simUsers
+                                .filter(u => (u.email || '').toLowerCase().includes(adminSearchUser.toLowerCase()))
+                                .map((u) => {
+                                  const isRoot = u.role === 'owner';
+                                  const isSelf = currentUser && currentUser.email === u.email;
+                                  const isSelected = selectedUserForEquip === u.email;
+                                  const roleLabel =
+                                    u.role === 'owner'
+                                      ? 'Proprietário'
+                                      : u.role === 'admin'
+                                        ? 'Administrador'
+                                        : u.role === 'support'
+                                          ? 'Suporte'
+                                          : u.role === 'operator'
+                                            ? 'Operador'
+                                            : u.role === 'installer'
+                                              ? 'Instalador'
+                                              : u.role === 'factory'
+                                                ? 'Fábrica'
+                                                : u.role;
+                                  return (
+                                    <div
+                                      key={u.uid || u.email}
+                                      onClick={() => {
+                                        if (selectedUserForEquip === u.email) {
+                                          setSelectedUserForEquip(null);
+                                        } else {
+                                          setSelectedUserForEquip(u.email);
+                                        }
+                                        setAdminSearchEquip('');
+                                      }}
+                                      className={`p-3 rounded-xl border transition-colors cursor-pointer ${
+                                        isSelected
+                                          ? 'bg-amber-400/10 border-amber-400/40 border-l-2 border-l-amber-400'
+                                          : 'bg-white/5 border-white/10 hover:bg-amber-400/5'
+                                      }`}
+                                    >
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0 space-y-1.5">
+                                          <div className="flex items-center gap-1.5 flex-wrap font-sans">
+                                            <span className="text-xs font-semibold text-white break-all">{u.email}</span>
+                                            {isSelf && (
+                                              <span className="text-[8px] bg-sky-500/15 text-sky-400 px-1 py-0.2 rounded border border-sky-500/20 font-bold">VOCÊ</span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-mono text-emerald-400 text-[10px] font-semibold flex items-center gap-1">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                              Ativo (Supabase)
+                                            </span>
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              u.role === 'owner'
+                                                ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20'
+                                                : u.role === 'admin'
+                                                  ? 'bg-blue-400/10 text-blue-400 border border-blue-400/20'
+                                                  : 'bg-slate-400/15 text-slate-300 border border-white/5'
+                                            }`}>
+                                              {roleLabel}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="flex gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedUserForEdit(u);
+                                              setUserFormEmail(u.email);
+                                              setUserFormPassword('');
+                                              setUserFormRole(u.role || 'operator');
+                                              setUserModalOpen('edit');
+                                            }}
+                                            title="Editar Usuário"
+                                            className="p-1.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-colors"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteUserAdmin(u.uid);
+                                            }}
+                                            disabled={isRoot || isSelf}
+                                            title={isRoot ? 'Usuário proprietário não pode ser removido' : isSelf ? 'Você não pode se deletar' : 'Desativar conta (soft delete)'}
+                                            className={`p-1.5 rounded-lg border transition-colors ${
+                                              isRoot || isSelf
+                                                ? 'bg-black/10 border-transparent text-slate-600 cursor-not-allowed'
+                                                : 'bg-rose-500/10 border-rose-500/20 hover:bg-rose-500/25 text-rose-400'
+                                            }`}
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
                           </div>
 
                           {/* Equipments Panel */}
@@ -7774,7 +7894,7 @@ export default function PoolControllerPage() {
                                 <div className="p-6 text-center bg-white/5 border border-dashed border-white/15 rounded-xl">
                                   <Users className="w-6 h-6 text-slate-500 mx-auto mb-2" />
                                   <p className="text-xs text-slate-400 leading-relaxed">
-                                    Selecione um usuário à esquerda para ver os equipamentos dele.
+                                    Selecione um usuário na lista acima para ver os equipamentos dele.
                                   </p>
                                 </div>
                               ) : (
@@ -7789,7 +7909,7 @@ export default function PoolControllerPage() {
                                       return (
                                         <div
                                           key={eq.id}
-                                          className={`p-4 rounded-xl border transition-all text-left flex justify-between items-center ${
+                                          className={`p-4 rounded-xl border transition-all text-left flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 ${
                                             isActive
                                               ? 'bg-[#4398fa]/10 border-[#4398fa] shadow-lg shadow-[#4398fa]/5'
                                               : 'bg-amber-500/10 border-amber-400/50'
@@ -7865,16 +7985,6 @@ export default function PoolControllerPage() {
 
                         </div>
 
-                        {/* Back to main screen button */}
-                        <div className="flex justify-center pt-2">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
                       </div>
                     )}
 
@@ -8150,7 +8260,7 @@ export default function PoolControllerPage() {
                             </div>
                           </div>
 
-                          <div className="overflow-x-auto">
+                          <div className="hidden md:block overflow-x-auto">
                             <table className="w-full text-xs text-left min-w-[860px]">
                               <thead>
                                 <tr className="bg-black/30 text-slate-400 border-b border-white/10">
@@ -8238,6 +8348,71 @@ export default function PoolControllerPage() {
                             </table>
                           </div>
 
+                          <div className="md:hidden divide-y divide-white/5">
+                            {pagedAuditEvents.map((event) => {
+                              const expanded = auditExpandedId === event.id;
+                              return (
+                                <div key={event.id} className="text-left">
+                                  <button
+                                    type="button"
+                                    className={`w-full px-4 py-3 text-left space-y-1.5 transition-colors ${expanded ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'}`}
+                                    onClick={() => setAuditExpandedId(expanded ? null : event.id)}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-[10px] text-slate-400">
+                                        {new Date(event.created_at).toLocaleString('pt-BR')}
+                                      </span>
+                                      {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
+                                    </div>
+                                    <p className="text-[11px] font-semibold text-white truncate">
+                                      {event.actor_email || '—'}
+                                    </p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span
+                                        className={`inline-flex px-2 py-0.5 rounded-md border text-[10px] font-bold ${auditEventBadgeClass(event.event_type)}`}
+                                        title={event.event_type}
+                                      >
+                                        {formatAuditEventType(event.event_type)}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 line-clamp-2">
+                                      {formatAuditMetadata(event.metadata, event.event_type)}
+                                    </p>
+                                  </button>
+                                  {expanded && (
+                                    <div className="px-4 pb-4 space-y-3 bg-black/20 border-t border-white/5">
+                                      <div className="grid grid-cols-1 gap-3 text-[11px] pt-3">
+                                        <div className="space-y-1.5">
+                                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Identificação</p>
+                                          <p><span className="text-slate-500">Event ID:</span> <span className="font-mono text-slate-300 break-all">{event.id}</span></p>
+                                          <p><span className="text-slate-500">Actor UID:</span> <span className="font-mono text-slate-300 break-all">{event.actor_user_id || '—'}</span></p>
+                                          <p><span className="text-slate-500">Actor email:</span> <span className="text-white break-all">{event.actor_email || '—'}</span></p>
+                                          <p><span className="text-slate-500">Created at:</span> <span className="font-mono text-slate-300 break-all">{event.created_at}</span></p>
+                                          <p><span className="text-slate-500">Entidade:</span> <span className="font-mono text-slate-300">{event.entity_type}/{event.entity_id}</span></p>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Metadata (JSON)</p>
+                                          <pre className="p-3 rounded-xl bg-black/40 border border-white/10 text-[10px] font-mono text-emerald-300 overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+                                            {JSON.stringify(event.metadata || {}, null, 2)}
+                                          </pre>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {pagedAuditEvents.length === 0 && (
+                              <p className="p-10 text-center text-slate-500 text-xs">
+                                {auditLoading
+                                  ? 'Carregando eventos...'
+                                  : auditEvents.length === 0
+                                    ? 'Nenhum evento em audit_events ainda.'
+                                    : 'Nenhum evento corresponde aos filtros atuais.'}
+                              </p>
+                            )}
+                          </div>
+
                           {/* Pagination */}
                           <div className="px-4 py-3 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3">
                             <span className="text-[10px] text-slate-400">
@@ -8269,15 +8444,6 @@ export default function PoolControllerPage() {
                           </div>
                         </div>
 
-                        <div className="flex justify-center pt-1">
-                          <button
-                            onClick={() => setAdminTab('home')}
-                            className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                          >
-                            <ChevronRight className="w-4 h-4 rotate-180" />
-                            Voltar para a Tela Inicial
-                          </button>
-                        </div>
                       </div>
                     )}
 
@@ -8300,8 +8466,8 @@ export default function PoolControllerPage() {
                             <p className="text-[10px] text-slate-400">Defina os parâmetros do Broker para onde os comandos são encaminhados.</p>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-3">
-                            <div className="col-span-2 space-y-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="sm:col-span-2 space-y-1">
                               <label className="text-[10px] font-bold text-slate-300">Host Broker</label>
                               <input
                                 type="text"
@@ -8323,7 +8489,7 @@ export default function PoolControllerPage() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="space-y-1">
                               <label className="text-[10px] font-bold text-slate-300">Usuário Mqtt (Opcional)</label>
                               <input
@@ -8346,7 +8512,7 @@ export default function PoolControllerPage() {
                             </div>
                           </div>
 
-                          <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-between text-xs">
+                          <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1.5 text-xs">
                             <span className="text-slate-400">Estado da Conexão</span>
                             <span className={`font-bold transition-all px-2.5 py-0.5 rounded text-[10px] ${
                               mqttConnected 
@@ -8359,7 +8525,7 @@ export default function PoolControllerPage() {
                             </span>
                           </div>
 
-                          <div className="flex justify-end gap-2 pt-2">
+                          <div className="flex flex-col sm:flex-row flex-wrap justify-end gap-2 pt-2">
                             <button
                               type="button"
                               onClick={handleResetToDefaultConfig}
@@ -8404,12 +8570,12 @@ export default function PoolControllerPage() {
                           </div>
 
                           <div className="p-4 rounded-xl bg-black/20 border border-white/10 space-y-3">
-                            <div className="flex justify-between items-center text-xs pb-2 border-b border-white/5">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1.5 text-xs pb-2 border-b border-white/5">
                               <span className="text-slate-400 font-semibold">Motor de Persistência</span>
-                              <span className="font-mono text-white">LocalStorage Sandbox + Firebase Auth</span>
+                              <span className="font-mono text-white text-right break-all sm:break-normal">LocalStorage Sandbox + Firebase Auth</span>
                             </div>
                             
-                            <div className="flex justify-between items-center text-xs pb-2 border-b border-white/5">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1.5 text-xs pb-2 border-b border-white/5">
                               <span className="text-slate-400 font-semibold">Tamanho Ocupado no Banco</span>
                               <span className="font-mono text-emerald-400 font-bold">
                                 {(() => {
@@ -8428,7 +8594,7 @@ export default function PoolControllerPage() {
                               </span>
                             </div>
 
-                            <div className="flex justify-between items-center text-xs">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1.5 text-xs">
                               <span className="text-slate-400 font-semibold">Conexão Supabase Real</span>
                               <span className={`font-black uppercase text-[9px] px-2 py-0.5 rounded ${
                                 getSupabaseConfigError()
@@ -8451,16 +8617,6 @@ export default function PoolControllerPage() {
 
                       </div>
 
-                      {/* Back to main screen button */}
-                      <div className="flex justify-center pt-2">
-                        <button
-                          onClick={() => setAdminTab('home')}
-                          className="px-6 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 shadow-lg shadow-amber-500/5"
-                        >
-                          <ChevronRight className="w-4 h-4 rotate-180" />
-                          Voltar para a Tela Inicial
-                        </button>
-                      </div>
                     </div>
                   )}
 
@@ -8483,7 +8639,7 @@ export default function PoolControllerPage() {
                             }}
                             className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-4"
                           >
-                            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-white/10">
                               <span className="text-xs font-bold text-amber-300">Cadastrar Novo Modelo</span>
                               <span className="text-[10px] text-slate-400">Modelos Globais / Catálogo</span>
                             </div>
@@ -8572,7 +8728,7 @@ export default function PoolControllerPage() {
                       </div>
 
                       <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+                        <div className="px-5 py-3 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <span className="text-xs font-bold text-white">Modelos em devices_catalog</span>
                           <div className="flex items-center gap-2">
                             <button
@@ -8609,9 +8765,9 @@ export default function PoolControllerPage() {
                                 <div key={item.id} className="p-4 transition-all hover:bg-white/2">
                                   {isEditing ? (
                                     <div className="space-y-3 bg-white/5 p-4 rounded-xl border border-amber-400/40">
-                                      <div className="flex items-center justify-between">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                                         <span className="text-xs font-bold text-amber-400">Editando Modelo: {item.model}</span>
-                                        <span className="text-[9px] text-slate-400 font-mono">ID: {item.id}</span>
+                                        <span className="text-[9px] text-slate-400 font-mono truncate max-w-full sm:max-w-[50%]" title={item.id}>ID: {item.id}</span>
                                       </div>
                                       
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -9091,7 +9247,7 @@ export default function PoolControllerPage() {
                         ) : (
                           <div className="divide-y divide-white/5">
                             {firmwareList.map((item) => (
-                              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                              <div key={item.id} className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <p className="text-xs font-bold text-white">
@@ -9133,8 +9289,8 @@ export default function PoolControllerPage() {
 
                   {/* Tab: Logo do Fabricante / Identidade Visual */}
                   {adminTab === 'brand' && (
-                    <div className="p-6 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md space-y-6 text-left">
-                      <div className="flex items-center justify-between pb-4 border-b border-white/10">
+                    <div className="p-4 sm:p-6 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md space-y-6 text-left">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4 border-b border-white/10">
                         <div>
                           <h3 className="text-base font-bold text-white flex items-center gap-2">
                             <Upload className="w-5 h-5 text-amber-400" />
@@ -9212,12 +9368,12 @@ export default function PoolControllerPage() {
 
                   </div>
 
-                  {/* Copyright and signature inside dashboard */}
-                  <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center text-[10px] text-slate-500">
-                    <span>Master Lazer App Administration Suite v1.5.0</span>
-                    <span>Copyright 2026 • Todos os direitos reservados</span>
+                  <div className="pt-2 text-[10px] text-slate-400 flex flex-col sm:flex-row justify-between gap-1">
+                    <span>Master Lazer Administration Suite v1.5.0</span>
+                    <span>Copyright 2026</span>
                   </div>
-
+                    </main>
+                  </div>
                 </motion.div>
               )}
 
@@ -9228,18 +9384,22 @@ export default function PoolControllerPage() {
 
 
           {/* Subheader / Copyright Info (matches copyright requirements) */}
+          {!isCurrentlyAdmin && (
           <div className="py-2 text-center bg-black/10 border-t border-white/2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shrink-0">
             <span className="text-[8px] tracking-widest text-slate-400 font-sans uppercase">
               Copyright 2026 • Master Lazer Systems
             </span>
           </div>
+          )}
 
         </div>
 
         {/* Simulative iPhone Bottom Home Bar Accent */}
+        {!isCurrentlyAdmin && (
         <div className="hidden sm:flex h-4 bg-black/10 w-full justify-center items-start">
           <div className="w-32 h-1 bg-white/15 rounded-full" />
         </div>
+        )}
 
       </div>
 
