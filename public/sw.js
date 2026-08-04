@@ -1,11 +1,10 @@
-const CACHE_NAME = 'masterlazer-cache-v5';
+const CACHE_NAME = 'masterlazer-cache-v6';
 const ASSETS_TO_CACHE = [
   '/manifest.json',
   '/180x180.png',
   '/192x192.png',
   '/512x512.png',
-  '/logo-512.png',
-  '/logoazul.jpg'
+  '/logo-512.png'
 ];
 
 self.addEventListener('install', (event) => {

@@ -259,6 +259,24 @@ html[data-theme="light"] #pool-controller-app .hover\:text-white:hover {
   box-shadow: 0 0 12px color-mix(in srgb, var(--app-accent) 40%, transparent) !important;
 }
 
+/* Off track: gray well so the white thumb stays visible in light mode */
+html[data-theme="light"] #pool-controller-app input.peer:not(:checked) + div {
+  background-color: #c7c7cc !important;
+  border-color: rgba(60, 60, 67, 0.35) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="light"] #pool-controller-app input.peer + div::after {
+  background-color: #ffffff !important;
+  border: 1px solid rgba(60, 60, 67, 0.12);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28) !important;
+}
+
+html[data-theme="dark"] #pool-controller-app input.peer:not(:checked) + div {
+  background-color: rgba(120, 120, 128, 0.36) !important;
+  border-color: rgba(84, 84, 88, 0.65) !important;
+}
+
 #pool-controller-app input[type="checkbox"]:not(.sr-only) {
   accent-color: var(--app-accent);
   width: 1rem;

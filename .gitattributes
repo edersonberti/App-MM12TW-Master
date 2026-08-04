@@ -1,0 +1,8 @@
+# Prevent binary image corruption (UTF-8 re-encoding of high bytes)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.apk binary

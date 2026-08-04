@@ -325,7 +325,7 @@ function escapeRegExp(str: string): string {
 }
 
 const APP_LOGO_PATH = '/logo-512.png';
-const APP_LOGO_LIGHT_PATH = '/logoazul.jpg';
+const APP_LOGO_LIGHT_PATH = '/logo-512';
 
 // Official Master Lazer logo — light theme uses blue mark for contrast on light shell.
 // Plain <img> (not next/image) so the PWA service worker can serve the static file reliably.
