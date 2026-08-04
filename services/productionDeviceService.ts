@@ -74,13 +74,11 @@ export function getRegisterProductionErrorMessage(
 ): string {
   switch (result.error) {
     case 'already_registered':
-      return `Equipamento já cadastrado (serial ${result.serial || 'desconhecido'}${
-        result.status ? ` · status: ${result.status}` : ''
-      }).`;
+      return `Equipamento já cadastrado.`;
     case 'unknown_model':
-      return `Modelo ${result.model || fallbackModel || '?'} não existe no catálogo. Cadastre-o em devices_catalog.`;
+      return `Modelo ${result.model || fallbackModel || '?'} não existe no catálogo.`;
     case 'forbidden':
-      return 'Sem permissão para cadastrar produção (owner/admin/factory).';
+      return 'Sem permissão para cadastrar produção.';
     case 'unauthenticated':
       return 'Sessão expirada. Faça login novamente.';
     case 'invalid_payload':
