@@ -71,6 +71,7 @@ import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, 
 import {
   fetchProductionDevices,
   fetchProductionStatsByModel,
+  getRegisterProductionErrorMessage,
   getUnrecognizedDeviceMessage,
   parseProductionQrPayload,
   registerProductionDeviceFromQr,
@@ -381,6 +382,7 @@ export default function PoolControllerPage() {
   const [productionQrError, setProductionQrError] = useState<string | null>(null);
   const [productionSearch, setProductionSearch] = useState('');
   const productionQrScannerRef = useRef<any>(null);
+  const productionRegisteringRef = useRef(false);
   // All devices registered system-wide (owner/admin visibility), with owner email attached
   const [adminAllDevices, setAdminAllDevices] = useState<{
     id: string;
@@ -3630,11 +3632,15 @@ export default function PoolControllerPage() {
   };
 
   const handleProductionQrScanned = async (text: string) => {
+    if (productionRegisteringRef.current) return;
+
     const payload = parseProductionQrPayload(text);
     if (!payload) {
       setProductionQrError('QR inválido. Esperado JSON com serial, provision e model.');
       return;
     }
+
+    productionRegisteringRef.current = true;
 
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(100);
@@ -3643,22 +3649,20 @@ export default function PoolControllerPage() {
     await stopProductionQrScanner();
     setProductionQrError(null);
 
-    const result = await registerProductionDeviceFromQr(payload);
-    if (!result.ok) {
-      const msg =
-        result.error === 'unknown_model'
-          ? `Modelo ${result.model || payload.model} não existe no catálogo. Cadastre-o em devices_catalog.`
-          : result.error === 'forbidden'
-            ? 'Sem permissão para cadastrar produção (owner/admin/factory).'
-            : result.error === 'unauthenticated'
-              ? 'Sessão expirada. Faça login novamente.'
-              : `Falha ao cadastrar: ${result.error}`;
-      setProductionQrError(msg);
-      showToast('Produção', msg, 'error');
-      return;
-    }
+    try {
+      const result = await registerProductionDeviceFromQr(payload);
+      if (!result.ok) {
+        const msg = getRegisterProductionErrorMessage(result, payload.model);
+        setProductionQrError(msg);
+        showToast('Produção', msg, 'error');
+        return;
+      }
 
-    await loadProductionData();
+      showToast('Produção', `Cadastrado: ${result.serial} (${result.model})`, 'success');
+      await loadProductionData();
+    } finally {
+      productionRegisteringRef.current = false;
+    }
   };
 
   const startProductionQrScanner = async () => {

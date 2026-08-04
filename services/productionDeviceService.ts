@@ -59,7 +59,39 @@ export type RegisterProductionResult =
       fw?: string | null;
       manufactured_at?: string | null;
     }
-  | { ok: false; error: string; model?: string };
+  | {
+      ok: false;
+      error: string;
+      model?: string;
+      serial?: string;
+      status?: ProductionDeviceStatus;
+    };
+
+/** User-facing message for production registration errors. */
+export function getRegisterProductionErrorMessage(
+  result: Extract<RegisterProductionResult, { ok: false }>,
+  fallbackModel?: string
+): string {
+  switch (result.error) {
+    case 'already_registered':
+      return `Equipamento já cadastrado (serial ${result.serial || 'desconhecido'}${
+        result.status ? ` · status: ${result.status}` : ''
+      }).`;
+    case 'unknown_model':
+      return `Modelo ${result.model || fallbackModel || '?'} não existe no catálogo. Cadastre-o em devices_catalog.`;
+    case 'forbidden':
+      return 'Sem permissão para cadastrar produção (owner/admin/factory).';
+    case 'unauthenticated':
+      return 'Sessão expirada. Faça login novamente.';
+    case 'invalid_payload':
+      return 'QR inválido: serial, provision e model são obrigatórios.';
+    default:
+      if (/duplicate|unique|already exists|23505/i.test(result.error)) {
+        return `Equipamento já cadastrado (serial ${result.serial || 'desconhecido'}).`;
+      }
+      return `Falha ao cadastrar: ${result.error}`;
+  }
+}
 
 const GENERIC_UNRECOGNIZED = 'Dispositivo não reconhecido';
 
@@ -99,6 +131,15 @@ export function parseProductionQrPayload(text: string): ProductionQrPayload | nu
   }
 }
 
+function normalizeManufacturedAt(date?: string): string | null {
+  if (!date) return null;
+  const trimmed = String(date).trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
 export async function registerProductionDeviceFromQr(
   payload: ProductionQrPayload
 ): Promise<RegisterProductionResult> {
@@ -109,12 +150,20 @@ export async function registerProductionDeviceFromQr(
       p_model: payload.model,
       p_hw: payload.hw || null,
       p_fw: payload.fw || null,
-      p_manufactured_at: payload.date || null,
+      p_manufactured_at: normalizeManufacturedAt(payload.date),
     });
 
     if (error) {
       console.error('[ProductionDeviceService] register_production_device:', error.message);
-      return { ok: false, error: error.message };
+      if (/duplicate|unique|already exists|23505/i.test(error.message)) {
+        return {
+          ok: false,
+          error: 'already_registered',
+          serial: payload.serial,
+          model: payload.model,
+        };
+      }
+      return { ok: false, error: error.message, serial: payload.serial, model: payload.model };
     }
 
     const result = data as RegisterProductionResult;
@@ -122,12 +171,19 @@ export async function registerProductionDeviceFromQr(
       return {
         ok: false,
         error: (result as any)?.error || 'Falha ao cadastrar na produção',
-        model: (result as any)?.model,
+        model: (result as any)?.model || payload.model,
+        serial: (result as any)?.serial || payload.serial,
+        status: (result as any)?.status,
       };
     }
     return result;
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Falha ao cadastrar na produção' };
+    return {
+      ok: false,
+      error: err?.message || 'Falha ao cadastrar na produção',
+      serial: payload.serial,
+      model: payload.model,
+    };
   }
 }
 
