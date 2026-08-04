@@ -269,12 +269,6 @@ const DEFAULT_MQTT_PORT = '8081'; // 8081 is secure WebSockets over SSL (wss://)
 const DEFAULT_DEVICE_ID = 'MLZ-MM12TW-EEA39F-000003'; // Matches new dynamic hardware architecture prefix
 type MotorNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-const FALLBACK_BROKERS = [
-  { broker: 'test.mosquitto.org', port: '8081' },
-  { broker: 'broker.emqx.io', port: '8084' },
-  { broker: 'broker.hivemq.com', port: '8884' }
-];
-
 // Strips off MLZ-, MASTERLAZER-, and any hex/efuse MAC suffix if present (e.g., "MLZ-MM12TW-EEA39F-000003-7c9ebd1a" -> "MM12TW-EEA39F-000003")
 function cleanDeviceId(id: string): string {
   if (!id) return '';
@@ -721,9 +715,23 @@ export default function PoolControllerPage() {
   const mqttClientRef = useRef<any>(null);
   const reconnectTimeoutRef = useRef<any>(null);
   const prevDeviceIdRef = useRef<string>('');
+  /** Always-current selected device — MQTT callbacks must read this, not a stale closure. */
+  const activeDeviceIdRef = useRef<string>(deviceId);
+  const intentionalMqttDisconnectRef = useRef(false);
   const iroPickerRef = useRef<any>(null);
   const pickerContainerId = 'iro-color-picker-target';
   const recentOutboundPublishesRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    activeDeviceIdRef.current = (deviceId || '').trim();
+    if (deviceId) {
+      try {
+        localStorage.setItem('mqtt_device', deviceId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [deviceId]);
 
   const recordOutboundPublish = useCallback((topic: string, payload: string) => {
     if (!topic) return;
@@ -937,17 +945,24 @@ export default function PoolControllerPage() {
   useEffect(() => {
     // Resolve states from Storage helper to avoid SSR hydration issues and comply with ESLint constraints
     setTimeout(() => {
-      // Auto-migrate legacy cached broker settings to newly updated default hardware broker
+      // Force hardware broker: test.mosquitto.org:8081 (ESP only listens there)
       const configVersion = localStorage.getItem('app_config_version');
       let storedBroker = localStorage.getItem('mqtt_broker');
       let storedPort = localStorage.getItem('mqtt_port');
+      const needsMosquitto8081 =
+        !configVersion ||
+        configVersion !== '2026_08_04_v3_mosquitto_8081' ||
+        storedBroker !== DEFAULT_MQTT_BROKER ||
+        storedPort !== DEFAULT_MQTT_PORT ||
+        storedBroker === 'broker.emqx.io' ||
+        storedBroker === 'broker.hivemq.com';
 
-      if (!configVersion || configVersion !== '2026_07_24_v2_mosquitto' || storedBroker === 'broker.emqx.io' || storedBroker === 'broker.hivemq.com') {
+      if (needsMosquitto8081) {
         storedBroker = DEFAULT_MQTT_BROKER;
         storedPort = DEFAULT_MQTT_PORT;
         localStorage.setItem('mqtt_broker', DEFAULT_MQTT_BROKER);
         localStorage.setItem('mqtt_port', DEFAULT_MQTT_PORT);
-        localStorage.setItem('app_config_version', '2026_07_24_v2_mosquitto');
+        localStorage.setItem('app_config_version', '2026_08_04_v3_mosquitto_8081');
       }
 
       let storedDevice = localStorage.getItem('mqtt_device') || DEFAULT_DEVICE_ID;
@@ -957,6 +972,7 @@ export default function PoolControllerPage() {
 
       setMqttBroker(storedBroker || DEFAULT_MQTT_BROKER);
       setMqttPort(storedPort || DEFAULT_MQTT_PORT);
+      activeDeviceIdRef.current = storedDevice;
       setDeviceId(storedDevice);
       setMqttUser(storedMqttUser);
       setMqttPassword(storedMqttPass);
@@ -1150,11 +1166,16 @@ export default function PoolControllerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userWantsMqtt, mqttConnected]);
 
-  // 1d. Reconnect MQTT whenever active deviceId changes to update subscriptions
+  // 1d. When active device changes: retarget publishes immediately (do NOT drop MQTT —
+  // reconnecting here made motor commands for 03/04 fail while 05 still "worked").
   useEffect(() => {
     if (!deviceId) return;
 
     if (prevDeviceIdRef.current !== deviceId) {
+      const previousId = prevDeviceIdRef.current;
+      activeDeviceIdRef.current = (deviceId || '').trim();
+      prevDeviceIdRef.current = deviceId;
+
       setTimeout(() => {
         setIsUpdatingData(true);
         setShowUpdatedMessage(false);
@@ -1172,16 +1193,35 @@ export default function PoolControllerPage() {
       }, 0);
       lastMessageTimeRef.current = Date.now();
 
-      if (prevDeviceIdRef.current && typeof window !== 'undefined' && window.Paho && currentUser && userWantsMqtt) {
-        console.log('Active Device ID changed, reconnecting MQTT to update subscriptions...');
-        disconnectMQTT(true);
-        const t = setTimeout(() => {
-          connectMQTT();
-        }, 300);
-        prevDeviceIdRef.current = deviceId;
-        return () => clearTimeout(t);
+      // Ensure wildcard subscription for the newly selected device, then ask for STATUS
+      if (
+        previousId &&
+        typeof window !== 'undefined' &&
+        window.Paho &&
+        currentUser &&
+        userWantsMqtt &&
+        mqttClientRef.current &&
+        typeof mqttClientRef.current.isConnected === 'function' &&
+        mqttClientRef.current.isConnected()
+      ) {
+        const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+        if (cleanId) {
+          try {
+            mqttClientRef.current.subscribe(`MLZ/${cleanId}/#`);
+            const statusMsg = new window.Paho.MQTT.Message('STATUS');
+            statusMsg.destinationName = `MLZ/${cleanId}/cmd`;
+            statusMsg.qos = 1;
+            recordOutboundPublish(`MLZ/${cleanId}/cmd`, 'STATUS');
+            mqttClientRef.current.send(statusMsg);
+            console.log(`[MQTT] Active device -> ${cleanId} (subscribed + STATUS)`);
+          } catch (err) {
+            console.warn('[MQTT] Failed to retarget active device:', err);
+          }
+        }
+      } else if (previousId && userWantsMqtt && currentUser && window.Paho) {
+        // Only connect if we were offline — never cycle a healthy connection on device switch
+        connectMQTT();
       }
-      prevDeviceIdRef.current = deviceId;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, registeredEquipments, currentUser, userWantsMqtt]);
@@ -1418,15 +1458,21 @@ export default function PoolControllerPage() {
     localStorage.setItem('registered_equipments', JSON.stringify(combined));
 
     if (combined.length > 0) {
-      const storedDevice = (localStorage.getItem('mqtt_device') || deviceId || '').trim();
+      const preferred =
+        (typeof localStorage !== 'undefined' ? localStorage.getItem('mqtt_device') : '') ||
+        activeDeviceIdRef.current ||
+        deviceId ||
+        '';
+      const storedDevice = preferred.trim();
       const matched = combined.find((d: any) => areDeviceIdsMatching(d.id, storedDevice));
       const nextDeviceId = matched?.id || combined[0].id;
+      activeDeviceIdRef.current = nextDeviceId;
       setDeviceId(nextDeviceId);
       localStorage.setItem('mqtt_device', nextDeviceId);
     }
 
     return combined;
-  }, [deviceId]);
+  }, []);
 
   // 2. Initialize Supabase Auth state observer
   useEffect(() => {
@@ -2008,6 +2054,8 @@ export default function PoolControllerPage() {
       setMqttErrorMsg('Biblioteca MQTT não carregada.');
       return;
     }
+    // New connect attempt — allow future onConnectionLost auto-reconnect
+    intentionalMqttDisconnectRef.current = false;
     setUserWantsMqtt(true); // User wants connectivity, enable auto-rejoin guard
     setMqttStatusMessage('Conectando...');
     setMqttErrorMsg('');
@@ -2050,6 +2098,12 @@ export default function PoolControllerPage() {
       client.onConnectionLost = (responseObject: any) => {
         const errorMsg = responseObject?.errorMessage || 'Conexão encerrada pelo servidor ou oscilação de rede.';
         console.warn('MQTT Connection lost:', errorMsg, 'Code:', responseObject?.errorCode);
+
+        // Intentional disconnect (device switch / user logout) — do not auto-reconnect with a stale closure
+        if (intentionalMqttDisconnectRef.current) {
+          intentionalMqttDisconnectRef.current = false;
+          return;
+        }
         
         setMqttConnected(false);
         setMqttStatusMessage('Desconectado');
@@ -2090,14 +2144,15 @@ export default function PoolControllerPage() {
           }
         }
 
-        const cleanActiveId = cleanDeviceId(deviceId).toLowerCase();
-        const rawActiveId = (deviceId || '').toLowerCase().trim();
+        const activeRawId = (activeDeviceIdRef.current || '').trim();
+        const cleanActiveId = cleanDeviceId(activeRawId).toLowerCase();
+        const rawActiveId = activeRawId.toLowerCase();
 
         // Identify device and relative topic
         let devicePartOfMessage = '';
         let relativeTopic = dest;
 
-        const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, deviceId));
+        const activeEquipment = registeredEquipments.find(eq => areDeviceIdsMatching(eq.id, activeRawId));
         const parts = dest.split('/');
         
         const p0Upper = (parts[0] || '').toUpperCase();
@@ -2117,16 +2172,18 @@ export default function PoolControllerPage() {
 
         // Verify this message is indeed for our current active device context
         const isTargetDevice = (
-          areDeviceIdsMatching(devicePartOfMessage, deviceId) ||
-          areDeviceIdsMatching(devicePartOfMessage, cleanActiveId) ||
-          areDeviceIdsMatching(devicePartOfMessage, rawActiveId) ||
-          cleanMsgDeviceId === cleanActiveId || 
-          rawMsgDeviceId === rawActiveId || 
-          cleanMsgDeviceId === rawActiveId ||
-          rawMsgDeviceId === cleanActiveId ||
-          (cleanMsgDeviceId && cleanActiveId &&
-           cleanMsgDeviceId.toLowerCase().startsWith('mlz-') && cleanActiveId.toLowerCase().startsWith('mlz-') &&
-           cleanMsgDeviceId.split('-').slice(0, 3).join('-') === cleanActiveId.split('-').slice(0, 3).join('-'))
+          !!activeRawId && (
+            areDeviceIdsMatching(devicePartOfMessage, activeRawId) ||
+            areDeviceIdsMatching(devicePartOfMessage, cleanActiveId) ||
+            areDeviceIdsMatching(devicePartOfMessage, rawActiveId) ||
+            cleanMsgDeviceId === cleanActiveId || 
+            rawMsgDeviceId === rawActiveId || 
+            cleanMsgDeviceId === rawActiveId ||
+            rawMsgDeviceId === cleanActiveId ||
+            (cleanMsgDeviceId && cleanActiveId &&
+             cleanMsgDeviceId.toLowerCase().startsWith('mlz-') && cleanActiveId.toLowerCase().startsWith('mlz-') &&
+             cleanMsgDeviceId.split('-').slice(0, 3).join('-') === cleanActiveId.split('-').slice(0, 3).join('-'))
+          )
         );
 
         if (!isTargetDevice) {
@@ -2502,8 +2559,11 @@ export default function PoolControllerPage() {
             reconnectTimeoutRef.current = null;
           }
           
-          const activeCleanId = cleanDeviceId(deviceId);
-          const activeEquipment = registeredEquipments.find(eq => eq.id.toLowerCase() === deviceId.toLowerCase());
+          const activeRawId = (activeDeviceIdRef.current || deviceId || '').trim();
+          const activeCleanId = cleanDeviceId(activeRawId);
+          const activeEquipment = registeredEquipments.find(eq =>
+            areDeviceIdsMatching(eq.id, activeRawId)
+          );
 
           // Subscribe to target topics to monitor LED and AUX hardware status
           const relativePaths = [
@@ -2534,7 +2594,7 @@ export default function PoolControllerPage() {
           ];
 
           const idsToProcess = new Set<string>();
-          [activeCleanId, deviceId].forEach((id) => {
+          [activeCleanId, activeRawId].forEach((id) => {
             if (id) {
               idsToProcess.add(id);
               if (id.toLowerCase().startsWith('mlz-')) {
@@ -2641,19 +2701,16 @@ export default function PoolControllerPage() {
 
           failedAttemptsRef.current += 1;
 
-          // Auto-failover broker if connection fails multiple times
-          if (failedAttemptsRef.current >= 2) {
-            const currentIdx = FALLBACK_BROKERS.findIndex(b => b.broker.toLowerCase() === host.toLowerCase());
-            const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % FALLBACK_BROKERS.length : 0;
-            const nextBroker = FALLBACK_BROKERS[nextIdx];
-            console.warn(`MQTT auto-failover activated. Switching to backup broker: ${nextBroker.broker}:${nextBroker.port}`);
-            setMqttBroker(nextBroker.broker);
-            setMqttPort(nextBroker.port);
+          // Stay on hardware broker (test.mosquitto.org:8081) — never switch ports/brokers
+          if (host.toLowerCase() !== DEFAULT_MQTT_BROKER || String(port) !== DEFAULT_MQTT_PORT) {
+            console.warn(`MQTT forcing hardware endpoint ${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT}`);
+            setMqttBroker(DEFAULT_MQTT_BROKER);
+            setMqttPort(DEFAULT_MQTT_PORT);
             try {
-              localStorage.setItem('mqtt_broker', nextBroker.broker);
-              localStorage.setItem('mqtt_port', nextBroker.port);
+              localStorage.setItem('mqtt_broker', DEFAULT_MQTT_BROKER);
+              localStorage.setItem('mqtt_port', DEFAULT_MQTT_PORT);
             } catch (e) {}
-            friendlyMsg += ` Alternando automaticamente para servidor reserva (${nextBroker.broker}:${nextBroker.port})...`;
+            friendlyMsg += ` Corrigindo para ${DEFAULT_MQTT_BROKER}:${DEFAULT_MQTT_PORT}...`;
           } else {
             friendlyMsg += ' Reconectando automaticamente...';
           }
@@ -2696,11 +2753,13 @@ export default function PoolControllerPage() {
       reconnectTimeoutRef.current = null;
     }
     if (mqttClientRef.current) {
+      intentionalMqttDisconnectRef.current = true;
       try {
         if (mqttClientRef.current.isConnected()) {
           mqttClientRef.current.disconnect();
         }
       } catch (e) {
+        intentionalMqttDisconnectRef.current = false;
         console.warn('Ignored clean disconnect exception:', e);
       }
       mqttClientRef.current = null;
@@ -2717,13 +2776,22 @@ export default function PoolControllerPage() {
     }, 300);
   };
 
-  function publishTopic(subTopic: string, payload: string, options?: { qos?: number; retained?: boolean }) {
+  function publishTopic(
+    subTopic: string,
+    payload: string,
+    options?: { qos?: number; retained?: boolean; deviceId?: string }
+  ) {
     const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
 
     if (isConn && subTopic) {
       try {
-        const rawId = (deviceId || '').trim();
-        const cleanId = cleanDeviceId(deviceId).trim() || rawId;
+        // Prefer explicit deviceId (OTA multi-target); otherwise the UI-selected device
+        const rawId = (options?.deviceId || activeDeviceIdRef.current || deviceId || '').trim();
+        if (!rawId) {
+          console.warn('App Warning: nenhum equipamento ativo — publish ignorado:', subTopic);
+          return;
+        }
+        const cleanId = cleanDeviceId(rawId).trim() || rawId;
 
         let relativePath = subTopic.trim();
         if (relativePath.toUpperCase().startsWith('MASTERLAZER/')) {
@@ -2732,15 +2800,26 @@ export default function PoolControllerPage() {
           relativePath = relativePath.substring('MLZ/'.length);
         }
 
-        // If relative path starts with MLZ- or MASTERLAZER-, strip it
+        // Strip accidental MLZ-/MASTERLAZER- prefix only when it is the device segment itself
         if (relativePath.toUpperCase().startsWith('MLZ-')) {
           relativePath = relativePath.substring(4);
         } else if (relativePath.toUpperCase().startsWith('MASTERLAZER-')) {
           relativePath = relativePath.substring(12);
         }
 
-        if (rawId && cleanId && rawId !== cleanId) {
-          relativePath = relativePath.replace(new RegExp(escapeRegExp(rawId), 'gi'), cleanId);
+        // Force first path segment to the target device id
+        const slashIdx = relativePath.indexOf('/');
+        if (slashIdx > 0) {
+          const firstSeg = relativePath.slice(0, slashIdx);
+          const rest = relativePath.slice(slashIdx); // includes leading '/'
+          if (firstSeg.includes('-') || areDeviceIdsMatching(firstSeg, rawId) || areDeviceIdsMatching(firstSeg, cleanId)) {
+            relativePath = `${cleanId}${rest}`;
+          } else {
+            // Relative command topic without device id (e.g. "pwm/r")
+            relativePath = `${cleanId}/${relativePath}`;
+          }
+        } else if (relativePath) {
+          relativePath = `${cleanId}/${relativePath}`;
         }
 
         const targetTopic = `MLZ/${relativePath}`;
@@ -2773,7 +2852,7 @@ export default function PoolControllerPage() {
     if (!rawId) return;
 
     const cleanId = cleanDeviceId(rawId).trim() || rawId;
-    const opts = { qos: 1 as const, retained: false };
+    const opts = { qos: 1 as const, retained: false, deviceId: rawId };
 
     // 1) /cmd — same channel as STATUS (most likely to appear on Serial Monitor)
     publishTopic(`MLZ/${cleanId}/cmd`, otaUrl, opts);
@@ -3267,10 +3346,29 @@ export default function PoolControllerPage() {
     const payloadON_OFF = checked ? 'ON' : 'OFF';
     logUserAction(`Togglou ${names[motorNum]} para ${checked ? 'LIGADO' : 'DESLIGADO'}`);
 
-    const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
+    const activeRaw = (activeDeviceIdRef.current || deviceId || '').trim();
+    const cleanId = cleanDeviceId(activeRaw).trim() || activeRaw;
+    if (!cleanId) {
+      console.warn('Motor toggle ignored: nenhum equipamento ativo');
+      showToast('Sem equipamento', 'Ative um equipamento antes de comandar os motores.', 'warning');
+      return;
+    }
 
-    // Primary topic expected by ESP32 hardware
-    publishTopic(`MLZ/${cleanId}/mt${motorNum}`, payloadON_OFF);
+    const isConn =
+      mqttClientRef.current &&
+      typeof mqttClientRef.current.isConnected === 'function' &&
+      mqttClientRef.current.isConnected();
+    if (!isConn) {
+      showToast('MQTT offline', `Não foi possível enviar para ${cleanId}. Reconectando…`, 'warning');
+      if (userWantsMqttRef.current) connectMQTT();
+      return;
+    }
+
+    // Firmware listens on mtN/state (and older builds on mtN)
+    const opts = { qos: 1 as const, retained: true };
+    console.log(`[Motor] -> MLZ/${cleanId}/mt${motorNum}/state = ${payloadON_OFF}`);
+    publishTopic(`MLZ/${cleanId}/mt${motorNum}`, payloadON_OFF, opts);
+    publishTopic(`MLZ/${cleanId}/mt${motorNum}/state`, payloadON_OFF, opts);
   };
 
   // LED Commands
@@ -3931,6 +4029,7 @@ export default function PoolControllerPage() {
       clearPendingInvite();
       await syncUserDevicesFromSupabase(currentUser.uid, currentUser.email);
       setDeviceId(result.device_id);
+      activeDeviceIdRef.current = result.device_id;
       localStorage.setItem('mqtt_device', result.device_id);
       setActiveScreen('aux');
     } finally {
@@ -4129,6 +4228,7 @@ export default function PoolControllerPage() {
     
     // Also make this the active device under control!
     setDeviceId(trimmedId);
+    activeDeviceIdRef.current = trimmedId;
     localStorage.setItem('mqtt_device', trimmedId);
     setScannedData(null);
     setQrScannerError(null);
@@ -6199,6 +6299,7 @@ export default function PoolControllerPage() {
                                         type="button"
                                         onClick={() => {
                                           setDeviceId('');
+                                          activeDeviceIdRef.current = '';
                                           localStorage.removeItem('mqtt_device');
                                         }}
                                         className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
@@ -6212,6 +6313,7 @@ export default function PoolControllerPage() {
                                         type="button"
                                         onClick={() => {
                                           setDeviceId(eq.id);
+                                          activeDeviceIdRef.current = eq.id;
                                           localStorage.setItem('mqtt_device', eq.id);
                                         }}
                                         className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-[10px] font-bold shadow-md transition-all flex items-center gap-1 cursor-pointer"
@@ -6283,6 +6385,7 @@ export default function PoolControllerPage() {
                                             if (isActive) {
                                               const nextId = filtered.length > 0 ? filtered[0].id : '';
                                               setDeviceId(nextId);
+                                              activeDeviceIdRef.current = nextId;
                                               if (nextId) {
                                                 localStorage.setItem('mqtt_device', nextId);
                                               } else {
@@ -7537,6 +7640,7 @@ export default function PoolControllerPage() {
                                             <button
                                               onClick={() => {
                                                 setDeviceId(eq.id);
+                                                activeDeviceIdRef.current = eq.id;
                                                 localStorage.setItem('mqtt_device', eq.id);
                                                 logUserAction(`Ativou equipamento ID: ${eq.id}`);
                                               }}
