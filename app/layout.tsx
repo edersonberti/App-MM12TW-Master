@@ -19,10 +19,26 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
     <html lang="pt-BR" className="w-full min-h-screen overflow-x-hidden overflow-y-auto overscroll-behavior-none select-none">
       <head>
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#020617" />
+        <meta name="theme-color" content="#000000" />
         <link rel="apple-touch-icon" href="/180x180.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                var savedTheme = localStorage.getItem('app_theme');
+                if (savedTheme === 'light' || savedTheme === 'dark') {
+                  document.documentElement.setAttribute('data-theme', savedTheme);
+                  var meta = document.querySelector('meta[name="theme-color"]');
+                  if (meta) meta.setAttribute('content', savedTheme === 'light' ? '#e5e5ea' : '#000000');
+                } else {
+                  document.documentElement.setAttribute('data-theme', 'dark');
+                }
+              } catch (e) {}
+            `,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -99,11 +115,11 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
           }}
         />
       </head>
-      <body suppressHydrationWarning className="bg-slate-950 w-full min-h-screen text-slate-100 flex items-center justify-center relative overflow-x-hidden overflow-y-auto overscroll-behavior-none font-sans antialiased">
+      <body suppressHydrationWarning className="bg-slate-950 w-full min-h-screen text-slate-100 flex items-center justify-center relative overflow-x-hidden overflow-y-auto overscroll-behavior-none font-sans antialiased" style={{ backgroundColor: 'var(--app-page-bg)', color: 'var(--app-text)' }}>
         {/* Background Mesh Gradients */}
-        <div className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none"></div>
-        <div className="absolute bottom-[-100px] right-[-100px] w-[600px] h-[600px] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none"></div>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-indigo-900/10 rounded-full blur-[150px] pointer-events-none"></div>
+        <div className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none" style={{ backgroundColor: 'var(--app-mesh-1)' }}></div>
+        <div className="absolute bottom-[-100px] right-[-100px] w-[600px] h-[600px] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" style={{ backgroundColor: 'var(--app-mesh-2)' }}></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-indigo-900/10 rounded-full blur-[150px] pointer-events-none" style={{ backgroundColor: 'var(--app-mesh-3)' }}></div>
         
         <div className="relative z-10 w-full min-h-screen flex items-center justify-center overflow-x-hidden overflow-y-auto">
           {children}

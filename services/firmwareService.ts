@@ -232,20 +232,17 @@ export async function getFirmwareDownloadUrl(storagePath: string): Promise<strin
   return data?.signedUrl || null;
 }
 
-/** Public OTA base used by ESP32 devices (never expose .bin download in the phone UI). */
+/** Public OTA base used by ESP32 devices (always production — never phone/local origin). */
 export const OTA_PUBLIC_BASE_URL = 'https://app-mm-12-tw-master.vercel.app/ota';
 
+/** Always the deployed Vercel OTA endpoint (ESP must reach a public HTTPS URL). */
 export function getOtaBaseUrl(): string {
-  if (typeof window === 'undefined') return OTA_PUBLIC_BASE_URL;
-  const origin = window.location.origin;
-  if (/localhost|127\.0\.0\.1/i.test(origin)) {
-    return OTA_PUBLIC_BASE_URL;
-  }
-  return `${origin}/ota`;
+  return OTA_PUBLIC_BASE_URL;
 }
 
 /**
  * Creates a short-lived OTA token and returns the public URL the device should fetch.
+ * Path form `/ota/<token>` — ESP HTTPUpdate handles this more reliably than `?t=`.
  * The phone does NOT download the .bin — only the ESP32 pulls it from /ota/.
  */
 export async function createOtaUpdateUrl(item: FirmwareItem): Promise<string> {
@@ -271,7 +268,9 @@ export async function createOtaUpdateUrl(item: FirmwareItem): Promise<string> {
     throw error || new Error('Não foi possível criar token OTA.');
   }
 
-  return `${getOtaBaseUrl()}/?t=${encodeURIComponent(data.token)}`;
+  const token = String(data.token).trim();
+  // Prefer path token (no query string) for ESP32 HTTPUpdate compatibility.
+  return `${OTA_PUBLIC_BASE_URL}/${encodeURIComponent(token)}`;
 }
 
 export async function deactivateFirmware(id: string): Promise<void> {

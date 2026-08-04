@@ -4,8 +4,8 @@
   "description": "Controle sua área de lazer Master Lazer, incluindo controle de motores, timers e automação de LED.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#020617",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "orientation": "portrait-primary",
   "scope": "/",
   "icons": [

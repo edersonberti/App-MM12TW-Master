@@ -45,6 +45,8 @@ import {
   PowerOff,
   Cpu,
   Sun,
+  Moon,
+  Palette,
   Thermometer,
   Zap,
   Upload,
@@ -65,7 +67,7 @@ import {
 
 import { isSupabaseConfigured, supabase, configureSupabase, getSupabaseConfigError, saveLocalConfig, clearLocalConfig } from '../lib/supabase';
 import { signInWithPassword, signUp, signOut, getSession, onAuthStateChange } from '../services/authService';
-import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile } from '../services/profileService';
+import { fetchProfile, updateProfile, fetchAllProfiles, updateProfileRole, deleteProfile, updateProfileTheme, type AppTheme } from '../services/profileService';
 import { fetchUserDevices, fetchAllActiveDevices, registerDevice, deleteDevice, updateDeviceOwner } from '../services/deviceService';
 import {
   fetchProductionDevices,
@@ -341,9 +343,11 @@ const MasterLazerLogo = ({ className = "w-[192px] h-[192px]" }: { className?: st
 
 export default function PoolControllerPage() {
   // Navigation / Auth State
-  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'solar' | 'setup' | 'share' | 'invite' | 'admin' | 'support'>('login');
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'home' | 'aux' | 'led' | 'timers' | 'solar' | 'setup' | 'share' | 'invite' | 'admin' | 'support' | 'theme'>('login');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string>('');
+  const [appTheme, setAppTheme] = useState<AppTheme>('dark');
+  const [themeSaving, setThemeSaving] = useState(false);
 
   // Manual API Configuration states
   const [showManualConfig, setShowManualConfig] = useState(false);
@@ -426,6 +430,48 @@ export default function PoolControllerPage() {
   const handleBackToHome = () => {
     setActiveScreen('home');
   };
+
+  const applyAppTheme = useCallback((theme: AppTheme) => {
+    const next = theme === 'light' ? 'light' : 'dark';
+    setAppTheme(next);
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', next);
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', next === 'light' ? '#e5e5ea' : '#000000');
+    }
+    try {
+      localStorage.setItem('app_theme', next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('app_theme');
+      if (saved === 'light' || saved === 'dark') {
+        applyAppTheme(saved);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [applyAppTheme]);
+
+  // Painel admin permanece sempre em dark, sem alterar a preferência salva do usuário
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    if (activeScreen === 'admin') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      document.documentElement.setAttribute('data-admin-panel', 'true');
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', '#000000');
+      return;
+    }
+
+    document.documentElement.removeAttribute('data-admin-panel');
+    applyAppTheme(appTheme);
+  }, [activeScreen, appTheme, applyAppTheme]);
 
   const [simUsers, setSimUsers] = useState<any[]>([]);
   const [adminSearchUser, setAdminSearchUser] = useState('');
@@ -718,6 +764,27 @@ export default function PoolControllerPage() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   }, []);
+
+  const handleSelectTheme = useCallback(async (theme: AppTheme) => {
+    applyAppTheme(theme);
+
+    if (!currentUser?.isSupabase || !currentUser?.uid || !isSupabaseConfigured()) {
+      showToast('Tema', theme === 'light' ? 'Tema claro aplicado neste dispositivo.' : 'Tema escuro aplicado neste dispositivo.', 'success');
+      return;
+    }
+
+    setThemeSaving(true);
+    try {
+      const updated = await updateProfileTheme(currentUser.uid, theme);
+      if (!updated) {
+        showToast('Tema', 'Não foi possível salvar no banco. Preferência ficou só neste aparelho.', 'warning');
+        return;
+      }
+      showToast('Tema', theme === 'light' ? 'Tema claro salvo na sua conta.' : 'Tema escuro salvo na sua conta.', 'success');
+    } finally {
+      setThemeSaving(false);
+    }
+  }, [applyAppTheme, currentUser?.isSupabase, currentUser?.uid, showToast]);
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -1379,6 +1446,9 @@ export default function PoolControllerPage() {
             isSupabase: true
           };
           setCurrentUser(loggedUser);
+          if (profile.theme === 'light' || profile.theme === 'dark') {
+            applyAppTheme(profile.theme);
+          }
           
           // Load devices for the user from Supabase and sync state
           await syncUserDevicesFromSupabase(session.user.id, session.user.email);
@@ -1760,6 +1830,9 @@ export default function PoolControllerPage() {
           };
 
           setCurrentUser(loggedUser);
+          if (profile.theme === 'light' || profile.theme === 'dark') {
+            applyAppTheme(profile.theme);
+          }
 
           // Fetch user's registered devices from Supabase & sync
           await syncUserDevicesFromSupabase(data.user.id, data.user.email);
@@ -2653,7 +2726,7 @@ export default function PoolControllerPage() {
     }, 300);
   };
 
-  function publishTopic(subTopic: string, payload: string) {
+  function publishTopic(subTopic: string, payload: string, options?: { qos?: number; retained?: boolean }) {
     const isConn = mqttClientRef.current && typeof mqttClientRef.current.isConnected === 'function' && mqttClientRef.current.isConnected();
 
     if (isConn && subTopic) {
@@ -2683,6 +2756,8 @@ export default function PoolControllerPage() {
 
         const message = new window.Paho.MQTT.Message(payload);
         message.destinationName = targetTopic;
+        if (typeof options?.qos === 'number') message.qos = options.qos;
+        if (typeof options?.retained === 'boolean') message.retained = options.retained;
         recordOutboundPublish(targetTopic, payload);
         mqttClientRef.current.send(message);
         console.log(`MQTT Published topic [${targetTopic}]: ${payload}`);
@@ -2696,6 +2771,35 @@ export default function PoolControllerPage() {
         connectMQTT();
       }
     }
+  }
+
+  /**
+   * Send OTA URL using the SAME publish path as motors/LED/cmd (proven to reach the ESP).
+   * Firmware that doesn't handle `/ota` still usually logs everything on `/cmd`.
+   */
+  function publishOtaUrlToDevice(equipmentId: string, otaUrl: string) {
+    const rawId = (equipmentId || '').trim();
+    if (!rawId) return;
+
+    const cleanId = cleanDeviceId(rawId).trim() || rawId;
+    const opts = { qos: 1 as const, retained: false };
+
+    // 1) /cmd — same channel as STATUS (most likely to appear on Serial Monitor)
+    publishTopic(`MLZ/${cleanId}/cmd`, otaUrl, opts);
+    publishTopic(`MLZ/${cleanId}/cmd`, `OTA ${otaUrl}`, opts);
+    publishTopic(`MLZ/${cleanId}/cmd`, `UPDATE ${otaUrl}`, opts);
+    publishTopic(
+      `MLZ/${cleanId}/cmd`,
+      JSON.stringify({ cmd: 'ota', url: otaUrl }),
+      opts
+    );
+
+    // 2) Dedicated OTA topics (if firmware already listens for them)
+    publishTopic(`MLZ/${cleanId}/ota`, otaUrl, opts);
+    publishTopic(`MLZ/${cleanId}/ota/url`, otaUrl, opts);
+    publishTopic(`MLZ/${cleanId}/update`, otaUrl, opts);
+
+    console.log(`[OTA] Published to MLZ/${cleanId}/cmd (+ ota topics):`, otaUrl);
   }
 
   const logUserAction = (actionName: string) => {
@@ -3061,21 +3165,24 @@ export default function PoolControllerPage() {
         return;
       }
 
-      // Short-lived public URL on /ota/ — device downloads the .bin; the phone never receives the file.
-      const otaUrl = await createOtaUpdateUrl(item);
+      // Prefer the active device when it matches this firmware model (what you're watching on Serial).
+      const activeMatch = targets.find((eq) => areDeviceIdsMatching(eq.id, deviceId));
+      const publishTargets = activeMatch
+        ? [activeMatch, ...targets.filter((eq) => !areDeviceIdsMatching(eq.id, activeMatch.id))]
+        : targets;
 
-      for (const eq of targets) {
-        const rawId = (eq.id || '').trim();
-        const cleanId = cleanDeviceId(rawId).trim() || rawId;
-        if (!cleanId) continue;
-        publishTopic(`MLZ/${cleanId}/ota`, otaUrl);
-        publishTopic(`MLZ/${cleanId}/ota/url`, otaUrl);
+      const otaUrl = await createOtaUpdateUrl(item);
+      const primaryId = cleanDeviceId(publishTargets[0].id).trim() || publishTargets[0].id;
+      console.log('[OTA] URL:', otaUrl, '| primary topic base: MLZ/' + primaryId);
+
+      for (const eq of publishTargets) {
+        publishOtaUrlToDevice(eq.id, otaUrl);
       }
 
       logUserAction(`OTA ${item.model} v${item.versao}`);
       showToast(
-        'OTA enviado',
-        `Comando de atualização ${item.model} v${item.versao} enviado ao equipamento via MQTT.`,
+        'OTA enviado via MQTT',
+        `Tópico MLZ/${primaryId}/cmd (+ ota). Confira o Serial do ESP. URL: …/ota/…`,
         'success'
       );
     } catch (err: any) {
@@ -4174,7 +4281,11 @@ export default function PoolControllerPage() {
   const visibleMotorControls = motorControls.slice(0, activeMotorCount);
 
   return (
-    <div className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-[100dvh] sm:h-auto'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`} id="pool-controller-app">
+    <div
+      className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-[100dvh] sm:h-auto'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}
+      id="pool-controller-app"
+      data-admin={isCurrentlyAdmin ? 'true' : 'false'}
+    >
       <Script 
         src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" 
         strategy="afterInteractive" 
@@ -4194,7 +4305,7 @@ export default function PoolControllerPage() {
 
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
-      <div className={`w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
+      <div className={`app-shell w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
         
         {/* Notch & Status Indicators */}
         {!isCurrentlyAdmin && (
@@ -4241,7 +4352,7 @@ export default function PoolControllerPage() {
         <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup / Share / Invite sheets) */}
-          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && activeScreen !== 'support' && (
+          {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && activeScreen !== 'support' && activeScreen !== 'theme' && (
             <header className="border-b border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-40">
               {/* Row 1: Brand & Settings */}
               <div className="px-5 pt-3.5 pb-2 flex items-center justify-between">
@@ -4309,6 +4420,18 @@ export default function PoolControllerPage() {
                             >
                               <Settings className="w-4 h-4 text-[#4398fa]" />
                               Configurações
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNavMenu(false);
+                                setActiveScreen('theme');
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-bold text-slate-200 hover:bg-white/10 transition-colors"
+                            >
+                              <Palette className="w-4 h-4 text-violet-400" />
+                              Aparência
                             </button>
 
                             <button
@@ -4549,41 +4672,14 @@ export default function PoolControllerPage() {
                             )}
                           </div>
                         </div>
-                      ) : isSupabaseConfigured() ? (
-                        <div className="flex flex-col items-center gap-1.5 w-full">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5">
-                            <Database className="w-3 h-3 text-emerald-400 animate-pulse" />
-                            CLOUD ATIVO
-                          </span>
-                          {typeof window !== 'undefined' && localStorage.getItem('local_supabase_url') && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                clearLocalConfig();
-                                window.location.reload();
-                              }}
-                              className="text-[9px] text-amber-400 hover:underline transition-all"
-                            >
-                              Remover Chave Manual & Restaurar Padrão
-                            </button>
-                          )}
-                        </div>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
-                          <Shield className="w-3 h-3 text-amber-400" />
-                          CARREGANDO CONEXÃO CLOUD...
-                        </span>
+                        !isSupabaseConfigured() && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                            <Shield className="w-3 h-3 text-amber-400" />
+                            CARREGANDO CONEXÃO CLOUD...
+                          </span>
+                        )
                       )}
-                      
-                      <button
-                        type="button"
-                        onClick={() => {
-                          window.location.href = window.location.origin + '?nocache=' + Date.now();
-                        }}
-                        className="text-[10px] text-slate-400 hover:text-white underline transition-all mt-1"
-                      >
-                        Limpar cache e forçar atualização
-                      </button>
                     </div>
                   </div>
 
@@ -6376,6 +6472,113 @@ export default function PoolControllerPage() {
 
                   <div className="flex gap-2">
                     <button
+                      onClick={handleBackToHome}
+                      className="w-full py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
+                    >
+                      Voltar para o App
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Screen: Theme / Appearance */}
+              {activeScreen === 'theme' && (
+                <motion.div
+                  key="theme-screen"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  className="flex flex-col h-full py-2 text-left space-y-4"
+                >
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleBackToHome}
+                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
+                      aria-label="Voltar"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/25 flex items-center justify-center shrink-0">
+                        <Palette className="w-4 h-4 text-violet-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-bold text-white leading-tight">Aparência</h2>
+                        <p className="text-[10px] text-slate-400 truncate">Escolha o tema do aplicativo</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed px-0.5">
+                    A preferência é salva na sua conta e sincroniza entre dispositivos.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      disabled={themeSaving}
+                      onClick={() => void handleSelectTheme('dark')}
+                      className={`relative flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all active:scale-[0.98] disabled:opacity-60 ${
+                        appTheme === 'dark'
+                          ? 'border-[#007AFF] bg-[#007AFF]/10 shadow-lg shadow-[#007AFF]/10'
+                          : 'border-white/10 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="w-full h-20 rounded-xl bg-black border border-[#38383A] flex items-center justify-center overflow-hidden">
+                        <div className="w-[70%] h-[75%] rounded-lg bg-[#1C1C1E] border border-[#38383A] p-1.5 space-y-1">
+                          <div className="h-1.5 w-1/2 rounded bg-[#0A84FF]" />
+                          <div className="h-1 w-full rounded bg-white/15" />
+                          <div className="h-1 w-3/4 rounded bg-white/15" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Moon className="w-3.5 h-3.5 text-slate-300" />
+                        <span className="text-xs font-bold text-white">Escuro</span>
+                      </div>
+                      {appTheme === 'dark' && (
+                        <span className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[#007AFF] flex items-center justify-center">
+                          <Check className="w-3 h-3 text-white" />
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={themeSaving}
+                      onClick={() => void handleSelectTheme('light')}
+                      className={`relative flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all active:scale-[0.98] disabled:opacity-60 ${
+                        appTheme === 'light'
+                          ? 'border-[#007AFF] bg-[#007AFF]/10 shadow-lg shadow-[#007AFF]/10'
+                          : 'border-white/10 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="w-full h-20 rounded-xl bg-[#F2F2F7] border border-[#C6C6C8] flex items-center justify-center overflow-hidden">
+                        <div className="w-[70%] h-[75%] rounded-lg bg-white border border-[#C6C6C8] p-1.5 space-y-1 shadow-sm">
+                          <div className="h-1.5 w-1/2 rounded bg-[#007AFF]" />
+                          <div className="h-1 w-full rounded bg-[#E5E5EA]" />
+                          <div className="h-1 w-3/4 rounded bg-[#E5E5EA]" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Sun className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-xs font-bold text-white">Claro</span>
+                      </div>
+                      {appTheme === 'light' && (
+                        <span className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[#007AFF] flex items-center justify-center">
+                          <Check className="w-3 h-3 text-white" />
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  {themeSaving && (
+                    <p className="text-[10px] text-slate-400 text-center animate-pulse">Salvando preferência...</p>
+                  )}
+
+                  <div className="mt-auto pt-2">
+                    <button
+                      type="button"
                       onClick={handleBackToHome}
                       className="w-full py-2.5 bg-[#4398fa] text-white hover:bg-[#0055CC] text-xs font-bold rounded-xl shadow-lg shadow-[#4398fa]/20 active:scale-95 transition-all"
                     >

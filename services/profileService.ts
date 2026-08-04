@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase';
 
+export type AppTheme = 'dark' | 'light';
+
 export interface SupabaseProfile {
   id: string;
   email: string;
@@ -7,13 +9,14 @@ export interface SupabaseProfile {
   role: string;
   status?: string;
   deleted_at?: string | null;
+  theme?: AppTheme;
 }
 
 export async function fetchProfile(userId: string): Promise<SupabaseProfile | null> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, status, deleted_at')
+      .select('id, email, full_name, role, status, deleted_at, theme')
       .eq('id', userId)
       .maybeSingle();
 
@@ -24,6 +27,26 @@ export async function fetchProfile(userId: string): Promise<SupabaseProfile | nu
     return data;
   } catch (err) {
     console.error('[ProfileService] Fetch profile error:', err);
+    return null;
+  }
+}
+
+export async function updateProfileTheme(userId: string, theme: AppTheme): Promise<SupabaseProfile | null> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ theme, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+      .select('id, email, full_name, role, status, deleted_at, theme')
+      .single();
+
+    if (error) {
+      console.error('[ProfileService] Error updating theme:', error.message);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error('[ProfileService] Update theme error:', err);
     return null;
   }
 }
@@ -53,7 +76,7 @@ export async function fetchAllProfiles(): Promise<SupabaseProfile[]> {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, status, deleted_at')
+      .select('id, email, full_name, role, status, deleted_at, theme')
       .neq('status', 'deleted');
 
     if (error) {
