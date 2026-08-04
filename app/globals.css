@@ -39,23 +39,24 @@ html[data-theme="dark"] {
 }
 
 html[data-theme="light"] {
-  --app-page-bg: #e5e5ea;
-  --app-shell-bg: #f2f2f7;
-  --app-shell-border: rgba(60, 60, 67, 0.22);
+  --app-page-bg: #d8d8de;
+  --app-shell-bg: #ececf0;
+  --app-shell-border: rgba(60, 60, 67, 0.28);
   --app-elevated: #ffffff;
-  --app-fill: rgba(60, 60, 67, 0.1);
-  --app-fill-secondary: rgba(60, 60, 67, 0.08);
+  --app-nested: #dce2eb;
+  --app-fill: rgba(60, 60, 67, 0.14);
+  --app-fill-secondary: rgba(60, 60, 67, 0.1);
   --app-text: #1c1c1e;
   --app-text-secondary: rgba(60, 60, 67, 0.78);
   --app-text-tertiary: rgba(60, 60, 67, 0.55);
-  --app-separator: rgba(60, 60, 67, 0.32);
+  --app-separator: rgba(60, 60, 67, 0.28);
   --app-accent: #007aff;
-  --app-accent-soft: rgba(0, 122, 255, 0.14);
+  --app-accent-soft: rgba(0, 122, 255, 0.16);
   --app-gray: #6c6c70;
   --app-mesh-1: transparent;
   --app-mesh-2: transparent;
   --app-mesh-3: transparent;
-  --app-theme-color: #e5e5ea;
+  --app-theme-color: #d8d8de;
   color-scheme: light;
 }
 
@@ -138,10 +139,12 @@ html[data-theme="dark"] #pool-controller-app .text-slate-500 {
 
 /* Fills / cards — systemFill equivalents */
 html[data-theme="light"] #pool-controller-app .bg-white\/5,
-html[data-theme="light"] #pool-controller-app .bg-white\/10,
-html[data-theme="light"] #pool-controller-app .hover\:bg-white\/10:hover,
 html[data-theme="light"] #pool-controller-app .hover\:bg-white\/5:hover {
   background-color: var(--app-fill) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-white\/10,
+html[data-theme="light"] #pool-controller-app .hover\:bg-white\/10:hover {
+  background-color: var(--app-elevated) !important;
 }
 html[data-theme="light"] #pool-controller-app .bg-white\/12 {
   background-color: var(--app-accent-soft) !important;
@@ -149,7 +152,7 @@ html[data-theme="light"] #pool-controller-app .bg-white\/12 {
 html[data-theme="light"] #pool-controller-app .bg-black\/20,
 html[data-theme="light"] #pool-controller-app .bg-black\/25,
 html[data-theme="light"] #pool-controller-app .bg-black\/40 {
-  background-color: var(--app-fill-secondary) !important;
+  background-color: var(--app-nested) !important;
 }
 
 html[data-theme="dark"] #pool-controller-app .bg-white\/5,
@@ -267,34 +270,43 @@ html[data-theme="light"] #pool-controller-app .hover\:text-white:hover {
   background-color: var(--app-accent-soft) !important;
 }
 
-/* Keep white text on solid accent / gradient buttons */
+/* Keep white text on solid accent / gradient buttons (not soft /20 fills) */
 #pool-controller-app .bg-\[\#4398fa\],
 #pool-controller-app .bg-\[\#4398fa\] .text-white,
 #pool-controller-app .bg-\[\#4398fa\] span,
 #pool-controller-app button.bg-\[\#4398fa\],
 #pool-controller-app .bg-\[\#007AFF\],
-#pool-controller-app .bg-gradient-to-r,
-#pool-controller-app .bg-gradient-to-r .text-white,
 #pool-controller-app .bg-emerald-600,
 #pool-controller-app .bg-emerald-600 .text-white,
 #pool-controller-app .from-emerald-600,
-#pool-controller-app .from-\[\#0055CC\] {
+#pool-controller-app .from-\[\#0055CC\],
+#pool-controller-app button.from-\[\#0055CC\],
+#pool-controller-app button.from-emerald-600 {
   color: #ffffff !important;
 }
 
 /* Status bar strip inside bezel */
 html[data-theme="light"] #pool-controller-app .bg-black\/25 {
-  background-color: #e5e5ea !important;
+  background-color: #d8d8de !important;
 }
 html[data-theme="dark"] #pool-controller-app .bg-black\/25 {
   background-color: #000000 !important;
 }
 
-/* Dark slate panels → Apple elevated surfaces */
+/* Dark slate panels → nested gray (not pure white — keeps card-in-card contrast) */
 html[data-theme="light"] #pool-controller-app .bg-slate-900\/80,
+html[data-theme="light"] #pool-controller-app .bg-slate-900\/60,
+html[data-theme="light"] #pool-controller-app .bg-slate-900\/40,
 html[data-theme="light"] #pool-controller-app .bg-slate-950\/65,
-html[data-theme="light"] #pool-controller-app .bg-slate-950 {
-  background-color: #ffffff !important;
+html[data-theme="light"] #pool-controller-app .bg-slate-950\/45,
+html[data-theme="light"] #pool-controller-app .bg-slate-950,
+html[data-theme="light"] #pool-controller-app .hover\:bg-slate-900\/80:hover {
+  background-color: var(--app-nested) !important;
+  color: var(--app-text) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-slate-800,
+html[data-theme="light"] #pool-controller-app .hover\:bg-slate-700:hover {
+  background-color: #d1d1d6 !important;
   color: var(--app-text) !important;
 }
 html[data-theme="dark"] #pool-controller-app .bg-slate-900\/80,
@@ -303,10 +315,253 @@ html[data-theme="dark"] #pool-controller-app .bg-slate-950 {
   background-color: #2c2c2e !important;
 }
 
-/* Cards / glass panels in light: use white elevated surface */
+/* Cards / glass panels in light: white elevated surface over gray shell */
 html[data-theme="light"] #pool-controller-app .bg-white\/10.backdrop-blur-md,
-html[data-theme="light"] #pool-controller-app .rounded-2xl.bg-white\/10 {
+html[data-theme="light"] #pool-controller-app .rounded-2xl.bg-white\/10,
+html[data-theme="light"] #pool-controller-app .rounded-2xl.bg-white\/5 {
+  background-color: var(--app-elevated) !important;
+  border-color: rgba(60, 60, 67, 0.22) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Soft accent buttons / chips — stronger fill + darker text in light */
+html[data-theme="light"] #pool-controller-app button.from-blue-600\/20,
+html[data-theme="light"] #pool-controller-app .from-blue-600\/20 {
+  --tw-gradient-from: rgba(0, 122, 255, 0.18) !important;
+  --tw-gradient-to: rgba(8, 145, 178, 0.2) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  color: #0051a8 !important;
+  border-color: rgba(0, 122, 255, 0.38) !important;
+  background-color: rgba(0, 122, 255, 0.12) !important;
+}
+html[data-theme="light"] #pool-controller-app button.from-blue-600\/20 span,
+html[data-theme="light"] #pool-controller-app button.from-blue-600\/20 .text-cyan-400 {
+  color: #0051a8 !important;
+}
+html[data-theme="light"] #pool-controller-app .text-cyan-200,
+html[data-theme="light"] #pool-controller-app .text-cyan-300,
+html[data-theme="light"] #pool-controller-app .hover\:text-cyan-200:hover {
+  color: #0e7490 !important;
+}
+html[data-theme="light"] #pool-controller-app .text-cyan-400,
+html[data-theme="light"] #pool-controller-app .text-cyan-400\/90 {
+  color: #0891b2 !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-cyan-500\/10,
+html[data-theme="light"] #pool-controller-app .bg-cyan-500\/20 {
+  background-color: rgba(8, 145, 178, 0.14) !important;
+}
+html[data-theme="light"] #pool-controller-app .border-cyan-500\/20,
+html[data-theme="light"] #pool-controller-app .border-cyan-500\/30,
+html[data-theme="light"] #pool-controller-app .border-cyan-500\/40 {
+  border-color: rgba(8, 145, 178, 0.4) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-sky-500\/15,
+html[data-theme="light"] #pool-controller-app .hover\:bg-sky-500\/25:hover {
+  background-color: rgba(0, 122, 255, 0.14) !important;
+}
+html[data-theme="light"] #pool-controller-app .text-sky-300 {
+  color: #0066cc !important;
+}
+html[data-theme="light"] #pool-controller-app .border-sky-500\/30 {
+  border-color: rgba(0, 122, 255, 0.35) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-amber-500\/20,
+html[data-theme="light"] #pool-controller-app .hover\:bg-amber-500\/30:hover {
+  background-color: rgba(245, 158, 11, 0.22) !important;
+}
+html[data-theme="light"] #pool-controller-app .text-amber-200 {
+  color: #b45309 !important;
+}
+html[data-theme="light"] #pool-controller-app .border-amber-500\/30 {
+  border-color: rgba(217, 119, 6, 0.4) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-emerald-500\/15,
+html[data-theme="light"] #pool-controller-app .bg-emerald-500\/20 {
+  background-color: rgba(16, 185, 129, 0.14) !important;
+}
+html[data-theme="light"] #pool-controller-app .text-emerald-300 {
+  color: #047857 !important;
+}
+html[data-theme="light"] #pool-controller-app .border-emerald-500\/30,
+html[data-theme="light"] #pool-controller-app .border-emerald-500\/40 {
+  border-color: rgba(16, 185, 129, 0.4) !important;
+}
+html[data-theme="light"] #pool-controller-app .bg-violet-500\/20 {
+  background-color: rgba(139, 92, 246, 0.14) !important;
+}
+html[data-theme="light"] #pool-controller-app .text-violet-300 {
+  color: #6d28d9 !important;
+}
+html[data-theme="light"] #pool-controller-app .border-violet-500\/30 {
+  border-color: rgba(139, 92, 246, 0.4) !important;
+}
+html[data-theme="light"] #pool-controller-app .border-slate-600,
+html[data-theme="light"] #pool-controller-app .border-slate-700 {
+  border-color: rgba(60, 60, 67, 0.28) !important;
+}
+
+/* Active equipment card in light — clear green tint over white parent */
+html[data-theme="light"] #pool-controller-app .from-emerald-500\/15 {
+  --tw-gradient-from: rgba(16, 185, 129, 0.18) !important;
+  --tw-gradient-to: rgba(6, 182, 212, 0.12) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  background-color: rgba(16, 185, 129, 0.1) !important;
+}
+
+/* Primary solid action buttons keep white label */
+html[data-theme="light"] #pool-controller-app .from-emerald-600,
+html[data-theme="light"] #pool-controller-app .to-teal-600,
+html[data-theme="light"] #pool-controller-app button.from-emerald-600 {
+  color: #ffffff !important;
+}
+
+/* ── Light: setup equipment + help screens (explicit contrast) ── */
+html[data-theme="light"] #pool-controller-app .app-setup-panel,
+html[data-theme="light"] #pool-controller-app .app-help-panel {
   background-color: #ffffff !important;
-  border-color: rgba(60, 60, 67, 0.18) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+  border-color: #c5cad3 !important;
+  box-shadow: 0 4px 16px rgba(30, 40, 60, 0.1) !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card--idle,
+html[data-theme="light"] #pool-controller-app .app-device-empty {
+  background-color: #dce2eb !important;
+  border-color: #b4bcc8 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card--idle:hover {
+  background-color: #d2d9e4 !important;
+  border-color: #9aa5b5 !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card--active {
+  background-color: #d4efe4 !important;
+  background-image: none !important;
+  border-color: #34a57a !important;
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.18) !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-cyan-500\/20 {
+  background-color: #c8e8f2 !important;
+  color: #0e5f73 !important;
+  border-color: #5eb3c9 !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-emerald-500\/20 {
+  background-color: #b8e8d0 !important;
+  color: #0f6b45 !important;
+  border-color: #3db87e !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-violet-500\/20 {
+  background-color: #ddd0f8 !important;
+  color: #5b21b6 !important;
+  border-color: #a78bfa !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-slate-800 {
+  background-color: #c5cbd6 !important;
+  color: #3a3a3c !important;
+  border-color: #9aa3b0 !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-sky-500\/15,
+html[data-theme="light"] #pool-controller-app .app-device-card .hover\:bg-sky-500\/25:hover {
+  background-color: #c9dff8 !important;
+  color: #0051a8 !important;
+  border-color: #5b9fe0 !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-device-card .bg-amber-500\/20,
+html[data-theme="light"] #pool-controller-app .app-device-card .hover\:bg-amber-500\/30:hover {
+  background-color: #fde2b0 !important;
+  color: #92400e !important;
+  border-color: #e0a13a !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-field {
+  background-color: #e8ecf2 !important;
+  border-color: #aeb6c2 !important;
+  color: #1c1c1e !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-field:focus {
+  border-color: #007aff !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.18) !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-help-upload {
+  background-color: #dff5ea !important;
+  border-color: #4caf82 !important;
+  border-style: dashed !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-help-upload:hover {
+  background-color: #d0efdf !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-help-icon {
+  background-color: #d4f0e2 !important;
+  border-color: #4caf82 !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-btn-secondary {
+  background-color: #e2e6ed !important;
+  border-color: #aeb6c2 !important;
+  color: #1c1c1e !important;
+}
+
+html[data-theme="light"] #pool-controller-app .app-btn-secondary:active,
+html[data-theme="light"] #pool-controller-app .app-btn-secondary:hover {
+  background-color: #d4dae4 !important;
+}
+
+/* Inputs / black fills in light — readable gray wells */
+html[data-theme="light"] #pool-controller-app input.bg-black\/30,
+html[data-theme="light"] #pool-controller-app textarea.bg-black\/30,
+html[data-theme="light"] #pool-controller-app .bg-black\/30 {
+  background-color: #e8ecf2 !important;
+  border-color: #aeb6c2 !important;
+  color: #1c1c1e !important;
+}
+
+/* Mobile PWA: fill viewport edge-to-edge (no leftover bottom gap) */
+@media (max-width: 639px) {
+  html,
+  body {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+  }
+
+  body > .relative.z-10 {
+    height: 100% !important;
+    min-height: 0 !important;
+    align-items: stretch !important;
+  }
+
+  #pool-controller-app:not([data-admin="true"]) {
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+
+  #pool-controller-app:not([data-admin="true"]) .app-shell {
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* Admin panel needs page scroll */
+  html:has(#pool-controller-app[data-admin="true"]),
+  html:has(#pool-controller-app[data-admin="true"]) body {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 100dvh !important;
+    overflow: auto !important;
+  }
 }

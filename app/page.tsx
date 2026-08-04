@@ -437,7 +437,7 @@ export default function PoolControllerPage() {
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-theme', next);
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', next === 'light' ? '#e5e5ea' : '#000000');
+      if (meta) meta.setAttribute('content', next === 'light' ? '#d8d8de' : '#000000');
     }
     try {
       localStorage.setItem('app_theme', next);
@@ -769,7 +769,6 @@ export default function PoolControllerPage() {
     applyAppTheme(theme);
 
     if (!currentUser?.isSupabase || !currentUser?.uid || !isSupabaseConfigured()) {
-      showToast('Tema', theme === 'light' ? 'Tema claro aplicado neste dispositivo.' : 'Tema escuro aplicado neste dispositivo.', 'success');
       return;
     }
 
@@ -778,9 +777,7 @@ export default function PoolControllerPage() {
       const updated = await updateProfileTheme(currentUser.uid, theme);
       if (!updated) {
         showToast('Tema', 'Não foi possível salvar no banco. Preferência ficou só neste aparelho.', 'warning');
-        return;
       }
-      showToast('Tema', theme === 'light' ? 'Tema claro salvo na sua conta.' : 'Tema escuro salvo na sua conta.', 'success');
     } finally {
       setThemeSaving(false);
     }
@@ -3354,7 +3351,6 @@ export default function PoolControllerPage() {
   const handleProgramSave = () => {
     const cleanId = cleanDeviceId(deviceId).trim() || deviceId.trim();
     publishTopic(`MLZ/${cleanId}/led/ctrl`, "SAVE");
-    showToast('Configuração Salva', 'Configuração de LED persistida em memória interna!', 'success');
   };
 
   // Save Timers
@@ -3382,7 +3378,6 @@ export default function PoolControllerPage() {
 
     const isModelMM12TW = activeModel === 'MM12TW';
     const targetMotor = isModelMM12TW ? 'mt2' : 'mt4';
-    const activeMotorName = isModelMM12TW ? motor2Name : motor4Name;
 
     const formatHour = (val: string) => {
       if (!val || val === 'D' || val === 'off') return 'D';
@@ -3446,16 +3441,7 @@ export default function PoolControllerPage() {
     setFilterInit(legacyStart);
     setFilterHours(filterHours1);
 
-    const activeText = selectedDaysList ? `Dias: [ ${selectedDaysList} ]` : `Dias: Nenhum selecionado`;
-    const t1Text = filterInit1 === 'D' ? 'Timer 1: Desligado' : `Timer 1: ${filterInit1}h (${filterHours1}h)`;
-    const t2Text = filterInit2 === 'D' ? 'Timer 2: Desligado' : `Timer 2: ${filterInit2}h (${filterHours2}h)`;
-    
     logUserAction(`Configurou Filtração: T1: ${filterInit1}h(${filterHours1}h), T2: ${filterInit2}h(${filterHours2}h), Dias: ${selectedDaysList || 'Nenhum'}`);
-    showToast(
-      `Programação enviada para ${activeMotorName} (${targetMotor.toUpperCase()})!`,
-      `${t1Text} | ${t2Text} | ${activeText}`,
-      'success'
-    );
   };
 
   const handleSaveLedTimer = () => {
@@ -3488,11 +3474,6 @@ export default function PoolControllerPage() {
     publishTopic(`MLZ/${cleanId}/led/tmr/cfg`, JSON.stringify(data));
 
     logUserAction(`Configurou Timer LED: Início ${startingTime}, Duração: ${ledDuration}h, Programa: ${ledProgram}`);
-    showToast(
-      'Timer LED Enviado!',
-      `Início: ${startingTime} | Duração: ${ledDuration}h | Prog: ${ledProgram}`,
-      'success'
-    );
   };
 
   const handleSaveHidroTimer = () => {
@@ -3526,11 +3507,6 @@ export default function PoolControllerPage() {
     publishTopic(`MLZ/${cleanId}/mt1/timer/hours`, String(data.hours));
 
     logUserAction(`Configurou Timer Hidro (${motor1Name}): ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`);
-    showToast(
-      `Timer ${motor1Name} Enviado!`,
-      `Status: ${isEnabled ? `Ativo (${hoursVal}h)` : 'Desligado'}`,
-      'success'
-    );
   };
 
   // Start the QR Code Scanner camera
@@ -4282,7 +4258,7 @@ export default function PoolControllerPage() {
 
   return (
     <div
-      className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-[100dvh] sm:h-auto'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}
+      className={`relative w-full ${isCurrentlyAdmin ? 'max-w-7xl px-4 md:px-8 py-6' : 'max-w-[440px] p-0 sm:p-4 h-full min-h-0 sm:h-auto sm:min-h-0'} mx-auto select-none ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}
       id="pool-controller-app"
       data-admin={isCurrentlyAdmin ? 'true' : 'false'}
     >
@@ -4305,11 +4281,12 @@ export default function PoolControllerPage() {
 
 
       {/* iPhone Bezel Virtual Frame Mockup for Desktop, immersive fluid on Mobile */}
-      <div className={`app-shell w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-[100dvh] sm:h-[820px] max-h-[100dvh] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
+      <div className={`app-shell w-full bg-[#0d1117]/90 backdrop-blur-xl border-0 sm:border border-white/10 ${isCurrentlyAdmin ? 'rounded-2xl min-h-[85vh] h-auto p-4 md:p-6' : 'rounded-none sm:rounded-[32px] h-full min-h-0 sm:h-[820px] sm:max-h-[92vh]'} shadow-2xl flex flex-col relative z-20 ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
         
         {/* Notch & Status Indicators */}
         {!isCurrentlyAdmin && (
-          <div className="flex h-7 w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5">
+          <div className="flex w-full bg-black/25 justify-between items-center px-4 relative z-50 border-b border-white/5 pt-[env(safe-area-inset-top,0px)] shrink-0">
+            <div className="flex h-7 w-full justify-between items-center">
             <span className="text-[10px] sm:text-[11px] font-sans text-slate-300 font-bold tracking-tight">{currentTime}</span>
             {/* Virtual Notch / Status Center - Hidden on mobile, shown on desktop */}
             {activeScreen === 'home' && (isUpdatingData || showUpdatedMessage) ? (
@@ -4344,12 +4321,13 @@ export default function PoolControllerPage() {
                 OFFLINE
               </span>
             )}
+            </div>
+            </div>
           </div>
-        </div>
         )}
 
         {/* Master App Screen Display Frame */}
-        <div className={`flex-1 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
+        <div className={`flex-1 min-h-0 bg-transparent flex flex-col relative ${isCurrentlyAdmin ? 'overflow-visible' : 'overflow-hidden'}`}>
           
           {/* Header Bar (Hidden for Login / Register / Setup / Share / Invite sheets) */}
           {activeScreen !== 'login' && activeScreen !== 'register' && activeScreen !== 'setup' && activeScreen !== 'share' && activeScreen !== 'invite' && activeScreen !== 'admin' && activeScreen !== 'support' && activeScreen !== 'theme' && (
@@ -4560,7 +4538,7 @@ export default function PoolControllerPage() {
           )}
 
           {/* Dynamic Screen Contents inside Screen Containers */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 custom-scrollbar flex flex-col relative">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 custom-scrollbar flex flex-col relative">
             
             <AnimatePresence initial={false}>
               
@@ -5809,7 +5787,6 @@ export default function PoolControllerPage() {
                             type="button"
                             onClick={() => {
                               setSolarWorkMode('off');
-                              showToast('Modo de Trabalho', 'Aquecimento Solar Desligado.', 'info');
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'off'
@@ -5825,7 +5802,6 @@ export default function PoolControllerPage() {
                             type="button"
                             onClick={() => {
                               setSolarWorkMode('manual');
-                              showToast('Modo de Trabalho', 'Aquecimento Solar em Modo Manual.', 'info');
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'manual'
@@ -5841,7 +5817,6 @@ export default function PoolControllerPage() {
                             type="button"
                             onClick={() => {
                               setSolarWorkMode('auto');
-                              showToast('Modo de Trabalho', 'Aquecimento Solar em Modo Automático.', 'success');
                             }}
                             className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${
                               solarWorkMode === 'auto'
@@ -5986,7 +5961,7 @@ export default function PoolControllerPage() {
                   className="space-y-4 py-2"
                 >
                   {/* SISTEMA REMOTO BLOCK PLACE AT THE TOP */}
-                  <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl py-5 text-left">
+                  <div className="app-setup-panel p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl py-5 text-left">
                     <h3 className="text-sm font-bold text-white mb-3">Sistema Remoto</h3>
 
                     {mqttErrorMsg && (
@@ -6022,7 +5997,7 @@ export default function PoolControllerPage() {
                   </div>
 
                   {/* EQUIPMENT REGISTRATION BLOCK */}
-                  <div id="equipment-registration-block" className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
+                  <div id="equipment-registration-block" className="app-setup-panel p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 shadow-xl text-left space-y-4">
                     <h3 className="text-sm font-bold text-white pb-1.5 border-b border-white/10 flex items-center justify-between">
                       <span>Equipamentos</span>
                     </h3>
@@ -6185,7 +6160,7 @@ export default function PoolControllerPage() {
                         </div>
 
                         {registeredEquipments.length === 0 ? (
-                          <div className="p-4 rounded-xl bg-slate-900/40 border border-white/5 text-center space-y-1">
+                          <div className="app-device-empty p-4 rounded-xl bg-slate-900/40 border border-white/5 text-center space-y-1">
                             <p className="text-xs text-slate-300 font-medium">Nenhum equipamento cadastrado ainda.</p>
                             <p className="text-[10px] text-slate-500">Escaneie o QR Code acima para vincular e gerenciar seu equipamento.</p>
                           </div>
@@ -6197,10 +6172,10 @@ export default function PoolControllerPage() {
                               return (
                                 <div 
                                   key={eq.id} 
-                                  className={`flex items-center justify-between p-3 rounded-xl transition-all border ${
+                                  className={`app-device-card flex items-center justify-between p-3 rounded-xl transition-all border ${
                                     isActive 
-                                      ? 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
-                                      : 'bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
+                                      ? 'app-device-card--active bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                                      : 'app-device-card--idle bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/80'
                                   }`}
                                 >
                                   <div className="min-w-0 flex-1 pr-2">
@@ -6601,13 +6576,13 @@ export default function PoolControllerPage() {
                     <button
                       type="button"
                       onClick={closeSupportTicket}
-                      className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
+                      className="app-btn-secondary p-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 active:bg-white/10"
                       aria-label="Voltar"
                     >
                       <ChevronLeft className="w-5 h-5" />
                     </button>
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0 app-help-icon">
                         <Headset className="w-4 h-4 text-emerald-400" />
                       </div>
                       <div className="min-w-0">
@@ -6618,10 +6593,10 @@ export default function PoolControllerPage() {
                   </div>
 
                   <p className="text-[11px] text-slate-400 leading-relaxed px-0.5">
-                    
-                  </p>Descreva o problema que está enfrentando.
+                    Descreva o problema que está enfrentando.
+                  </p>
 
-                  <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-4">
+                  <div className="app-help-panel p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Assunto</label>
                       <input
@@ -6630,7 +6605,7 @@ export default function PoolControllerPage() {
                         onChange={(e) => setSupportSubject(e.target.value)}
                         placeholder="Ex.: Timer não liga, LED travado..."
                         maxLength={80}
-                        className="w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50"
+                        className="app-field w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50"
                       />
                     </div>
 
@@ -6644,7 +6619,7 @@ export default function PoolControllerPage() {
                         placeholder="Conte o que acontece, quando começou e se aparece alguma mensagem de erro..."
                         rows={5}
                         maxLength={1200}
-                        className="w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50 resize-none leading-relaxed"
+                        className="app-field w-full px-3.5 py-2.5 bg-black/30 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400/50 resize-none leading-relaxed"
                       />
                       <p className="text-[9px] text-slate-500 text-right">{supportDescription.length}/1200</p>
                     </div>
@@ -6675,7 +6650,7 @@ export default function PoolControllerPage() {
                           </p>
                         </div>
                       ) : (
-                        <label className="flex flex-col items-center justify-center gap-2 w-full min-h-[96px] px-4 py-4 rounded-2xl border border-dashed border-emerald-400/30 bg-emerald-400/5 hover:bg-emerald-400/10 cursor-pointer transition-colors">
+                        <label className="app-help-upload flex flex-col items-center justify-center gap-2 w-full min-h-[96px] px-4 py-4 rounded-2xl border border-dashed border-emerald-400/30 bg-emerald-400/5 hover:bg-emerald-400/10 cursor-pointer transition-colors">
                           <ImagePlus className="w-5 h-5 text-emerald-400" />
                           <span className="text-[11px] font-bold text-slate-200">Anexar print do problema</span>
                           <span className="text-[9px] text-slate-500">JPG, PNG ou WEBP</span>
@@ -6694,7 +6669,7 @@ export default function PoolControllerPage() {
                     <button
                       type="button"
                       onClick={closeSupportTicket}
-                      className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs font-bold active:bg-white/10"
+                      className="app-btn-secondary flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs font-bold active:bg-white/10"
                     >
                       Voltar
                     </button>
@@ -9022,7 +8997,7 @@ export default function PoolControllerPage() {
 
 
           {/* Subheader / Copyright Info (matches copyright requirements) */}
-          <div className="py-2.0 text-center bg-black/10 border-t border-white/2">
+          <div className="py-2 text-center bg-black/10 border-t border-white/2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shrink-0">
             <span className="text-[8px] tracking-widest text-slate-400 font-sans uppercase">
               Copyright 2026 • Master Lazer Systems
             </span>
