@@ -9,8 +9,8 @@ export const runtime = 'nodejs';
  */
 export async function GET(
   _request: Request,
-  context: { params: Promise<{ token: string }> | { token: string } }
+  context: { params: Promise<{ token: string }> }
 ) {
-  const params = await Promise.resolve(context.params);
-  return serveOtaFirmware(params.token || '');
+  const { token } = await context.params;
+  return serveOtaFirmware(token || '');
 }
