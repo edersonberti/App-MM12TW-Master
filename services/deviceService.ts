@@ -107,7 +107,8 @@ export async function fetchAllActiveDevices(): Promise<SupabaseDeviceWithOwner[]
 
 /**
  * Registers a device for the current user by claiming it from the production whitelist.
- * Requires a valid factory `provision` matching `production_devices`.
+ * Device must exist in `production_devices` (by serial). The factory QR and install QR
+ * use different provision tokens — claim authorizes by serial; install provision becomes pairing_token.
  * Returns null on unrecognized / already claimed by another user (generic client error).
  */
 export async function registerDevice(

@@ -45,7 +45,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
             __html: `
               // One-time hard purge of stale PWA cache and service workers to fix any blank screen or chunk load issues
               try {
-                var purgeVersion = 'masterlazer_v4_purge';
+                var purgeVersion = 'masterlazer_v5_purge';
                 if (typeof window !== 'undefined' && !localStorage.getItem(purgeVersion)) {
                   localStorage.setItem(purgeVersion, 'true');
                   if ('serviceWorker' in navigator) {

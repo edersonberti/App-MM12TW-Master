@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Image from 'next/image';
 import Script from 'next/script';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -325,10 +324,11 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const APP_LOGO_PATH = encodeURI('/logo(512 x 512 px).png');
-const APP_LOGO_LIGHT_PATH = encodeURI('/logoazul.jpg');
+const APP_LOGO_PATH = '/logo-512.png';
+const APP_LOGO_LIGHT_PATH = '/logoazul.jpg';
 
-// Official Master Lazer logo — light theme uses blue mark for contrast on light shell
+// Official Master Lazer logo — light theme uses blue mark for contrast on light shell.
+// Plain <img> (not next/image) so the PWA service worker can serve the static file reliably.
 const MasterLazerLogo = ({
   className = 'w-[192px] h-[192px]',
   theme = 'dark',
@@ -336,14 +336,15 @@ const MasterLazerLogo = ({
   className?: string;
   theme?: AppTheme;
 }) => (
-  <div className={`relative ${className}`}>
-    <Image
+  <div className={className}>
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img
       src={theme === 'light' ? APP_LOGO_LIGHT_PATH : APP_LOGO_PATH}
       alt="Master Lazer Logo"
-      fill
-      sizes="192px"
-      className="object-contain rounded-full"
-      priority
+      width={192}
+      height={192}
+      decoding="async"
+      className="h-full w-full object-contain rounded-full"
     />
   </div>
 );

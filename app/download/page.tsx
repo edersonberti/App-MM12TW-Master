@@ -1,7 +1,6 @@
-import Image from 'next/image';
 import { Download, ShieldCheck, Smartphone } from 'lucide-react';
 
-const LOGO_PATH = encodeURI('/logo(512 x 512 px).png');
+const LOGO_PATH = '/logo-512.png';
 
 export default function ApkDownloadPage() {
   return (
@@ -16,13 +15,14 @@ export default function ApkDownloadPage() {
 
         <div className="mx-auto mb-5 flex h-24 w-24 items-center justify-center rounded-3xl border border-white/10 bg-white/5 p-2 shadow-lg shadow-blue-950/40">
           <div className="relative h-full w-full">
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={LOGO_PATH}
               alt="Master Lazer"
-              fill
-              sizes="96px"
-              className="rounded-2xl object-contain"
-              priority
+              width={96}
+              height={96}
+              decoding="async"
+              className="h-full w-full rounded-2xl object-contain"
             />
           </div>
         </div>
