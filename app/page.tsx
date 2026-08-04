@@ -111,6 +111,8 @@ import {
   updateFirmware,
   type FirmwareItem,
 } from '../services/firmwareService';
+import AdminCommercialDashboard from '../components/AdminCommercialDashboard';
+import AdminProductionPanel from '../components/AdminProductionPanel';
 
 const DEFAULT_PRESET_MODELS: Record<string, { motor_count: number; has_filter_timer: boolean; has_led_timer: boolean; has_hidro_timer: boolean; has_solar_heating: boolean }> = {
   'MM12TW': { motor_count: 2, has_filter_timer: true, has_led_timer: true, has_hidro_timer: true, has_solar_heating: true },
@@ -4430,13 +4432,13 @@ export default function PoolControllerPage() {
   const hasRegisteredEquipment = registeredEquipments.length > 0;
 
   const adminPageMeta: Record<typeof adminTab, { title: string; subtitle: string }> = {
-    home: { title: 'Dashboard', subtitle: 'Visao geral do painel administrativo' },
+    home: { title: 'Dashboard Comercial', subtitle: 'Analise de producao, instalacoes e mix de produtos' },
     aba1: { title: 'Usuarios & Equipamentos', subtitle: 'Cadastro e vinculo de dispositivos' },
     firmware: { title: 'Firmware', subtitle: 'Publicacao OTA por modelo' },
     aba3: { title: 'Logs & Auditoria', subtitle: 'Trilha audit_events' },
     aba4: { title: 'MQTT & Info Tecnica', subtitle: 'Broker e persistencia' },
     aba5: { title: 'Catalogo de Dispositivos', subtitle: 'Modelos e capacidades' },
-    production: { title: 'Producao', subtitle: 'Whitelist de fabrica via QR' },
+    production: { title: 'Producao', subtitle: 'Whitelist, estoque e instalacoes por modelo' },
     brand: { title: 'Logo do Fabricante', subtitle: 'Identidade visual do app' },
   };
   const adminMeta = adminPageMeta[adminTab];
@@ -7369,194 +7371,19 @@ export default function PoolControllerPage() {
                     
                     {/* Tab Home: Admin Panel Hub */}
                     {adminTab === 'home' && (
-                      <div className="space-y-6">
-                        {/* Welcome banner & Stats Overview */}
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                          <div className="p-5 bg-white border border-amber-300 rounded-2xl flex flex-col justify-between shadow-sm">
-                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Usuários Operadores</span>
-                            <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-slate-900">{simUsers.filter(u => u.role === 'operator').length}</span>
-                              <span className="text-xs text-amber-700 font-semibold">Ativos</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Contas de instaladores / residências cadastradas.</p>
-                          </div>
-
-                          <div className="p-5 bg-white border border-blue-300 rounded-2xl flex flex-col justify-between shadow-sm">
-                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Equipamentos Totais</span>
-                            <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-slate-900">{adminAllDevices.length}</span>
-                              <span className="text-xs text-blue-700 font-semibold">Dispositivos</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Equipamentos cadastrados em todo o sistema.</p>
-                          </div>
-
-                          <div className="p-5 bg-white border border-purple-300 rounded-2xl flex flex-col justify-between shadow-sm">
-                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Eventos de Auditoria</span>
-                            <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-slate-900">{auditEvents.length}</span>
-                              <span className="text-xs text-purple-700 font-semibold">Registros</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Eventos gravados em audit_events (Supabase).</p>
-                          </div>
-
-                          <div className="p-5 bg-white border border-emerald-300 rounded-2xl flex flex-col justify-between shadow-sm">
-                            <span className="text-slate-600 text-[10px] font-bold uppercase tracking-wider">Modelos no Catalogo</span>
-                            <div className="flex items-baseline gap-2 mt-2">
-                              <span className="text-3xl font-extrabold text-slate-900">{deviceCatalog.length}</span>
-                              <span className="text-xs text-emerald-700 font-semibold">Modelos</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-2 font-medium">Modelos de equipamento cadastrados no catalogo.</p>
-                          </div>
-                        </div>
-
-                        {/* Quick Access Grid */}
-                        <div className="space-y-4">
-                          <h3 className="text-xs font-bold text-blue-600 uppercase tracking-widest text-left">Navegacao Administrativa</h3>
-                          
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            {/* Card 1 */}
-                            <button
-                              onClick={() => setAdminTab('aba1')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Users className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Usuários & Equipamentos</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Cadastre e edite operadores, vincule e gerencie equipamentos residenciais em tempo real.</p>
-                              </div>
-                            </button>
-
-                            {/* Card 2 */}
-                            <button
-                              onClick={() => setAdminTab('aba3')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Activity className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Logs & Auditoria</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Monitore os eventos registrados em audit_events, com KPIs e histórico detalhado.</p>
-                              </div>
-                            </button>
-
-                            {/* Card 3 */}
-                            <button
-                              onClick={() => setAdminTab('firmware')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Upload className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Atualizações de Firmware</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Publique e gerencie versões de firmware OTA por modelo de equipamento.</p>
-                              </div>
-                            </button>
-
-                            {/* Card 4 */}
-                            <button
-                              onClick={() => setAdminTab('aba5')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <SlidersHorizontal className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Catálogo de Dispositivos</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Gerencie os modelos disponíveis e suas capacidades (motores, timers, aquecimento solar).</p>
-                              </div>
-                            </button>
-
-                            {/* Card production */}
-                            <button
-                              onClick={() => setAdminTab('production')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Factory className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Produção (Whitelist)</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">
-                                  Cadastre aparelhos fabricados via QR e veja quantos usuários têm cada modelo instalado.
-                                </p>
-                              </div>
-                            </button>
-
-                            {/* Card 5 */}
-                            <button
-                              onClick={() => setAdminTab('aba4')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Database className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Configurações de Conexão MQTT</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Configure endereços do broker, portas, tópicos customizados, credenciais e info técnica.</p>
-                              </div>
-                            </button>
-
-                            {/* Card 6 */}
-                            <button
-                              onClick={() => setAdminTab('brand')}
-                              className="p-5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl text-left transition-all group flex gap-4 items-start active:scale-[0.99] shadow-sm"
-                            >
-                              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                <Upload className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors font-sans">Logo do Fabricante & Identidade</h4>
-                                <p className="text-xs text-slate-400 leading-relaxed">Personalize a logomarca do fabricante exibida no cabeçalho principal do aplicativo.</p>
-                              </div>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Últimos eventos preview */}
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <div>
-                              <h3 className="text-sm font-bold text-white">Últimos Eventos</h3>
-                              <p className="text-[10px] text-slate-400">5 eventos mais recentes de audit_events</p>
-                            </div>
-                            <button
-                              onClick={() => setAdminTab('aba3')}
-                              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 hover:text-amber-300 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
-                            >
-                              Ver Todos
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-
-                          <div className="divide-y divide-white/5">
-                            {auditEvents.slice(0, 5).map((event) => (
-                              <div key={event.id} className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-white font-semibold truncate">{formatAuditEventType(event.event_type)}</p>
-                                  <p className="text-[10px] text-slate-400 truncate">
-                                    {event.actor_email || '—'} · {event.entity_type}/{event.entity_id}
-                                    {' · '}
-                                    {formatAuditMetadata(event.metadata, event.event_type)}
-                                  </p>
-                                </div>
-                                <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
-                                  {new Date(event.created_at).toLocaleString('pt-BR')}
-                                </span>
-                              </div>
-                            ))}
-                            {auditEvents.length === 0 && (
-                              <p className="py-4 text-center text-xs text-slate-500">
-                                {auditLoading ? 'Carregando eventos...' : 'Nenhum evento em audit_events ainda.'}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                      </div>
+                      <AdminCommercialDashboard
+                        productionStats={productionStats}
+                        productionDevices={productionDevices}
+                        adminAllDevices={adminAllDevices}
+                        simUsers={simUsers}
+                        auditEvents={auditEvents}
+                        productionLoading={productionLoading}
+                        auditLoading={auditLoading}
+                        onOpenProduction={() => setAdminTab('production')}
+                        onOpenAudit={() => setAdminTab('aba3')}
+                        onOpenUsers={() => setAdminTab('aba1')}
+                        formatAuditEventType={formatAuditEventType}
+                      />
                     )}
                     
                     {/* Tab 1: Users & Equipments */}
@@ -8914,205 +8741,34 @@ export default function PoolControllerPage() {
                     </div>
                   )}
 
-                  {/* Tab: Produção / whitelist de fábrica */}
+                  {/* Tab: Producao / whitelist */}
                   {adminTab === 'production' && (
-                    <div className="space-y-6">
-                      <div className="bg-white/5 border border-amber-400/30 rounded-2xl p-5 space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                          <div>
-                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                              <Factory className="w-4 h-4 text-amber-400" />
-                              Cadastro de Produção via QR
-                            </h3>
-                            <p className="text-[10px] text-slate-400 mt-1 max-w-xl">
-                              Escaneie o QR de fábrica (serial, provision, model, hw, fw, date). O aparelho só poderá ser vinculado por usuários depois de entrar nesta whitelist.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => loadProductionData()}
-                            className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl text-[10px] font-bold flex items-center gap-1.5"
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 ${productionLoading ? 'animate-spin' : ''}`} />
-                            Atualizar
-                          </button>
-                        </div>
-
-                        {!isScanningProductionQr ? (
-                          <button
-                            type="button"
-                            onClick={startProductionQrScanner}
-                            className="w-full sm:w-auto px-4 py-3 bg-amber-400 hover:bg-amber-500 text-black text-xs font-bold rounded-xl flex items-center justify-center gap-2 active:scale-[0.99]"
-                          >
-                            <QrCode className="w-4 h-4" />
-                            Escanear QR de Produção
-                          </button>
-                        ) : (
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                                <Camera className="w-3.5 h-3.5 animate-pulse" />
-                                Aponte para o QR de fábrica
-                              </span>
-                              <button
-                                type="button"
-                                onClick={stopProductionQrScanner}
-                                className="px-3 py-1.5 bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10px] font-bold rounded-lg"
-                              >
-                                Parar
-                              </button>
-                            </div>
-                            <div className="rounded-xl overflow-hidden border border-white/10 bg-black aspect-square max-w-sm mx-auto">
-                              <div id="qr-reader-production" className="w-full h-full overflow-hidden [&_video]:object-cover" />
-                            </div>
-                          </div>
-                        )}
-
-                        {productionQrError && (
-                          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-200">
-                            {productionQrError}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Stats by model */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {productionStats.map((stat) => (
-                          <div
-                            key={stat.model}
-                            className="p-4 bg-gradient-to-br from-emerald-500/10 to-teal-600/5 border border-emerald-500/20 rounded-2xl"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-extrabold text-white font-mono">{stat.model}</span>
-                              <Cpu className="w-4 h-4 text-emerald-400" />
-                            </div>
-                            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-                              <div>
-                                <span className="text-slate-400 block">Produzidos</span>
-                                <span className="text-white font-bold text-lg">{stat.produced}</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Usuários c/ modelo</span>
-                                <span className="text-emerald-300 font-bold text-lg">{stat.unique_users}</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Instalados</span>
-                                <span className="text-cyan-300 font-semibold">{stat.claimed}</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Disponíveis</span>
-                                <span className="text-amber-300 font-semibold">{stat.available}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {productionStats.length === 0 && !productionLoading && (
-                          <div className="sm:col-span-2 lg:col-span-3 p-6 text-center text-xs text-slate-500 border border-dashed border-white/10 rounded-2xl">
-                            Nenhum aparelho na whitelist ainda. Escaneie o primeiro QR de produção.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* List */}
-                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                        <div className="px-5 py-3 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <span className="text-xs font-bold text-white">
-                            Aparelhos em production_devices ({productionDevices.length})
-                          </span>
-                          <div className="relative">
-                            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                            <input
-                              value={productionSearch}
-                              onChange={(e) => setProductionSearch(e.target.value)}
-                              placeholder="Buscar serial / modelo / e-mail..."
-                              className="pl-8 pr-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-[11px] text-white w-full sm:w-64 focus:outline-none focus:border-amber-400"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="divide-y divide-white/5 max-h-[420px] overflow-y-auto">
-                          {productionDevices
-                            .filter((row) => {
-                              const q = productionSearch.trim().toLowerCase();
-                              if (!q) return true;
-                              return (
-                                row.serial.toLowerCase().includes(q) ||
-                                row.model.toLowerCase().includes(q) ||
-                                (row.owner_email || '').toLowerCase().includes(q)
-                              );
-                            })
-                            .map((row) => (
-                              <div
-                                key={row.serial}
-                                className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                              >
-                                <div className="min-w-0 space-y-1">
-                                  <p className="font-mono text-cyan-200 font-semibold truncate">{row.serial}</p>
-                                  <p className="text-[10px] text-slate-400">
-                                    {row.model}
-                                    {row.hw ? ` · hw ${row.hw}` : ''}
-                                    {row.fw ? ` · fw ${row.fw}` : ''}
-                                    {row.owner_email ? ` · ${row.owner_email}` : ''}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span
-                                    className={`px-2 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider ${
-                                      row.status === 'claimed'
-                                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
-                                        : row.status === 'available'
-                                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/20'
-                                          : 'bg-slate-500/15 text-slate-300 border border-slate-500/20'
-                                    }`}
-                                  >
-                                    {row.status === 'claimed'
-                                      ? 'Instalado'
-                                      : row.status === 'available'
-                                        ? 'Disponível'
-                                        : 'Desativado'}
-                                  </span>
-                                  {row.status !== 'disabled' && (
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        const ok = await setProductionDeviceStatus(row.serial, 'disabled');
-                                        if (ok) {
-                                          loadProductionData();
-                                        } else {
-                                          showToast('Produção', 'Não foi possível desativar.', 'error');
-                                        }
-                                      }}
-                                      className="px-2 py-1 text-[9px] font-bold text-rose-300 border border-rose-500/20 rounded-lg hover:bg-rose-500/10"
-                                    >
-                                      Desativar
-                                    </button>
-                                  )}
-                                  {row.status === 'disabled' && (
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        const ok = await setProductionDeviceStatus(row.serial, 'available');
-                                        if (ok) {
-                                          loadProductionData();
-                                        }
-                                      }}
-                                      className="px-2 py-1 text-[9px] font-bold text-emerald-300 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/10"
-                                    >
-                                      Reativar
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          {productionLoading && (
-                            <p className="py-8 text-center text-xs text-slate-500">Carregando produção...</p>
-                          )}
-                          {!productionLoading && productionDevices.length === 0 && (
-                            <p className="py-8 text-center text-xs text-slate-500">Lista vazia.</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <AdminProductionPanel
+                      productionStats={productionStats}
+                      productionDevices={productionDevices}
+                      productionLoading={productionLoading}
+                      productionSearch={productionSearch}
+                      onProductionSearchChange={setProductionSearch}
+                      isScanningProductionQr={isScanningProductionQr}
+                      productionQrError={productionQrError}
+                      onRefresh={() => loadProductionData()}
+                      onStartScan={startProductionQrScanner}
+                      onStopScan={stopProductionQrScanner}
+                      onDisable={async (serial) => {
+                        const ok = await setProductionDeviceStatus(serial, 'disabled');
+                        if (ok) {
+                          loadProductionData();
+                        } else {
+                          showToast('Produção', 'Não foi possível desativar.', 'error');
+                        }
+                      }}
+                      onReactivate={async (serial) => {
+                        const ok = await setProductionDeviceStatus(serial, 'available');
+                        if (ok) {
+                          loadProductionData();
+                        }
+                      }}
+                    />
                   )}
 
                   {adminTab === 'firmware' && (
